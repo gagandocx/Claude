@@ -217,6 +217,7 @@ struct TradeRecord
    double   exitPrice;
    double   lotSize;
    bool     isWin;
+   double   entryFeatures[MAX_NETWORK_INPUTS]; // Features at trade entry time (Issue #1 fix)
 };
 
 //+------------------------------------------------------------------+
@@ -268,6 +269,33 @@ datetime g_lastBarTime       = 0;
 double   g_initialBalance    = 0;
 int      g_totalTrades       = 0;
 bool     g_isNewBar          = false;
+
+// Entry features storage for online learning (Issue #1 fix)
+// Stores features at trade entry time, keyed by position index
+#define MAX_OPEN_POSITIONS 20
+struct EntryFeatureRecord
+{
+   ulong  ticket;
+   double features[MAX_NETWORK_INPUTS];
+   bool   active;
+};
+EntryFeatureRecord g_entryFeatures[MAX_OPEN_POSITIONS];
+int g_entryFeaturesCount = 0;
+
+// Partial close tracking (Issue #2 fix)
+// Tracks which TP levels have been booked per position ticket
+struct PartialCloseState
+{
+   ulong  ticket;
+   bool   tp1Done;
+   bool   tp2Done;
+   bool   active;
+};
+PartialCloseState g_partialCloseTracker[MAX_OPEN_POSITIONS];
+int g_partialCloseCount = 0;
+
+// Persistence file name for network state (Issue #6 fix)
+string g_stateFileName = "";
 double   g_atrBuffer[];
 double   g_adxBuffer[];
 double   g_bbUpperBuffer[];
@@ -288,6 +316,20 @@ int OnInit()
    // Initialize symbol info
    g_symbol.Name(_Symbol);
    g_symbol.Refresh();
+   
+   // --- Issue #4 fix: Validate input parameters against compile-time constants ---
+   if(InpNetworkInputs > MAX_NETWORK_INPUTS)
+   {
+      PrintFormat("WARNING: InpNetworkInputs (%d) exceeds MAX_NETWORK_INPUTS (%d). Capping to %d.",
+                  InpNetworkInputs, MAX_NETWORK_INPUTS, MAX_NETWORK_INPUTS);
+   }
+   if(InpHiddenNodes > MAX_HIDDEN_NODES)
+   {
+      PrintFormat("WARNING: InpHiddenNodes (%d) exceeds MAX_HIDDEN_NODES (%d). Capping to %d.",
+                  InpHiddenNodes, MAX_HIDDEN_NODES, MAX_HIDDEN_NODES);
+   }
+   int effectiveInputs = MathMin(InpNetworkInputs, MAX_NETWORK_INPUTS);
+   int effectiveHidden = MathMin(InpHiddenNodes, MAX_HIDDEN_NODES);
    
    // Set magic number
    g_trade.SetExpertMagicNumber(InpMagicNumber);
@@ -364,8 +406,26 @@ int OnInit()
    g_metrics.consecutiveLosses = 0;
    g_metrics.recentCorrelation = 0.0;
    
+   // Initialize entry features and partial close trackers
+   for(int i = 0; i < MAX_OPEN_POSITIONS; i++)
+   {
+      g_entryFeatures[i].ticket = 0;
+      g_entryFeatures[i].active = false;
+      g_partialCloseTracker[i].ticket = 0;
+      g_partialCloseTracker[i].tp1Done = false;
+      g_partialCloseTracker[i].tp2Done = false;
+      g_partialCloseTracker[i].active = false;
+   }
+   g_entryFeaturesCount = 0;
+   g_partialCloseCount = 0;
+   
+   // --- Issue #6 fix: Set up persistence file and load saved state ---
+   g_stateFileName = "AI_Adaptive_EA_" + _Symbol + "_" + IntegerToString(InpMagicNumber) + ".bin";
+   LoadNetworkState();
+   
    Print("AI Adaptive EA initialized successfully");
-   Print("Learning Rate: ", InpLearningRate, " | Hidden Nodes: ", InpHiddenNodes);
+   PrintFormat("Effective Network: %d inputs, %d hidden nodes", effectiveInputs, effectiveHidden);
+   Print("Learning Rate: ", InpLearningRate, " | Hidden Nodes: ", effectiveHidden);
    Print("Max Risk: ", InpMaxRiskPercent, "% | Magic: ", InpMagicNumber);
    
    if(InpShowDashboard)
@@ -379,6 +439,9 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   // --- Issue #6 fix: Save network state before shutdown ---
+   SaveNetworkState();
+   
    // Release indicator handles
    if(g_handleADX != INVALID_HANDLE)    IndicatorRelease(g_handleADX);
    if(g_handleATR != INVALID_HANDLE)    IndicatorRelease(g_handleATR);
@@ -480,19 +543,23 @@ void InitializeNetwork()
 {
    MathSrand((int)TimeLocal());
    
-   for(int h = 0; h < InpHiddenNodes && h < MAX_HIDDEN_NODES; h++)
+   // Issue #4 fix: always use capped values for initialization
+   int effectiveHidden = MathMin(InpHiddenNodes, MAX_HIDDEN_NODES);
+   int effectiveInputs = MathMin(InpNetworkInputs, MAX_NETWORK_INPUTS);
+   
+   for(int h = 0; h < effectiveHidden; h++)
    {
-      for(int i = 0; i < InpNetworkInputs && i < MAX_NETWORK_INPUTS; i++)
+      for(int i = 0; i < effectiveInputs; i++)
       {
-         // Xavier initialization: random in [-sqrt(6/(n_in+n_out)), sqrt(6/(n_in+n_out))]
-         double limit = MathSqrt(6.0 / (InpNetworkInputs + InpHiddenNodes));
+         // Xavier initialization using effective (capped) dimensions
+         double limit = MathSqrt(6.0 / (effectiveInputs + effectiveHidden));
          g_network.inputWeights[h][i] = RandomDouble(-limit, limit);
          g_network.prevDeltaIW[h][i] = 0.0;
       }
       g_network.hiddenBias[h] = 0.0;
       g_network.prevDeltaHB[h] = 0.0;
       
-      double limit2 = MathSqrt(6.0 / (InpHiddenNodes + 1));
+      double limit2 = MathSqrt(6.0 / (effectiveHidden + 1));
       g_network.outputWeights[h] = RandomDouble(-limit2, limit2);
       g_network.prevDeltaOW[h] = 0.0;
       g_network.lastHiddenOutput[h] = 0.0;
@@ -832,16 +899,20 @@ ENUM_AI_SIGNAL GetTrendFollowingSignal()
    double slowMA1 = g_slowMABuffer[1];
    double close0 = iClose(_Symbol, InpTimeframe, 0);
    
-   // Adaptive period adjustment based on regime
-   // In strong trends, use shorter fast MA for quicker signals
-   // In weak trends, use longer periods to avoid whipsaws
+   // Issue #3 fix: Use the adaptive values directly without overwriting them.
+   // The per-bar regime adjustment is now applied as a transient factor
+   // rather than resetting the learned adaptive state.
    double adxNorm = g_regime.adxValue / 50.0; // Normalize ADX
-   g_strategy.adaptiveFastMA = InpFastMAPeriod * (2.0 - adxNorm);
-   g_strategy.adaptiveSlowMA = InpSlowMAPeriod * (2.0 - adxNorm * 0.5);
+   double regimeFastFactor = (2.0 - adxNorm);
+   double regimeSlowFactor = (2.0 - adxNorm * 0.5);
    
-   // Clamp periods
-   g_strategy.adaptiveFastMA = MathMax(5, MathMin(50, g_strategy.adaptiveFastMA));
-   g_strategy.adaptiveSlowMA = MathMax(20, MathMin(100, g_strategy.adaptiveSlowMA));
+   // Effective periods combine the learned adaptive base with the per-bar regime factor
+   double effectiveFastMA = g_strategy.adaptiveFastMA * regimeFastFactor / InpFastMAPeriod;
+   double effectiveSlowMA = g_strategy.adaptiveSlowMA * regimeSlowFactor / InpSlowMAPeriod;
+   
+   // Clamp effective periods
+   effectiveFastMA = MathMax(5, MathMin(50, effectiveFastMA));
+   effectiveSlowMA = MathMax(20, MathMin(100, effectiveSlowMA));
    
    // MA crossover signal
    bool bullishCross = (fastMA > slowMA) && (fastMA1 <= slowMA1);
@@ -887,13 +958,14 @@ ENUM_AI_SIGNAL GetMeanReversionSignal()
    double bbLower = g_bbLowerBuffer[0];
    double bbMiddle = g_bbMiddleBuffer[0];
    
-   // Dynamic deviation adjustment: wider in volatile, tighter in calm
+   // Issue #3 fix: Use adaptive BB deviation without overwriting it.
+   // Apply a transient per-bar regime factor on top of the learned adaptive value.
    double volFactor = g_regime.atrPercentile / 50.0; // > 1 in high vol
-   g_strategy.adaptiveBBDev = InpBBDeviation * MathMax(0.5, MathMin(2.0, volFactor));
+   double effectiveBBDev = g_strategy.adaptiveBBDev * MathMax(0.5, MathMin(2.0, volFactor)) / InpBBDeviation;
    
-   // Calculate dynamic bands using adaptive deviation
+   // Calculate dynamic bands using effective deviation
    double bbRange = bbUpper - bbMiddle;
-   double adaptiveRange = bbRange * (g_strategy.adaptiveBBDev / InpBBDeviation);
+   double adaptiveRange = bbRange * (effectiveBBDev);
    double adaptiveUpper = bbMiddle + adaptiveRange;
    double adaptiveLower = bbMiddle - adaptiveRange;
    
@@ -956,19 +1028,16 @@ ENUM_AI_SIGNAL GetBreakoutSignal()
    
    // Adaptive confirmation threshold based on volatility
    double atr = g_atrBuffer[0];
-   double confirmThreshold = atr * g_strategy.adaptiveBreakoutConf;
    
-   // Adjust confirmation based on regime
+   // Issue #3 fix: Use adaptive breakout confirmation without overwriting.
+   // Apply transient regime factor on top of learned adaptive value.
+   double effectiveBreakoutConf = g_strategy.adaptiveBreakoutConf;
    if(g_regime.current == REGIME_VOLATILE)
-      confirmThreshold *= 1.5; // Require more confirmation in volatile markets
+      effectiveBreakoutConf *= 1.5; // Require more confirmation in volatile markets
    else if(g_regime.current == REGIME_TRENDING)
-      confirmThreshold *= 0.8; // Less confirmation needed in trending markets
+      effectiveBreakoutConf *= 0.8; // Less confirmation needed in trending markets
    
-   g_strategy.adaptiveBreakoutConf = InpBreakoutConfirm;
-   if(g_regime.current == REGIME_VOLATILE)
-      g_strategy.adaptiveBreakoutConf = InpBreakoutConfirm * 1.5;
-   else if(g_regime.current == REGIME_TRENDING)
-      g_strategy.adaptiveBreakoutConf = InpBreakoutConfirm * 0.8;
+   double confirmThreshold = atr * effectiveBreakoutConf;
    
    // Breakout above resistance
    bool bullBreakout = (close0 > highestHigh) && 
@@ -1122,16 +1191,25 @@ double CalculatePositionSize()
    double atr = g_atrBuffer[0];
    double slDistance = atr * InpSLATRMultiple;
    
-   // Convert to lots
+   // Issue #5 fix: Use contract-size-aware lot calculation that works for
+   // forex, CFDs, indices, and commodities.
    double tickValue = g_symbol.TickValue();
    double tickSize  = g_symbol.TickSize();
-   double point     = g_symbol.Point();
    
    if(tickValue <= 0 || tickSize <= 0 || slDistance <= 0)
       return InpMinLotSize;
    
-   double slPoints = slDistance / point;
-   double lotSize = riskAmount / (slPoints * tickValue / (tickSize / point));
+   // Calculate the monetary value of the stop-loss distance per 1 lot
+   // tickValue is profit in account currency for a 1-lot move of tickSize
+   // slDistance is in price units, so the number of ticks in the SL is:
+   double slTicks = slDistance / tickSize;
+   double slMoneyPerLot = slTicks * tickValue;
+   
+   double lotSize = 0.0;
+   if(slMoneyPerLot > 0)
+      lotSize = riskAmount / slMoneyPerLot;
+   else
+      lotSize = InpMinLotSize;
    
    // Normalize and clamp lot size
    double lotStep = g_symbol.LotsStep();
@@ -1186,6 +1264,9 @@ void ExecuteTrade(ENUM_AI_SIGNAL signal, double lotSize)
          return;
       }
       
+      // Issue #1 fix: Store entry-time features for this trade
+      StoreEntryFeatures(g_trade.ResultOrder());
+      
       Print("BUY Signal Executed: Lot=", lotSize, " SL=", sl, " TP=", tp,
             " Regime=", EnumToString(g_regime.current), 
             " Strategy=", EnumToString(g_strategy.activeStrategy),
@@ -1205,6 +1286,9 @@ void ExecuteTrade(ENUM_AI_SIGNAL signal, double lotSize)
          Print("ERROR: Sell order failed - ", g_trade.ResultRetcodeDescription());
          return;
       }
+      
+      // Issue #1 fix: Store entry-time features for this trade
+      StoreEntryFeatures(g_trade.ResultOrder());
       
       Print("SELL Signal Executed: Lot=", lotSize, " SL=", sl, " TP=", tp,
             " Regime=", EnumToString(g_regime.current),
@@ -1272,9 +1356,13 @@ void ManageOpenPositions()
       }
       
       // === PARTIAL CLOSE AT TP LEVELS ===
-      // Check TP2 level (close partial)
+      // Issue #2 fix: Check partial close state to prevent repeated closures
+      int pcIdx = GetPartialCloseIndex(ticket);
+      
+      // Check TP2 level (close partial) - only if TP2 not already done
       double tp2Distance = atr * InpTP2_ATRMultiple;
-      if(profitDistance >= tp2Distance && volume > InpMinLotSize * 2)
+      if(profitDistance >= tp2Distance && volume > InpMinLotSize * 2 &&
+         (pcIdx < 0 || !g_partialCloseTracker[pcIdx].tp2Done))
       {
          double closeVolume = NormalizeDouble(volume * InpPartialClose2, 2);
          closeVolume = MathMax(closeVolume, g_symbol.LotsMin());
@@ -1287,11 +1375,14 @@ void ManageOpenPositions()
             {
                Print("PARTIAL CLOSE TP2: Closed ", closeVolume, " lots at profit ATR=", 
                      DoubleToString(profitATR, 2));
+               // Mark TP2 as done
+               MarkPartialClose(ticket, 2);
             }
          }
       }
-      // Check TP1 level (close partial)
-      else if(profitDistance >= atr * InpTP1_ATRMultiple && volume > InpMinLotSize * 2)
+      // Check TP1 level (close partial) - only if TP1 not already done
+      else if(profitDistance >= atr * InpTP1_ATRMultiple && volume > InpMinLotSize * 2 &&
+              (pcIdx < 0 || !g_partialCloseTracker[pcIdx].tp1Done))
       {
          double closeVolume = NormalizeDouble(volume * InpPartialClose1, 2);
          closeVolume = MathMax(closeVolume, g_symbol.LotsMin());
@@ -1304,6 +1395,8 @@ void ManageOpenPositions()
             {
                Print("PARTIAL CLOSE TP1: Closed ", closeVolume, " lots at profit ATR=", 
                      DoubleToString(profitATR, 2));
+               // Mark TP1 as done
+               MarkPartialClose(ticket, 1);
             }
          }
       }
@@ -1428,6 +1521,32 @@ void ProcessClosedTrades()
          record.profitPoints = profit / (volume > 0 ? volume : 1.0);
          record.direction = (HistoryDealGetInteger(dealTicket, DEAL_TYPE) == DEAL_TYPE_BUY) ? -1 : 1;
          
+         // Issue #1 fix: Look up entry features from stored records using position ID
+         long positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+         bool foundFeatures = false;
+         for(int ef = 0; ef < MAX_OPEN_POSITIONS; ef++)
+         {
+            if(g_entryFeatures[ef].active && g_entryFeatures[ef].ticket == (ulong)positionId)
+            {
+               for(int fi = 0; fi < MAX_NETWORK_INPUTS; fi++)
+                  record.entryFeatures[fi] = g_entryFeatures[ef].features[fi];
+               // Clear the entry feature slot
+               g_entryFeatures[ef].active = false;
+               g_entryFeatures[ef].ticket = 0;
+               foundFeatures = true;
+               break;
+            }
+         }
+         if(!foundFeatures)
+         {
+            // No stored features found; zero them out (fallback will be used)
+            for(int fi = 0; fi < MAX_NETWORK_INPUTS; fi++)
+               record.entryFeatures[fi] = 0.0;
+         }
+         
+         // Issue #2 fix: Clean up partial close tracker for this position
+         CleanupPartialCloseTracker((ulong)positionId);
+         
          g_tradeHistory[g_tradeHistoryCount] = record;
          g_tradeHistoryCount++;
          
@@ -1448,9 +1567,22 @@ void OnTradeOutcome(TradeRecord &record)
    // Update strategy weights based on outcome
    UpdateStrategyWeights(record);
    
-   // Update neural network weights
+   // Issue #1 fix: Use entry-time features stored in TradeRecord for network update,
+   // not current market features. This ensures the network learns from the features
+   // that were active when the trade decision was made.
    double features[MAX_NETWORK_INPUTS];
-   ComputeFeatures(features);
+   bool hasEntryFeatures = false;
+   
+   // Check if we have valid entry features in the record
+   for(int i = 0; i < MAX_NETWORK_INPUTS; i++)
+   {
+      features[i] = record.entryFeatures[i];
+      if(features[i] != 0.0) hasEntryFeatures = true;
+   }
+   
+   // Fallback: if no entry features stored (e.g., from old trades), use current
+   if(!hasEntryFeatures)
+      ComputeFeatures(features);
    
    // Reward signal: normalized profit
    double reward = 0.0;
@@ -1461,11 +1593,15 @@ void OnTradeOutcome(TradeRecord &record)
    
    UpdateNetworkWeights(reward, features);
    
+   // Issue #6 fix: Save state after each learning update to persist progress
+   SaveNetworkState();
+   
    // Log learning update
    Print("LEARNING UPDATE: Trade P&L=", DoubleToString(record.profit, 2),
          " Regime=", EnumToString(record.regime),
          " Strategy=", EnumToString(record.strategy),
-         " Reward=", DoubleToString(reward, 3));
+         " Reward=", DoubleToString(reward, 3),
+         " EntryFeatures=", hasEntryFeatures ? "yes" : "fallback");
 }
 
 
@@ -1686,6 +1822,269 @@ void AdaptStrategyParameters()
       g_strategy.adaptiveBreakoutConf *= 1.05;
    }
    g_strategy.adaptiveBreakoutConf = MathMax(0.5, MathMin(3.0, g_strategy.adaptiveBreakoutConf));
+}
+
+
+//+------------------------------------------------------------------+
+//| ENTRY FEATURE STORAGE (Issue #1 fix)                               |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Store features at trade entry time keyed by position ticket        |
+//+------------------------------------------------------------------+
+void StoreEntryFeatures(ulong orderTicket)
+{
+   // The order ticket may differ from position ticket; resolve via result deal
+   // For simplicity, store by order ticket which we can later map to position
+   // In MQL5, after a successful trade, ResultOrder gives the order ticket
+   // The position ticket may be the same for additions to existing positions
+   
+   double features[MAX_NETWORK_INPUTS];
+   ComputeFeatures(features);
+   
+   // Find an empty slot
+   for(int i = 0; i < MAX_OPEN_POSITIONS; i++)
+   {
+      if(!g_entryFeatures[i].active)
+      {
+         g_entryFeatures[i].ticket = orderTicket;
+         g_entryFeatures[i].active = true;
+         for(int f = 0; f < MAX_NETWORK_INPUTS; f++)
+            g_entryFeatures[i].features[f] = features[f];
+         return;
+      }
+   }
+   
+   // If all slots full, overwrite the oldest (slot 0) and shift
+   g_entryFeatures[0].ticket = orderTicket;
+   g_entryFeatures[0].active = true;
+   for(int f = 0; f < MAX_NETWORK_INPUTS; f++)
+      g_entryFeatures[0].features[f] = features[f];
+}
+
+
+//+------------------------------------------------------------------+
+//| PARTIAL CLOSE TRACKING (Issue #2 fix)                              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Get the index of a ticket in the partial close tracker             |
+//+------------------------------------------------------------------+
+int GetPartialCloseIndex(ulong ticket)
+{
+   for(int i = 0; i < MAX_OPEN_POSITIONS; i++)
+   {
+      if(g_partialCloseTracker[i].active && g_partialCloseTracker[i].ticket == ticket)
+         return i;
+   }
+   return -1;
+}
+
+//+------------------------------------------------------------------+
+//| Mark a TP level as done for a position ticket                      |
+//+------------------------------------------------------------------+
+void MarkPartialClose(ulong ticket, int tpLevel)
+{
+   int idx = GetPartialCloseIndex(ticket);
+   
+   if(idx < 0)
+   {
+      // Create new entry
+      for(int i = 0; i < MAX_OPEN_POSITIONS; i++)
+      {
+         if(!g_partialCloseTracker[i].active)
+         {
+            g_partialCloseTracker[i].ticket = ticket;
+            g_partialCloseTracker[i].active = true;
+            g_partialCloseTracker[i].tp1Done = (tpLevel == 1);
+            g_partialCloseTracker[i].tp2Done = (tpLevel == 2);
+            return;
+         }
+      }
+      // All slots full - overwrite slot 0
+      g_partialCloseTracker[0].ticket = ticket;
+      g_partialCloseTracker[0].active = true;
+      g_partialCloseTracker[0].tp1Done = (tpLevel == 1);
+      g_partialCloseTracker[0].tp2Done = (tpLevel == 2);
+   }
+   else
+   {
+      if(tpLevel == 1) g_partialCloseTracker[idx].tp1Done = true;
+      if(tpLevel == 2) g_partialCloseTracker[idx].tp2Done = true;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup partial close tracker when a position is fully closed      |
+//+------------------------------------------------------------------+
+void CleanupPartialCloseTracker(ulong ticket)
+{
+   for(int i = 0; i < MAX_OPEN_POSITIONS; i++)
+   {
+      if(g_partialCloseTracker[i].active && g_partialCloseTracker[i].ticket == ticket)
+      {
+         g_partialCloseTracker[i].active = false;
+         g_partialCloseTracker[i].ticket = 0;
+         g_partialCloseTracker[i].tp1Done = false;
+         g_partialCloseTracker[i].tp2Done = false;
+         return;
+      }
+   }
+}
+
+
+//+------------------------------------------------------------------+
+//| NETWORK STATE PERSISTENCE (Issue #6 fix)                           |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Save neural network weights and strategy state to file             |
+//+------------------------------------------------------------------+
+void SaveNetworkState()
+{
+   if(StringLen(g_stateFileName) == 0) return;
+   
+   int handle = FileOpen(g_stateFileName, FILE_WRITE | FILE_BIN | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("WARNING: Could not save network state to ", g_stateFileName, 
+            " Error: ", GetLastError());
+      return;
+   }
+   
+   // Write a version header for future compatibility
+   int version = 1;
+   FileWriteInteger(handle, version);
+   
+   // Write neural network weights
+   for(int h = 0; h < MAX_HIDDEN_NODES; h++)
+   {
+      for(int i = 0; i < MAX_NETWORK_INPUTS; i++)
+         FileWriteDouble(handle, g_network.inputWeights[h][i]);
+      FileWriteDouble(handle, g_network.hiddenBias[h]);
+      FileWriteDouble(handle, g_network.outputWeights[h]);
+      // Write momentum terms
+      for(int i = 0; i < MAX_NETWORK_INPUTS; i++)
+         FileWriteDouble(handle, g_network.prevDeltaIW[h][i]);
+      FileWriteDouble(handle, g_network.prevDeltaHB[h]);
+      FileWriteDouble(handle, g_network.prevDeltaOW[h]);
+   }
+   FileWriteDouble(handle, g_network.outputBias);
+   FileWriteDouble(handle, g_network.prevDeltaOB);
+   
+   // Write strategy state
+   for(int i = 0; i < NUM_STRATEGIES; i++)
+   {
+      FileWriteDouble(handle, g_strategy.weights[i]);
+      FileWriteDouble(handle, g_strategy.performance[i]);
+      FileWriteInteger(handle, g_strategy.tradeCount[i]);
+      FileWriteDouble(handle, g_strategy.pnl[i]);
+   }
+   FileWriteDouble(handle, g_strategy.adaptiveFastMA);
+   FileWriteDouble(handle, g_strategy.adaptiveSlowMA);
+   FileWriteDouble(handle, g_strategy.adaptiveBBDev);
+   FileWriteDouble(handle, g_strategy.adaptiveBreakoutConf);
+   
+   // Write performance metrics
+   FileWriteDouble(handle, g_metrics.winRate);
+   FileWriteDouble(handle, g_metrics.profitFactor);
+   FileWriteDouble(handle, g_metrics.sharpeRatio);
+   FileWriteDouble(handle, g_metrics.avgWin);
+   FileWriteDouble(handle, g_metrics.avgLoss);
+   FileWriteDouble(handle, g_metrics.maxDrawdown);
+   FileWriteDouble(handle, g_metrics.peakEquity);
+   FileWriteInteger(handle, g_metrics.consecutiveWins);
+   FileWriteInteger(handle, g_metrics.consecutiveLosses);
+   FileWriteDouble(handle, g_metrics.recentCorrelation);
+   
+   // Write trade count
+   FileWriteInteger(handle, g_totalTrades);
+   FileWriteInteger(handle, g_tradeHistoryCount);
+   
+   FileClose(handle);
+   Print("Network state saved to ", g_stateFileName);
+}
+
+//+------------------------------------------------------------------+
+//| Load neural network weights and strategy state from file           |
+//+------------------------------------------------------------------+
+void LoadNetworkState()
+{
+   if(StringLen(g_stateFileName) == 0) return;
+   
+   if(!FileIsExist(g_stateFileName, FILE_COMMON))
+   {
+      Print("No saved network state found. Starting with fresh random weights.");
+      return;
+   }
+   
+   int handle = FileOpen(g_stateFileName, FILE_READ | FILE_BIN | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("WARNING: Could not load network state from ", g_stateFileName,
+            " Error: ", GetLastError());
+      return;
+   }
+   
+   // Read and verify version header
+   int version = FileReadInteger(handle);
+   if(version != 1)
+   {
+      Print("WARNING: Unknown state file version ", version, ". Starting fresh.");
+      FileClose(handle);
+      return;
+   }
+   
+   // Read neural network weights
+   for(int h = 0; h < MAX_HIDDEN_NODES; h++)
+   {
+      for(int i = 0; i < MAX_NETWORK_INPUTS; i++)
+         g_network.inputWeights[h][i] = FileReadDouble(handle);
+      g_network.hiddenBias[h] = FileReadDouble(handle);
+      g_network.outputWeights[h] = FileReadDouble(handle);
+      // Read momentum terms
+      for(int i = 0; i < MAX_NETWORK_INPUTS; i++)
+         g_network.prevDeltaIW[h][i] = FileReadDouble(handle);
+      g_network.prevDeltaHB[h] = FileReadDouble(handle);
+      g_network.prevDeltaOW[h] = FileReadDouble(handle);
+   }
+   g_network.outputBias = FileReadDouble(handle);
+   g_network.prevDeltaOB = FileReadDouble(handle);
+   
+   // Read strategy state
+   for(int i = 0; i < NUM_STRATEGIES; i++)
+   {
+      g_strategy.weights[i] = FileReadDouble(handle);
+      g_strategy.performance[i] = FileReadDouble(handle);
+      g_strategy.tradeCount[i] = FileReadInteger(handle);
+      g_strategy.pnl[i] = FileReadDouble(handle);
+   }
+   g_strategy.adaptiveFastMA = FileReadDouble(handle);
+   g_strategy.adaptiveSlowMA = FileReadDouble(handle);
+   g_strategy.adaptiveBBDev = FileReadDouble(handle);
+   g_strategy.adaptiveBreakoutConf = FileReadDouble(handle);
+   
+   // Read performance metrics
+   g_metrics.winRate = FileReadDouble(handle);
+   g_metrics.profitFactor = FileReadDouble(handle);
+   g_metrics.sharpeRatio = FileReadDouble(handle);
+   g_metrics.avgWin = FileReadDouble(handle);
+   g_metrics.avgLoss = FileReadDouble(handle);
+   g_metrics.maxDrawdown = FileReadDouble(handle);
+   g_metrics.peakEquity = FileReadDouble(handle);
+   g_metrics.consecutiveWins = FileReadInteger(handle);
+   g_metrics.consecutiveLosses = FileReadInteger(handle);
+   g_metrics.recentCorrelation = FileReadDouble(handle);
+   
+   // Read trade count
+   g_totalTrades = FileReadInteger(handle);
+   g_tradeHistoryCount = FileReadInteger(handle);
+   
+   FileClose(handle);
+   Print("Network state loaded from ", g_stateFileName);
+   PrintFormat("Restored: %d total trades, win rate %.1f%%, strategy weights [%.3f, %.3f, %.3f]",
+               g_totalTrades, g_metrics.winRate * 100,
+               g_strategy.weights[0], g_strategy.weights[1], g_strategy.weights[2]);
 }
 
 
