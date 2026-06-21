@@ -41,10 +41,10 @@ input double TP_ATR_Mult      = 2.5;    // TP = ATR x this
 input double MaxATR_Entry     = 5.0;    // Skip if ATR > this x avg (default relaxed)
 
 input group "=== SESSION FILTER (UTC) ==="
-input bool   Use_TimeFilter   = false;  // Enable session filter (OFF by default for backtesting)
-input bool   Use_DayFilter    = false;  // Skip Thursday (OFF by default for backtesting)
-input bool   Use_SpreadFilter = true;   // Enable spread filter
-input double Max_Spread_Pts   = 5.0;    // Max allowed spread in points (relaxed)
+input bool   Use_TimeFilter   = false;  // Enable session filter
+input bool   Use_DayFilter    = false;  // Skip Thursday
+input bool   Use_SpreadFilter = false;  // Enable spread filter (OFF - XAUUSD spread is wide)
+input double Max_Spread_Pts   = 80.0;   // Max spread in points (XAUUSD normal = 10-60)
 
 input group "=== RISK MANAGEMENT ==="
 input double Risk_Percent     = 1.0;    // Risk % per trade
@@ -197,8 +197,8 @@ void OnTick()
    if(Use_TimeFilter && !IsGoodHour())
    { Print("DEBUG blocked: TIME FILTER hour=", TimeHour_MQL5()); panel_signal="TIME OFF"; panel_sig_col=clrGray; if(Show_Panel) UpdatePanel(); return; }
 
-   if(Use_SpreadFilter && spread > Max_Spread_Pts * point_size * 10)
-   { Print("DEBUG blocked: SPREAD=", spread/point_size/10.0, " max=", Max_Spread_Pts); panel_signal="WIDE SPRD"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
+   if(Use_SpreadFilter && spread > Max_Spread_Pts * point_size)
+   { Print("DEBUG blocked: SPREAD=", spread/point_size, " max=", Max_Spread_Pts); panel_signal="WIDE SPRD"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
 
    // --- VOLATILITY FILTER ---
    if(cur_atr > MaxATR_Entry * avg_atr)
@@ -577,7 +577,7 @@ void UpdatePanel()
    bool thu = (dt.day_of_week==4);
 
    double spread = (SymbolInfoDouble(_Symbol,SYMBOL_ASK)-SymbolInfoDouble(_Symbol,SYMBOL_BID))
-                   / point_size / 10.0;
+                   / point_size;
    string vol_str = "---";
    if(avg_atr > 0)
    {
