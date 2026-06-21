@@ -1,0 +1,198 @@
+"""
+=============================================================
+  Python ML Bridge - MT5 File Bridge
+  Writes trade signals to CSV for MT5 to read, and reads
+  execution confirmations back from MT5.
+  Signal format: timestamp,symbol,action,confidence,sl_pips,tp_pips,
+                 lot_size,model_name,regime
+=============================================================
+"""
+
+import os
+import csv
+import time
+from datetime import datetime
+from typing import Dict, List, Optional
+
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import SIGNAL_FILE, CONFIRMATION_FILE
+from strategies.signal_generator import TradeSignal
+
+
+# CSV column headers
+SIGNAL_HEADERS = [
+    "timestamp", "symbol", "action", "confidence",
+    "sl_pips", "tp_pips", "lot_size", "model_name", "regime"
+]
+
+CONFIRMATION_HEADERS = [
+    "timestamp", "ticket", "symbol", "action", "lot_size",
+    "open_price", "sl", "tp", "status"
+]
+
+
+class MT5Bridge:
+    """
+    File-based bridge between Python ML system and MetaTrader 5.
+
+    Communication protocol:
+        Python -> MT5: Writes signal CSV (python_bridge_signal.csv)
+        MT5 -> Python: Writes confirmation CSV (python_bridge_confirm.csv)
+
+    The CSV approach is chosen for reliability and simplicity:
+        - No socket connections to maintain
+        - Works across different machines via shared folders
+        - Easy to debug (human-readable files)
+        - MT5 file I/O is well-supported with FileOpen/FileRead
+    """
+
+    def __init__(self, signal_path: Optional[str] = None,
+                 confirmation_path: Optional[str] = None):
+        self.signal_path = signal_path or SIGNAL_FILE
+        self.confirmation_path = confirmation_path or CONFIRMATION_FILE
+        self._ensure_directories()
+
+    def _ensure_directories(self):
+        """Create necessary directories if they don't exist."""
+        for path in [self.signal_path, self.confirmation_path]:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+
+    def write_signal(self, signal: TradeSignal) -> bool:
+        """
+        Write a trade signal to the CSV file for MT5 to read.
+
+        Args:
+            signal: TradeSignal object to write
+
+        Returns:
+            True if written successfully
+        """
+        try:
+            with open(self.signal_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(SIGNAL_HEADERS)
+                writer.writerow([
+                    signal.timestamp,
+                    signal.symbol,
+                    signal.action,
+                    f"{signal.confidence:.4f}",
+                    f"{signal.sl_pips:.1f}",
+                    f"{signal.tp_pips:.1f}",
+                    f"{signal.lot_size:.2f}",
+                    signal.model_name,
+                    signal.regime,
+                ])
+            return True
+        except Exception as e:
+            print(f"[Bridge] Error writing signal: {e}")
+            return False
+
+    def read_signal(self) -> Optional[Dict]:
+        """
+        Read the current signal file (for testing/verification).
+
+        Returns:
+            Dict with signal data or None
+        """
+        if not os.path.exists(self.signal_path):
+            return None
+
+        try:
+            with open(self.signal_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    return dict(row)
+        except Exception as e:
+            print(f"[Bridge] Error reading signal: {e}")
+        return None
+
+    def read_confirmations(self) -> List[Dict]:
+        """
+        Read execution confirmations from MT5.
+
+        Returns:
+            List of confirmation dicts
+        """
+        if not os.path.exists(self.confirmation_path):
+            return []
+
+        confirmations = []
+        try:
+            with open(self.confirmation_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    confirmations.append(dict(row))
+        except Exception as e:
+            print(f"[Bridge] Error reading confirmations: {e}")
+
+        return confirmations
+
+    def clear_signal(self):
+        """Clear the signal file after MT5 has read it."""
+        try:
+            if os.path.exists(self.signal_path):
+                os.remove(self.signal_path)
+        except Exception as e:
+            print(f"[Bridge] Error clearing signal: {e}")
+
+    def clear_confirmations(self):
+        """Clear the confirmation file after Python has processed it."""
+        try:
+            if os.path.exists(self.confirmation_path):
+                os.remove(self.confirmation_path)
+        except Exception as e:
+            print(f"[Bridge] Error clearing confirmations: {e}")
+
+    def is_signal_fresh(self, max_age_seconds: int = 300) -> bool:
+        """
+        Check if the current signal file is fresh enough to act on.
+
+        Args:
+            max_age_seconds: Maximum age in seconds
+
+        Returns:
+            True if signal exists and is within max age
+        """
+        if not os.path.exists(self.signal_path):
+            return False
+
+        try:
+            file_age = time.time() - os.path.getmtime(self.signal_path)
+            return file_age < max_age_seconds
+        except Exception:
+            return False
+
+    def write_heartbeat(self):
+        """Write a heartbeat file to indicate the bridge is running."""
+        heartbeat_path = os.path.join(
+            os.path.dirname(self.signal_path), "python_bridge_heartbeat.txt"
+        )
+        try:
+            with open(heartbeat_path, "w") as f:
+                f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("Python ML Bridge Active\n")
+        except Exception as e:
+            print(f"[Bridge] Error writing heartbeat: {e}")
+
+    def get_bridge_status(self) -> Dict:
+        """Get the current status of the bridge."""
+        signal_exists = os.path.exists(self.signal_path)
+        confirm_exists = os.path.exists(self.confirmation_path)
+
+        status = {
+            "signal_file_exists": signal_exists,
+            "confirmation_file_exists": confirm_exists,
+            "signal_path": self.signal_path,
+            "confirmation_path": self.confirmation_path,
+        }
+
+        if signal_exists:
+            status["signal_age_seconds"] = (
+                time.time() - os.path.getmtime(self.signal_path)
+            )
+            status["signal_fresh"] = self.is_signal_fresh()
+
+        return status
