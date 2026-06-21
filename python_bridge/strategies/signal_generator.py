@@ -125,6 +125,10 @@ class SignalGenerator:
         if elapsed < self.signal_config.cooldown_seconds:
             return hold_signal
 
+        # Guard: refuse to generate non-HOLD signals if models are not loaded
+        if not self.ensemble.models_loaded:
+            return hold_signal
+
         # 1. Get ensemble prediction
         try:
             prediction = self.ensemble.predict(features)

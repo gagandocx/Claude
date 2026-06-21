@@ -11,6 +11,7 @@
 import os
 import csv
 import time
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -63,6 +64,8 @@ class MT5Bridge:
     def write_signal(self, signal: TradeSignal) -> bool:
         """
         Write a trade signal to the CSV file for MT5 to read.
+        Uses atomic write (write to temp file, then rename) to prevent
+        race conditions where MT5 reads a partially-written file.
 
         Args:
             signal: TradeSignal object to write
@@ -71,20 +74,34 @@ class MT5Bridge:
             True if written successfully
         """
         try:
-            with open(self.signal_path, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(SIGNAL_HEADERS)
-                writer.writerow([
-                    signal.timestamp,
-                    signal.symbol,
-                    signal.action,
-                    f"{signal.confidence:.4f}",
-                    f"{signal.sl_pips:.1f}",
-                    f"{signal.tp_pips:.1f}",
-                    f"{signal.lot_size:.2f}",
-                    signal.model_name,
-                    signal.regime,
-                ])
+            directory = os.path.dirname(self.signal_path) or "."
+            # Write to a temporary file in the same directory
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="signal_", dir=directory
+            )
+            try:
+                with os.fdopen(fd, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(SIGNAL_HEADERS)
+                    writer.writerow([
+                        signal.timestamp,
+                        signal.symbol,
+                        signal.action,
+                        f"{signal.confidence:.4f}",
+                        f"{signal.sl_pips:.1f}",
+                        f"{signal.tp_pips:.1f}",
+                        f"{signal.lot_size:.2f}",
+                        signal.model_name,
+                        signal.regime,
+                    ])
+                # Atomic rename (on POSIX this is atomic; on Windows it
+                # replaces if the target exists on Python 3.3+)
+                os.replace(tmp_path, self.signal_path)
+            except Exception:
+                # Clean up temp file on error
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
             return True
         except Exception as e:
             print(f"[Bridge] Error writing signal: {e}")

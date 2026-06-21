@@ -123,8 +123,11 @@ class TestRiskManager:
     """Tests for the risk management system."""
 
     def test_position_sizing_kelly(self):
-        """Test Kelly criterion position sizing."""
+        """Test Kelly criterion position sizing with sufficient history."""
         rm = RiskManager(RiskConfig(account_balance=10000))
+        # Add enough trades to exceed the minimum history threshold (20)
+        for i in range(25):
+            rm.close_trade(str(i), 50.0 if i % 2 == 0 else -30.0)
         lot = rm.calculate_position_size(
             confidence=0.8, atr=5.0,
             win_rate=0.6, avg_win_loss_ratio=1.5
@@ -132,9 +135,22 @@ class TestRiskManager:
         assert lot >= rm.config.min_lot_size
         assert lot <= rm.config.max_lot_size
 
+    def test_position_size_min_lot_when_insufficient_history(self):
+        """Test that with fewer than 20 trades, minimum lot size is returned."""
+        rm = RiskManager(RiskConfig(account_balance=10000))
+        # No trade history
+        lot = rm.calculate_position_size(
+            confidence=0.9, atr=5.0,
+            win_rate=0.6, avg_win_loss_ratio=1.5
+        )
+        assert lot == rm.config.min_lot_size
+
     def test_position_size_scales_with_confidence(self):
         """Test that higher confidence gives larger position."""
         rm = RiskManager(RiskConfig(account_balance=10000))
+        # Add enough trades to enable Kelly sizing
+        for i in range(25):
+            rm.close_trade(str(i), 50.0 if i % 2 == 0 else -30.0)
         lot_low = rm.calculate_position_size(confidence=0.5, atr=5.0)
         lot_high = rm.calculate_position_size(confidence=0.9, atr=5.0)
         assert lot_high >= lot_low
@@ -250,18 +266,17 @@ class TestRegimeDetector:
 class TestSignalGenerator:
     """Integration tests for signal generation."""
 
-    def test_hold_signal_on_low_confidence(self, signal_config, mock_features, mock_prices):
-        """Test that low confidence results in HOLD."""
+    def test_hold_signal_when_models_not_loaded(self, signal_config, mock_features, mock_prices):
+        """Test that unloaded models always produce HOLD."""
         gen = SignalGenerator(signal_config=signal_config)
-        # With random untrained models, confidence should be low
+        # models_loaded defaults to False, so all signals should be HOLD
         signal = gen.generate_signal(
             features=mock_features,
             prices=mock_prices,
             atr=5.0,
             current_price=2000.0
         )
-        # Untrained models will likely produce HOLD due to low agreement/confidence
-        assert signal.action in ["BUY", "SELL", "HOLD"]
+        assert signal.action == "HOLD"
 
     def test_signal_has_required_fields(self, signal_config, mock_features, mock_prices):
         """Test that generated signals have all required fields."""
@@ -304,3 +319,18 @@ class TestSignalGenerator:
         )
         if signal.action == "HOLD":
             assert signal.lot_size == 0.0
+
+    def test_models_loaded_allows_signals(self, signal_config, mock_features, mock_prices):
+        """Test that with models_loaded=True, signals can be generated."""
+        gen = SignalGenerator(signal_config=signal_config)
+        # Mark models as loaded to allow signal generation
+        gen.ensemble.models_loaded = True
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=mock_prices,
+            atr=5.0,
+            current_price=2000.0
+        )
+        # With random weights and models_loaded=True, the result depends
+        # on whether confidence/agreement thresholds are met
+        assert signal.action in ["BUY", "SELL", "HOLD"]

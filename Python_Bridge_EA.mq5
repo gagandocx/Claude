@@ -23,7 +23,9 @@
 //+------------------------------------------------------------------+
 input string   InpSignalFile       = "python_bridge_signal.csv";   // Signal file name
 input string   InpConfirmFile      = "python_bridge_confirm.csv";  // Confirmation file name
+input string   InpHeartbeatFile    = "python_bridge_heartbeat.txt"; // Heartbeat file name
 input int      InpMaxSignalAge     = 300;       // Max signal age (seconds)
+input int      InpMaxHeartbeatAge  = 60;        // Max heartbeat age (seconds)
 input double   InpMaxLotSize       = 1.0;       // Maximum lot size
 input double   InpMinConfidence    = 0.65;      // Minimum confidence to trade
 input int      InpMagicNumber      = 20240115;  // Magic number for orders
@@ -158,6 +160,34 @@ bool ReadSignalFile()
 }
 
 //+------------------------------------------------------------------+
+//| Check if the Python bridge is alive via heartbeat file             |
+//+------------------------------------------------------------------+
+bool IsBridgeAlive()
+{
+    // Open heartbeat file to check its modification time
+    int fileHandle = FileOpen(InpHeartbeatFile, FILE_READ | FILE_TXT | FILE_COMMON);
+    if(fileHandle == INVALID_HANDLE)
+    {
+        // No heartbeat file means bridge has never run or file was deleted
+        return false;
+    }
+
+    // Get the file's properties to determine age
+    // FileGetInteger with FILE_MODIFY_DATE returns the last modification datetime
+    datetime modTime = (datetime)FileGetInteger(fileHandle, FILE_MODIFY_DATE);
+    FileClose(fileHandle);
+
+    // Check age of heartbeat file
+    datetime currentTime = TimeCurrent();
+    if(currentTime - modTime > InpMaxHeartbeatAge)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+//+------------------------------------------------------------------+
 //| Validate signal before execution                                   |
 //+------------------------------------------------------------------+
 bool ValidateSignal()
@@ -166,6 +196,13 @@ bool ValidateSignal()
     if(g_lastAction != "BUY" && g_lastAction != "SELL")
     {
         g_status = "Signal: HOLD - No action needed";
+        return false;
+    }
+
+    // Check Python bridge heartbeat - refuse signals if bridge is offline
+    if(!IsBridgeAlive())
+    {
+        g_status = "Bridge offline (heartbeat stale > " + IntegerToString(InpMaxHeartbeatAge) + "s)";
         return false;
     }
 

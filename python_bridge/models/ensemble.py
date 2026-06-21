@@ -73,6 +73,7 @@ class EnsembleManager:
         # State
         self.gb_fitted = False
         self.meta_fitted = False
+        self.models_loaded = False  # True only after successful checkpoint load
         self.device = torch.device("cpu")
 
     def to_device(self, device: str = "cpu"):
@@ -95,7 +96,7 @@ class EnsembleManager:
         self.transformer.eval()
         with torch.no_grad():
             tensor = torch.FloatTensor(x).to(self.device)
-            probs = self.transformer(tensor)
+            probs = self.transformer.predict(tensor)
             return probs.cpu().numpy()
 
     def predict_lstm(self, x: np.ndarray) -> np.ndarray:
@@ -111,7 +112,7 @@ class EnsembleManager:
         self.lstm.eval()
         with torch.no_grad():
             tensor = torch.FloatTensor(x).to(self.device)
-            probs = self.lstm(tensor)
+            probs = self.lstm.predict(tensor)
             return probs.cpu().numpy()
 
     def predict_gradient_boost(self, x: np.ndarray) -> np.ndarray:
@@ -282,17 +283,21 @@ class EnsembleManager:
 
     def load_models(self, path: str):
         """Load all model checkpoints."""
+        nn_loaded = False
+
         transformer_path = os.path.join(path, "transformer.pth")
         if os.path.exists(transformer_path):
             self.transformer.load_state_dict(
                 torch.load(transformer_path, map_location=self.device)
             )
+            nn_loaded = True
 
         lstm_path = os.path.join(path, "lstm.pth")
         if os.path.exists(lstm_path):
             self.lstm.load_state_dict(
                 torch.load(lstm_path, map_location=self.device)
             )
+            nn_loaded = True
 
         import joblib
         gb_path = os.path.join(path, "gradient_boost.joblib")
@@ -304,3 +309,7 @@ class EnsembleManager:
         if os.path.exists(meta_path):
             self.meta_learner = joblib.load(meta_path)
             self.meta_fitted = True
+
+        # Only mark as loaded if at least one neural network loaded successfully
+        if nn_loaded:
+            self.models_loaded = True

@@ -69,20 +69,29 @@ class TestTransformer:
         output = model(sample_input)
         assert output.shape == (4, 3), f"Expected (4, 3), got {output.shape}"
 
-    def test_output_probabilities(self, transformer_config, sample_input):
-        """Test that output sums to 1 (valid probabilities)."""
+    def test_predict_probabilities(self, transformer_config, sample_input):
+        """Test that predict() returns valid probabilities summing to 1."""
         model = MarketTransformer(transformer_config)
-        output = model(sample_input)
+        output = model.predict(sample_input)
         sums = output.sum(dim=1)
         assert torch.allclose(sums, torch.ones(4), atol=1e-5), \
             f"Probabilities should sum to 1, got {sums}"
 
-    def test_output_range(self, transformer_config, sample_input):
-        """Test that all outputs are in [0, 1] range."""
+    def test_predict_output_range(self, transformer_config, sample_input):
+        """Test that predict() outputs are in [0, 1] range."""
         model = MarketTransformer(transformer_config)
-        output = model(sample_input)
+        output = model.predict(sample_input)
         assert (output >= 0).all(), "Output contains negative values"
         assert (output <= 1).all(), "Output contains values > 1"
+
+    def test_forward_returns_logits(self, transformer_config, sample_input):
+        """Test that forward() returns raw logits (not probabilities)."""
+        model = MarketTransformer(transformer_config)
+        output = model(sample_input)
+        # Raw logits can be negative and don't need to sum to 1
+        # Verify they are not constrained to [0,1]
+        # (with random init, logits should span beyond [0,1])
+        assert output.shape == (4, 3)
 
     def test_gradient_flow(self, transformer_config, sample_input):
         """Test that gradients flow through the model."""
@@ -110,6 +119,9 @@ class TestTransformer:
         assert confidence.shape == (4, 1), f"Expected conf (4, 1), got {confidence.shape}"
         assert (confidence >= 0).all() and (confidence <= 1).all(), \
             "Confidence should be in [0, 1]"
+        # Probabilities from predict_with_confidence should sum to 1
+        sums = probs.sum(dim=1)
+        assert torch.allclose(sums, torch.ones(4), atol=1e-5)
 
     def test_different_batch_sizes(self, transformer_config):
         """Test model works with different batch sizes."""
@@ -141,20 +153,27 @@ class TestLSTM:
         output = model(sample_input)
         assert output.shape == (4, 3), f"Expected (4, 3), got {output.shape}"
 
-    def test_output_probabilities(self, lstm_config, sample_input):
-        """Test that output sums to 1 (valid probabilities)."""
+    def test_predict_probabilities(self, lstm_config, sample_input):
+        """Test that predict() returns valid probabilities summing to 1."""
         model = MarketLSTM(lstm_config)
-        output = model(sample_input)
+        output = model.predict(sample_input)
         sums = output.sum(dim=1)
         assert torch.allclose(sums, torch.ones(4), atol=1e-5), \
             f"Probabilities should sum to 1, got {sums}"
 
-    def test_output_range(self, lstm_config, sample_input):
-        """Test that all outputs are in [0, 1] range."""
+    def test_predict_output_range(self, lstm_config, sample_input):
+        """Test that predict() outputs are in [0, 1] range."""
         model = MarketLSTM(lstm_config)
-        output = model(sample_input)
+        output = model.predict(sample_input)
         assert (output >= 0).all(), "Output contains negative values"
         assert (output <= 1).all(), "Output contains values > 1"
+
+    def test_forward_returns_logits(self, lstm_config, sample_input):
+        """Test that forward() returns raw logits (not probabilities)."""
+        model = MarketLSTM(lstm_config)
+        output = model(sample_input)
+        # Raw logits can be negative and don't need to sum to 1
+        assert output.shape == (4, 3)
 
     def test_gradient_flow(self, lstm_config, sample_input):
         """Test that gradients flow through the LSTM model."""
@@ -180,6 +199,9 @@ class TestLSTM:
         assert probs.shape == (4, 3)
         assert confidence.shape == (4, 1)
         assert (confidence >= 0).all() and (confidence <= 1).all()
+        # Probabilities from predict_with_confidence should sum to 1
+        sums = probs.sum(dim=1)
+        assert torch.allclose(sums, torch.ones(4), atol=1e-5)
 
     def test_bidirectional(self, lstm_config, sample_input):
         """Test bidirectional LSTM works correctly."""

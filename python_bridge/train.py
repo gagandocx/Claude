@@ -351,8 +351,8 @@ def train_all():
     transformer.eval()
     lstm.eval()
     with torch.no_grad():
-        t_preds = transformer(torch.FloatTensor(X_val)).numpy()
-        l_preds = lstm(torch.FloatTensor(X_val)).numpy()
+        t_preds = transformer.predict(torch.FloatTensor(X_val)).numpy()
+        l_preds = lstm.predict(torch.FloatTensor(X_val)).numpy()
     gb_preds = ensemble.predict_gradient_boost(X_val)
     stacked = np.concatenate([t_preds, l_preds, gb_preds], axis=1)
     ensemble.fit_meta_learner(stacked, y_val)
@@ -361,8 +361,8 @@ def train_all():
     # 6. Evaluate on test set
     logger.info("\n--- Test Set Evaluation ---")
     with torch.no_grad():
-        t_test = transformer(torch.FloatTensor(X_test)).numpy()
-        l_test = lstm(torch.FloatTensor(X_test)).numpy()
+        t_test = transformer.predict(torch.FloatTensor(X_test)).numpy()
+        l_test = lstm.predict(torch.FloatTensor(X_test)).numpy()
     gb_test = ensemble.predict_gradient_boost(X_test)
 
     # Individual model accuracies

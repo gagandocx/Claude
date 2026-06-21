@@ -11,13 +11,14 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 import ta
+import json
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DataConfig
+from config.settings import DataConfig, MODEL_DIR
 
 
 class MarketDataFetcher:
@@ -233,6 +234,9 @@ class MarketDataFetcher:
         stds = np.nanstd(data, axis=0) + 1e-10
         data = (data - means) / stds
 
+        # Save normalization stats for use during inference
+        self._save_normalization_stats(feature_cols, means, stds)
+
         # Generate labels based on future returns
         close_prices = features["close"].values
         future_returns = np.zeros(len(close_prices))
@@ -256,9 +260,37 @@ class MarketDataFetcher:
 
         return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64)
 
+    def _save_normalization_stats(self, feature_cols, means, stds):
+        """Save normalization statistics to JSON for inference use."""
+        stats_path = os.path.join(MODEL_DIR, "normalization_stats.json")
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        stats = {
+            "feature_cols": list(feature_cols),
+            "means": means.tolist(),
+            "stds": stds.tolist(),
+        }
+        with open(stats_path, "w") as f:
+            json.dump(stats, f)
+
+    def _load_normalization_stats(self):
+        """Load saved normalization statistics. Returns (means, stds) or None."""
+        stats_path = os.path.join(MODEL_DIR, "normalization_stats.json")
+        if not os.path.exists(stats_path):
+            return None
+        try:
+            with open(stats_path, "r") as f:
+                stats = json.load(f)
+            means = np.array(stats["means"], dtype=np.float32)
+            stds = np.array(stats["stds"], dtype=np.float32)
+            return means, stds
+        except Exception:
+            return None
+
     def get_latest_features(self, seq_length: int = 64) -> Optional[np.ndarray]:
         """
         Get the most recent feature sequence for live prediction.
+        Uses training normalization statistics if available to ensure
+        consistent feature distributions between training and inference.
 
         Returns:
             Array of shape (1, seq_length, num_features) or None
@@ -276,10 +308,23 @@ class MarketDataFetcher:
                                      "ichimoku_a", "ichimoku_b", "ichimoku_base"]]
         data = features[feature_cols].values[-seq_length:].astype(np.float32)
 
-        # Normalize
-        means = np.nanmean(data, axis=0)
-        stds = np.nanstd(data, axis=0) + 1e-10
-        data = (data - means) / stds
+        # Use saved training normalization stats if available
+        saved_stats = self._load_normalization_stats()
+        if saved_stats is not None:
+            means, stds = saved_stats
+            # Handle case where feature count may differ
+            if len(means) == data.shape[1]:
+                data = (data - means) / stds
+            else:
+                # Fallback to per-window normalization if feature count mismatch
+                means = np.nanmean(data, axis=0)
+                stds = np.nanstd(data, axis=0) + 1e-10
+                data = (data - means) / stds
+        else:
+            # Fallback to per-window normalization if no saved stats
+            means = np.nanmean(data, axis=0)
+            stds = np.nanstd(data, axis=0) + 1e-10
+            data = (data - means) / stds
 
         return data.reshape(1, seq_length, -1)
 

@@ -136,7 +136,8 @@ class MarketLSTM(nn.Module):
             x: Input tensor of shape (batch, seq_len, input_features)
 
         Returns:
-            Tensor of shape (batch, num_classes) with class probabilities
+            Tensor of shape (batch, num_classes) with raw logits.
+            Use predict() or predict_with_confidence() for probabilities.
         """
         # Project input
         x = self.input_projection(x)
@@ -152,8 +153,21 @@ class MarketLSTM(nn.Module):
             # Use last hidden state if no attention
             context = lstm_out[:, -1, :]
 
-        # Classification
+        # Classification (raw logits)
         logits = self.classifier(context)
+        return logits
+
+    def predict(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Get class probabilities (applies softmax to logits).
+
+        Args:
+            x: Input tensor of shape (batch, seq_len, input_features)
+
+        Returns:
+            Tensor of shape (batch, num_classes) with class probabilities
+        """
+        logits = self.forward(x)
         return F.softmax(logits, dim=-1)
 
     def predict_with_confidence(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

@@ -64,6 +64,11 @@ class RiskManager:
         if not self.is_trading_allowed():
             return 0.0
 
+        # If insufficient trade history, return minimum lot size
+        # to avoid using assumed edge from default parameters
+        if len(self._trade_history) < 20:
+            return self.config.min_lot_size
+
         # Default parameters
         win_rate = win_rate or 0.55
         avg_win_loss_ratio = avg_win_loss_ratio or 1.5

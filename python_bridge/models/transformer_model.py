@@ -127,7 +127,8 @@ class MarketTransformer(nn.Module):
             mask: Optional attention mask
 
         Returns:
-            Tensor of shape (batch, num_classes) with class probabilities
+            Tensor of shape (batch, num_classes) with raw logits.
+            Use predict() or predict_with_confidence() for probabilities.
         """
         # Project input to model dimension
         x = self.input_projection(x)
@@ -142,8 +143,23 @@ class MarketTransformer(nn.Module):
         # Global average pooling over sequence dimension
         x = x.mean(dim=1)  # (batch, d_model)
 
-        # Classification
+        # Classification (raw logits)
         logits = self.classifier(x)
+        return logits
+
+    def predict(self, x: torch.Tensor,
+                mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Get class probabilities (applies softmax to logits).
+
+        Args:
+            x: Input tensor of shape (batch, seq_len, input_features)
+            mask: Optional attention mask
+
+        Returns:
+            Tensor of shape (batch, num_classes) with class probabilities
+        """
+        logits = self.forward(x, mask=mask)
         return F.softmax(logits, dim=-1)
 
     def predict_with_confidence(self, x: torch.Tensor) -> tuple:
