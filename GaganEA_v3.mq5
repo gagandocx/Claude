@@ -236,7 +236,8 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool IsGoodTime()
 {
-   int hour = TimeHour(TimeCurrent());
+   MqlDateTime _dt; TimeToStruct(TimeCurrent(), _dt);
+   int hour = _dt.hour;
 
    // Best trading windows from 47M tick analysis:
    // Buy bias:  09,10,13,14,23
@@ -268,7 +269,8 @@ bool IsThursday()
 //+------------------------------------------------------------------+
 int HourBias()
 {
-   int h = TimeHour(TimeCurrent());
+   MqlDateTime _dt; TimeToStruct(TimeCurrent(), _dt);
+   int h = _dt.hour;
    // Strong buy hours from data
    if(h==9 || h==10 || h==13 || h==14 || h==23) return 1;
    // Strong sell hours from data
@@ -282,7 +284,8 @@ int HourBias()
 //+------------------------------------------------------------------+
 int SessionBias()
 {
-   int h = TimeHour(TimeCurrent());
+   MqlDateTime _dt; TimeToStruct(TimeCurrent(), _dt);
+   int h = _dt.hour;
    if(h >= 8  && h <= 16) return 1;   // London — bullish bias
    if(h >= 13 && h <= 21) return -1;  // NY — bearish bias
    if(h >= 1  && h <= 8)  return 1;   // Asian — slight bullish bias
@@ -695,8 +698,8 @@ void UpdateDashboard()
 {
    if(!Show_Dashboard) return;
 
-   int h = TimeHour(TimeCurrent());
    MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
+   int h = dt.hour;
    string days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
    string day_str = days[dt.day_of_week];
    bool thu = (dt.day_of_week == 4);
