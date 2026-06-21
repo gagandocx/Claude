@@ -151,10 +151,10 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    // Load indicator buffers
-   if(CopyBuffer(h1_ema_handle,      0, 0, 3, h1_ema)      < 3) return;
-   if(CopyBuffer(m1_ema_fast_handle, 0, 0, 4, m1_ema_fast) < 4) return;
-   if(CopyBuffer(m1_ema_slow_handle, 0, 0, 4, m1_ema_slow) < 4) return;
-   if(CopyBuffer(m1_atr_handle,      0, 0, atr_sample+2, m1_atr) < atr_sample+2) return;
+   if(CopyBuffer(h1_ema_handle,      0, 0, 3, h1_ema)      < 3) { Print("DEBUG CopyBuffer h1_ema failed");      return; }
+   if(CopyBuffer(m1_ema_fast_handle, 0, 0, 4, m1_ema_fast) < 4) { Print("DEBUG CopyBuffer m1_ema_fast failed");  return; }
+   if(CopyBuffer(m1_ema_slow_handle, 0, 0, 4, m1_ema_slow) < 4) { Print("DEBUG CopyBuffer m1_ema_slow failed");  return; }
+   if(CopyBuffer(m1_atr_handle,      0, 0, atr_sample+2, m1_atr) < atr_sample+2) { Print("DEBUG CopyBuffer atr failed"); return; }
 
    // Compute avg ATR baseline (last 50 closed bars)
    double atr_sum = 0;
@@ -180,21 +180,42 @@ void OnTick()
    if(cur_bar == last_bar) { if(Show_Panel) UpdatePanel(); return; }
    last_bar = cur_bar;
 
+   // DEBUG: print every new bar state
+   Print("DEBUG bar=", TimeToString(cur_bar),
+         " bid=",    bid,
+         " spread=", DoubleToString(spread / point_size / 10.0, 2),
+         " atr=",    DoubleToString(cur_atr, _Digits),
+         " avgATR=", DoubleToString(avg_atr, _Digits),
+         " fast=",   DoubleToString(m1_ema_fast[1], _Digits),
+         " slow=",   DoubleToString(m1_ema_slow[1], _Digits),
+         " h1ema=",  DoubleToString(h1_ema[1], _Digits));
+
    // --- SESSION & DAY FILTERS ---
-   if(Use_DayFilter  && IsThursday())    { panel_signal="SKIP THU";  panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
-   if(Use_TimeFilter && !IsGoodHour())   { panel_signal="TIME OFF";  panel_sig_col=clrGray;   if(Show_Panel) UpdatePanel(); return; }
+   if(Use_DayFilter  && IsThursday())
+   { Print("DEBUG blocked: THURSDAY"); panel_signal="SKIP THU"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
+
+   if(Use_TimeFilter && !IsGoodHour())
+   { Print("DEBUG blocked: TIME FILTER hour=", TimeHour_MQL5()); panel_signal="TIME OFF"; panel_sig_col=clrGray; if(Show_Panel) UpdatePanel(); return; }
+
    if(Use_SpreadFilter && spread > Max_Spread_Pts * point_size * 10)
-                                         { panel_signal="WIDE SPRD"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
+   { Print("DEBUG blocked: SPREAD=", spread/point_size/10.0, " max=", Max_Spread_Pts); panel_signal="WIDE SPRD"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
 
    // --- VOLATILITY FILTER ---
-   // Skip if current ATR > MaxATR_Entry x avg ATR (news spike / extreme volatility)
-   if(cur_atr > MaxATR_Entry * avg_atr)  { panel_signal="HIGH VOL";  panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
+   if(cur_atr > MaxATR_Entry * avg_atr)
+   { Print("DEBUG blocked: HIGH VOL atr=", cur_atr, " avg=", avg_atr, " ratio=", cur_atr/avg_atr); panel_signal="HIGH VOL"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
 
    // --- MAX TRADES ---
-   if(open_buys + open_sells >= Max_Trades) { panel_signal="MAX TRADES"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
+   if(open_buys + open_sells >= Max_Trades)
+   { Print("DEBUG blocked: MAX TRADES=", open_buys+open_sells); panel_signal="MAX TRADES"; panel_sig_col=clrOrange; if(Show_Panel) UpdatePanel(); return; }
 
    // --- SIGNAL ---
    int sig = GetSignal(cur_atr);
+   Print("DEBUG signal=", sig,
+         " cross_up=",   (m1_ema_fast[2]<=m1_ema_slow[2] && m1_ema_fast[1]>m1_ema_slow[1]),
+         " cross_dn=",   (m1_ema_fast[2]>=m1_ema_slow[2] && m1_ema_fast[1]<m1_ema_slow[1]),
+         " h1_bull=",    (bid > h1_ema[1]),
+         " h1_bear=",    (bid < h1_ema[1]));
+
    if(sig == 1)       { panel_signal="BUY";     panel_sig_col=clrLime;   OpenTrade(ORDER_TYPE_BUY,  cur_atr); }
    else if(sig == -1) { panel_signal="SELL";    panel_sig_col=clrTomato; OpenTrade(ORDER_TYPE_SELL, cur_atr); }
    else               { panel_signal="WAITING"; panel_sig_col=clrYellow; }
@@ -344,8 +365,13 @@ void ManageTrailing(double atr)
 }
 
 
-//+------------------------------------------------------------------+
-//| TIME & SESSION FILTERS — from 47M tick analysis                  |
+int TimeHour_MQL5()
+{
+   MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
+   return dt.hour;
+}
+
+
 //+------------------------------------------------------------------+
 bool IsGoodHour()
 {
