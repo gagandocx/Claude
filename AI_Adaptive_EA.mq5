@@ -738,7 +738,7 @@ double g_close[];
 double g_high[];
 double g_low[];
 double g_open[];
-double g_volume[];
+long g_volume[];
 datetime g_time[];
 
 // Feature buffer for AI input
@@ -3088,7 +3088,7 @@ void Feature_SpectralAnalysis(double &prices[], int size)
 
 //--- Order flow imbalance and microstructure features
 void Feature_Microstructure(double &close[], double &high[], double &low[], 
-                           double &volume[], int size)
+                           long &volume[], int size)
 {
    if(size < 5) return;
    
