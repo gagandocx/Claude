@@ -97,7 +97,7 @@ input bool   Use_Asian_Range     = true;  // Use Asian range for reference
 input group "=== TRADE SETTINGS ==="
 input ENUM_TIMEFRAMES Entry_TF   = PERIOD_M5;  // Entry timeframe
 input ENUM_TIMEFRAMES HTF        = PERIOD_H1;  // Higher timeframe for structure
-input double SL_Buffer_Pts       = 5.0;        // Extra SL buffer above/below OB (pts)
+input double SL_Buffer_Pts       = 30.0;       // Extra SL buffer above/below OB (pts)
 input double RR_Ratio            = 2.0;        // Risk:Reward ratio
 input bool   Use_FVG_TP          = true;       // Use FVG as TP target if available
 
@@ -617,13 +617,17 @@ void OpenTrade(int direction)
    double spread = ask - bid;
    double buf    = SL_Buffer_Pts * point_size;
 
+   // Get broker minimum stop distance in price
+   long   stops_level = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double min_stop    = (stops_level + 5) * point_size; // add 5pt safety margin
+
    double price, sl, tp, sl_dist;
 
    if(direction == 1) // BUY
    {
       price = ask;
-      // SL below the nearest bullish OB bottom
-      sl = price; // fallback
+      sl    = price; // fallback
+
       for(int i = 0; i < ArraySize(bull_obs); i++)
       {
          if(!bull_obs[i].valid || bull_obs[i].traded) continue;
@@ -634,16 +638,25 @@ void OpenTrade(int direction)
             break;
          }
       }
-      sl_dist = price - sl;
-      if(sl_dist <= 0) { Print("ICT | BUY skipped: invalid SL"); return; }
 
-      // TP: next swing high or RR target
+      // Enforce minimum stop distance
+      if(price - sl < min_stop)
+         sl = NormalizeDouble(price - min_stop, _Digits);
+
+      sl_dist = price - sl;
+      if(sl_dist <= 0) { Print("ICT | BUY skipped: invalid SL dist"); return; }
+
       tp = GetBuyTP(price, sl_dist);
+
+      // Enforce minimum TP distance
+      if(tp - price < min_stop)
+         tp = NormalizeDouble(price + sl_dist * RR_Ratio, _Digits);
    }
    else // SELL
    {
       price = bid;
-      sl = price;
+      sl    = price;
+
       for(int i = 0; i < ArraySize(bear_obs); i++)
       {
          if(!bear_obs[i].valid || bear_obs[i].traded) continue;
@@ -654,20 +667,33 @@ void OpenTrade(int direction)
             break;
          }
       }
+
+      // Enforce minimum stop distance
+      if(sl - price < min_stop)
+         sl = NormalizeDouble(price + min_stop, _Digits);
+
       sl_dist = sl - price;
-      if(sl_dist <= 0) { Print("ICT | SELL skipped: invalid SL"); return; }
+      if(sl_dist <= 0) { Print("ICT | SELL skipped: invalid SL dist"); return; }
 
       tp = GetSellTP(price, sl_dist);
+
+      // Enforce minimum TP distance
+      if(price - tp < min_stop)
+         tp = NormalizeDouble(price - sl_dist * RR_Ratio, _Digits);
    }
 
    double lot = CalcLot(sl_dist);
    ENUM_ORDER_TYPE type = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
+   Print("ICT | Attempting ", EnumToString(type),
+         " price=", price, " sl=", sl, " tp=", tp,
+         " sl_dist=", DoubleToString(sl_dist/point_size,1), "pts",
+         " min_stop=", DoubleToString(min_stop/point_size,1), "pts");
+
    if(trade.PositionOpen(_Symbol, type, lot, price, sl, tp, EA_Comment))
       Print("ICT | Trade opened: ", EnumToString(type),
             " lot=", lot, " price=", price,
-            " sl=", sl, " tp=", tp,
-            " sl_dist=", DoubleToString(sl_dist/point_size,1), " pts");
+            " sl=", sl, " tp=", tp);
    else
       Print("ICT | Trade FAILED: ", trade.ResultRetcodeDescription());
 }
