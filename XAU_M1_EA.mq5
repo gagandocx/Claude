@@ -32,36 +32,37 @@ input group "=== TREND FILTER ==="
 input int    H1_EMA_Period    = 50;      // H1 EMA Period (trend direction)
 input int    M1_EMA_Fast      = 8;       // M1 Fast EMA (pullback level)
 input int    M1_EMA_Slow      = 21;      // M1 Slow EMA (trend confirmation)
+input bool   Trade_Both_Dir   = true;    // true=trade both BUY+SELL, false=trend only
 
 input group "=== ATR SETTINGS ==="
 input int    ATR_Period       = 10;      // ATR Period (M1)
-input double SL_ATR_Mult      = 1.5;    // SL = ATR x this  (~4.7 pts avg)
-input double TP_ATR_Mult      = 2.5;    // TP = ATR x this  (~7.9 pts avg)
-input double MaxATR_Entry     = 3.0;    // Skip entry if ATR > this x avg ATR (volatile)
+input double SL_ATR_Mult      = 1.5;    // SL = ATR x this
+input double TP_ATR_Mult      = 2.5;    // TP = ATR x this
+input double MaxATR_Entry     = 5.0;    // Skip if ATR > this x avg (default relaxed)
 
 input group "=== SESSION FILTER (UTC) ==="
-input bool   Use_TimeFilter   = true;   // Enable session filter
-input bool   Use_DayFilter    = true;   // Skip Thursday
+input bool   Use_TimeFilter   = false;  // Enable session filter (OFF by default for backtesting)
+input bool   Use_DayFilter    = false;  // Skip Thursday (OFF by default for backtesting)
 input bool   Use_SpreadFilter = true;   // Enable spread filter
-input double Max_Spread_Pts   = 2.0;    // Max allowed spread (pts)
+input double Max_Spread_Pts   = 5.0;    // Max allowed spread in points (relaxed)
 
 input group "=== RISK MANAGEMENT ==="
 input double Risk_Percent     = 1.0;    // Risk % per trade
 input double Manual_Lot       = 0.0;    // Manual lot (0 = auto)
 input double Max_Lot          = 5.0;    // Max lot size
-input int    Max_Trades       = 2;      // Max open trades at once
+input int    Max_Trades       = 3;      // Max open trades at once
 input bool   Use_BreakEven    = true;   // Move SL to BE after 1x ATR profit
 input bool   Use_Trailing     = true;   // Enable trailing stop
 input double Trail_ATR_Mult   = 1.0;    // Trail distance = ATR x this
 
 input group "=== EQUITY PROTECTION ==="
 input bool   Use_EP           = true;   // Enable equity protection
-input double Max_DD_Pct       = 3.0;    // Max drawdown % before closing all
+input double Max_DD_Pct       = 5.0;    // Max drawdown % before closing all
 
 input group "=== MAGIC & DISPLAY ==="
 input int    Magic            = 11001;  // Magic number
 input string Comment_         = "XAU_M1"; // Trade comment
-input int    Slippage         = 5;      // Max slippage (pts)
+input int    Slippage         = 10;     // Max slippage (pts)
 input bool   Show_Panel       = true;   // Show info panel
 
 
@@ -203,61 +204,37 @@ void OnTick()
 
 
 //+------------------------------------------------------------------+
-//| SIGNAL: EMA Pullback in trend direction                           |
+//| SIGNAL: EMA Cross on M1 with H1 trend filter                     |
 //|                                                                   |
-//| BUY setup:                                                        |
-//|  1. H1 EMA trending up (price above H1 EMA)                      |
-//|  2. M1 fast EMA > slow EMA (M1 uptrend)                          |
-//|  3. Previous bar closed BELOW fast EMA (pullback to EMA)         |
-//|  4. Current bar closes ABOVE fast EMA (bounce confirmed)         |
-//|  5. Hour bias is bullish from tick data                           |
+//| BUY:  Fast EMA crosses ABOVE slow EMA on M1                      |
+//|       + Price is above H1 EMA (or Trade_Both_Dir=true)           |
 //|                                                                   |
-//| SELL setup: mirror of above                                       |
+//| SELL: Fast EMA crosses BELOW slow EMA on M1                      |
+//|       + Price is below H1 EMA (or Trade_Both_Dir=true)           |
 //+------------------------------------------------------------------+
 int GetSignal(double cur_atr)
 {
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   // H1 trend
+   // H1 trend filter
    bool h1_bull = (bid > h1_ema[1]);
    bool h1_bear = (bid < h1_ema[1]);
 
-   // M1 trend: fast EMA above/below slow EMA
-   bool m1_bull = (m1_ema_fast[1] > m1_ema_slow[1]);
-   bool m1_bear = (m1_ema_fast[1] < m1_ema_slow[1]);
+   // M1 EMA cross: bar 2 = before cross, bar 1 = after cross (both closed)
+   bool cross_up   = (m1_ema_fast[2] <= m1_ema_slow[2]) && (m1_ema_fast[1] > m1_ema_slow[1]);
+   bool cross_down = (m1_ema_fast[2] >= m1_ema_slow[2]) && (m1_ema_fast[1] < m1_ema_slow[1]);
 
-   // Candle data for last 2 closed bars
-   double c1 = iClose(_Symbol, PERIOD_M1, 1); // last closed
-   double c2 = iClose(_Symbol, PERIOD_M1, 2); // 2 bars ago
-   double l1 = iLow(_Symbol,   PERIOD_M1, 1);
-   double h1c = iHigh(_Symbol, PERIOD_M1, 1);
-   double o1 = iOpen(_Symbol,  PERIOD_M1, 1);
+   // BUY signal
+   if(cross_up)
+   {
+      if(Trade_Both_Dir || h1_bull) return 1;
+   }
 
-   double fast1 = m1_ema_fast[1]; // fast EMA at last closed bar
-   double fast2 = m1_ema_fast[2]; // fast EMA 2 bars ago
-
-   // Hour directional bias from tick data analysis
-   int h_bias = HourBias();
-
-   // === BUY: pullback to fast EMA then bounce up ===
-   // - H1 bullish + M1 uptrend
-   // - Bar 2 closed below fast EMA (pullback touched EMA)
-   // - Bar 1 closed above fast EMA (bounce confirmed)
-   // - Bar 1 is bullish candle (close > open)
-   // - Hour allows buys
-   bool buy_pullback = (c2 <= fast2) && (c1 > fast1) && (c1 > o1);
-   if(h1_bull && m1_bull && buy_pullback && h_bias >= 0)
-      return 1;
-
-   // === SELL: pullback to fast EMA then bounce down ===
-   // - H1 bearish + M1 downtrend
-   // - Bar 2 closed above fast EMA (pullback touched EMA)
-   // - Bar 1 closed below fast EMA (bounce confirmed)
-   // - Bar 1 is bearish candle (close < open)
-   // - Hour allows sells
-   bool sell_pullback = (c2 >= fast2) && (c1 < fast1) && (c1 < o1);
-   if(h1_bear && m1_bear && sell_pullback && h_bias <= 0)
-      return -1;
+   // SELL signal
+   if(cross_down)
+   {
+      if(Trade_Both_Dir || h1_bear) return -1;
+   }
 
    return 0;
 }
