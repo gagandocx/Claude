@@ -845,16 +845,16 @@ double ActivationDerivative(double x, double output, int activation_type)
 }
 
 //--- Softmax for probability distributions
-void Softmax(double &input[], double &output[], int size)
+void Softmax(double &inp_data[], double &output[], int size)
 {
    double max_val = -1e30;
    for(int i = 0; i < size; i++)
-      if(input[i] > max_val) max_val = input[i];
+      if(inp_data[i] > max_val) max_val = inp_data[i];
    
    double sum = 0.0;
    for(int i = 0; i < size; i++)
    {
-      output[i] = FastExp(input[i] - max_val);
+      output[i] = FastExp(inp_data[i] - max_val);
       sum += output[i];
    }
    if(sum > 0)
@@ -1082,12 +1082,12 @@ void DNN_Initialize()
 }
 
 //--- Forward pass through the Deep Neural Network
-void DNN_Forward(double &input[], double &output[])
+void DNN_Forward(double &inp_data[], double &output[])
 {
    // Copy input to first layer
-   int input_size = MathMin(ArraySize(input), NN_INPUT_SIZE);
+   int input_size = MathMin(ArraySize(inp_data), NN_INPUT_SIZE);
    for(int i = 0; i < input_size; i++)
-      g_dnn.layers[0].output[i] = input[i];
+      g_dnn.layers[0].output[i] = inp_data[i];
    
    // Forward through each hidden layer
    for(int l = 1; l < g_dnn.layer_count; l++)
@@ -1224,22 +1224,22 @@ void DNN_Backward(double &target[], double &predicted[])
 }
 
 //--- Layer Normalization (used in attention mechanism)
-void LayerNorm(double &input[], double &output[], double &gamma[], double &beta[], int size)
+void LayerNorm(double &inp_data[], double &output[], double &gamma[], double &beta[], int size)
 {
    double mean = 0.0, var = 0.0;
-   for(int i = 0; i < size; i++) mean += input[i];
+   for(int i = 0; i < size; i++) mean += inp_data[i];
    mean /= size;
    
    for(int i = 0; i < size; i++)
    {
-      double diff = input[i] - mean;
+      double diff = inp_data[i] - mean;
       var += diff * diff;
    }
    var /= size;
    
    double inv_std = 1.0 / MathSqrt(var + 1e-5);
    for(int i = 0; i < size; i++)
-      output[i] = gamma[i] * (input[i] - mean) * inv_std + beta[i];
+      output[i] = gamma[i] * (inp_data[i] - mean) * inv_std + beta[i];
 }
 
 
@@ -1541,7 +1541,7 @@ void LSTM_Initialize()
 }
 
 //--- LSTM forward step - processes one timestep
-void LSTM_Step(double &input[], int input_size)
+void LSTM_Step(double &inp_data[], int input_size)
 {
    int actual_input = MathMin(input_size, LSTM_HIDDEN_SIZE);
    
@@ -1552,7 +1552,7 @@ void LSTM_Step(double &input[], int input_size)
       for(int j = 0; j < LSTM_HIDDEN_SIZE; j++)
          f_sum += g_lstm.W_forget[i][j] * g_lstm.hidden_state[j];
       for(int j = 0; j < actual_input; j++)
-         f_sum += g_lstm.U_forget[i][j] * input[j];
+         f_sum += g_lstm.U_forget[i][j] * inp_data[j];
       g_lstm.forget_gate[i] = Sigmoid(f_sum);
       
       // Input gate: i_t = sigma(W_i * h_{t-1} + U_i * x_t + b_i)
@@ -1560,7 +1560,7 @@ void LSTM_Step(double &input[], int input_size)
       for(int j = 0; j < LSTM_HIDDEN_SIZE; j++)
          i_sum += g_lstm.W_input[i][j] * g_lstm.hidden_state[j];
       for(int j = 0; j < actual_input; j++)
-         i_sum += g_lstm.U_input[i][j] * input[j];
+         i_sum += g_lstm.U_input[i][j] * inp_data[j];
       g_lstm.input_gate[i] = Sigmoid(i_sum);
       
       // Cell candidate: c_hat_t = tanh(W_c * h_{t-1} + U_c * x_t + b_c)
@@ -1568,7 +1568,7 @@ void LSTM_Step(double &input[], int input_size)
       for(int j = 0; j < LSTM_HIDDEN_SIZE; j++)
          c_sum += g_lstm.W_cell[i][j] * g_lstm.hidden_state[j];
       for(int j = 0; j < actual_input; j++)
-         c_sum += g_lstm.U_cell[i][j] * input[j];
+         c_sum += g_lstm.U_cell[i][j] * inp_data[j];
       g_lstm.cell_candidate[i] = TanhActivation(c_sum);
       
       // Cell state update: c_t = f_t * c_{t-1} + i_t * c_hat_t
@@ -1580,7 +1580,7 @@ void LSTM_Step(double &input[], int input_size)
       for(int j = 0; j < LSTM_HIDDEN_SIZE; j++)
          o_sum += g_lstm.W_output[i][j] * g_lstm.hidden_state[j];
       for(int j = 0; j < actual_input; j++)
-         o_sum += g_lstm.U_output[i][j] * input[j];
+         o_sum += g_lstm.U_output[i][j] * inp_data[j];
       g_lstm.output_gate[i] = Sigmoid(o_sum);
       
       // Hidden state: h_t = o_t * tanh(c_t)
@@ -3470,7 +3470,7 @@ void Adaptation_Initialize()
 //--- Update spread tracking (called every tick)
 void Adaptation_UpdateSpread()
 {
-   double spread = SymbolInfoDouble(_Symbol, SYMBOL_SPREAD) * g_point;
+   double spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * g_point;
    g_adaptation.spread_current = spread;
    
    // Record in history
