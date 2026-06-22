@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Transform the trading system from a model-direction-based system into a rapid high-frequency scalper that uses short-term momentum for direction and AI models only for entry timing. The scalper targets 85%+ win rate with tiny TP ($0.50 = 5 pips) and wide SL ($3.00 = 30 pips), trading only WITH the short-term trend.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1: Modify python_bridge/config/settings.py - SignalConfig: Change atr_sl_multiplier to 0.6 (with ATR capped at 5, this gives 5*0.6=$3 SL = 30 pips). Change atr_tp_multiplier to 0.1 (5*0.1=$0.50 TP = 5 pips). Keep min_confidence at 0.15 and cooldown_seconds at 2.",
     "Step 2: Modify python_bridge/config/settings.py - RiskConfig: Change max_open_positions from 10 to 5. Add a new field max_daily_loss_dollars: float = 50.0 for absolute dollar drawdown cap.",
@@ -30,5 +30,5 @@
     "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -v --tb=short 2>&1 | tail -30"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 236 tests pass including 14 new momentum direction and scalper SL/TP tests. Pre-existing test failures in test_multi_timeframe.py and test_news_calendar.py due to missing yfinance and requests modules are unrelated. Torch CPU and scikit-learn needed for full test suite."
 }
