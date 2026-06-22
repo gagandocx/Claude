@@ -10,7 +10,7 @@
 import numpy as np
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import ta
@@ -318,9 +318,10 @@ class SignalGenerator:
         Detect current trading session based on UTC hour.
 
         Returns:
-            Session name: "asian", "london", "newyork", or "overlap" (London/NY overlap)
+            Session name: "asian", "london", "newyork", "overlap" (London/NY overlap),
+            or "off_session" (21:00-23:59 UTC, between NY close and Asian open)
         """
-        current_hour = datetime.utcnow().hour
+        current_hour = datetime.now(timezone.utc).hour
         cfg = self.session_config
 
         in_london = cfg.london_start <= current_hour < cfg.london_end
@@ -336,8 +337,9 @@ class SignalGenerator:
         elif cfg.asian_start <= current_hour < cfg.asian_end:
             return "asian"
         else:
-            # Outside main sessions (e.g., 21:00-00:00 UTC)
-            return "asian"
+            # Outside main sessions (21:00-23:59 UTC) - pre-Asian dead zone
+            # with reduced position sizing
+            return "off_session"
 
     def _get_session_multiplier(self, session: str) -> float:
         """
@@ -355,6 +357,7 @@ class SignalGenerator:
             "london": cfg.london_multiplier,
             "newyork": cfg.ny_multiplier,
             "overlap": cfg.overlap_multiplier,
+            "off_session": 0.7,  # Reduced sizing for 21:00-23:59 UTC dead zone
         }
         return multipliers.get(session, 1.0)
 
@@ -467,6 +470,11 @@ class SignalGenerator:
 
         Gold is inversely correlated with USD strength. If DXY is rising,
         penalize BUY and favor SELL. If DXY is falling, favor BUY and penalize SELL.
+
+        Note: This method requires `cross_pair_info` to be populated with DXY data
+        (keys: 'dxy_direction', 'dxy_prices', or 'usd_strength'). In production,
+        this is wired up by main.py's multi-pair mode when enabled -- without it,
+        the method returns zero adjustments and is effectively a no-op.
 
         Args:
             prices: Main price DataFrame (not used directly, kept for interface consistency)

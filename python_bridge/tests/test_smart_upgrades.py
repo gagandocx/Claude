@@ -11,7 +11,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from unittest.mock import patch, MagicMock
-from datetime import datetime
+from datetime import datetime, timezone
 
 import sys
 import os
@@ -119,8 +119,7 @@ class TestSessionAwareness:
     def test_asian_session(self, signal_gen):
         """Test Asian session detection (00:00-08:00 UTC)."""
         with patch('strategies.signal_generator.datetime') as mock_dt:
-            mock_dt.utcnow.return_value = datetime(2024, 1, 15, 3, 0, 0)
-            mock_dt.now.return_value = datetime(2024, 1, 15, 3, 0, 0)
+            mock_dt.now.return_value = datetime(2024, 1, 15, 3, 0, 0, tzinfo=timezone.utc)
             mock_dt.strftime = datetime.strftime
             session = signal_gen._detect_session()
             assert session == "asian"
@@ -128,8 +127,7 @@ class TestSessionAwareness:
     def test_london_session(self, signal_gen):
         """Test London session detection (08:00-16:00 UTC)."""
         with patch('strategies.signal_generator.datetime') as mock_dt:
-            mock_dt.utcnow.return_value = datetime(2024, 1, 15, 10, 0, 0)
-            mock_dt.now.return_value = datetime(2024, 1, 15, 10, 0, 0)
+            mock_dt.now.return_value = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
             mock_dt.strftime = datetime.strftime
             session = signal_gen._detect_session()
             assert session == "london"
@@ -137,8 +135,7 @@ class TestSessionAwareness:
     def test_ny_session(self, signal_gen):
         """Test New York session detection (13:00-21:00 UTC)."""
         with patch('strategies.signal_generator.datetime') as mock_dt:
-            mock_dt.utcnow.return_value = datetime(2024, 1, 15, 18, 0, 0)
-            mock_dt.now.return_value = datetime(2024, 1, 15, 18, 0, 0)
+            mock_dt.now.return_value = datetime(2024, 1, 15, 18, 0, 0, tzinfo=timezone.utc)
             mock_dt.strftime = datetime.strftime
             session = signal_gen._detect_session()
             assert session == "newyork"
@@ -146,8 +143,7 @@ class TestSessionAwareness:
     def test_overlap_session(self, signal_gen):
         """Test London/NY overlap detection (13:00-16:00 UTC)."""
         with patch('strategies.signal_generator.datetime') as mock_dt:
-            mock_dt.utcnow.return_value = datetime(2024, 1, 15, 14, 0, 0)
-            mock_dt.now.return_value = datetime(2024, 1, 15, 14, 0, 0)
+            mock_dt.now.return_value = datetime(2024, 1, 15, 14, 0, 0, tzinfo=timezone.utc)
             mock_dt.strftime = datetime.strftime
             session = signal_gen._detect_session()
             assert session == "overlap"
@@ -158,6 +154,7 @@ class TestSessionAwareness:
         assert signal_gen._get_session_multiplier("london") == 1.2
         assert signal_gen._get_session_multiplier("newyork") == 1.0
         assert signal_gen._get_session_multiplier("overlap") == 1.2
+        assert signal_gen._get_session_multiplier("off_session") == 0.7
 
 
 # ─────────────────────────────────────────────

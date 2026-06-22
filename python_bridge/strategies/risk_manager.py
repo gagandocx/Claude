@@ -116,7 +116,11 @@ class RiskManager:
         lot_size = max(self.config.min_lot_size,
                        min(lot_size, self.config.max_lot_size))
 
-        # Apply streak multiplier
+        # Apply streak multiplier (win-streak boost or loss-streak reduction).
+        # Note: the re-clamp below is intentional -- if the base lot is already
+        # at max_lot_size, a win-streak boost (e.g. 1.5x) will be clamped back
+        # to max_lot_size, making the boost a no-op for large accounts. This
+        # prevents streak logic from exceeding the configured risk ceiling.
         lot_size *= self._streak_multiplier
 
         # Re-clamp after streak adjustment
