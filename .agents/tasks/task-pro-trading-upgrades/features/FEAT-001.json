@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Add multi-timeframe data pipeline, news calendar filter, and multi-pair support to the data layer and config. This gives the model M1/M5/M15/H1/H4 inputs, avoids trading during NFP/FOMC/CPI, and processes EURUSD/GBPUSD/USDJPY alongside gold.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "1. Update python_bridge/config/settings.py: Add MultiTimeframeConfig dataclass with timeframes=['1m','5m','15m','1h','4h'] and feature aggregation settings. Add NewsFilterConfig dataclass with high_impact_events=['NFP','FOMC','CPI','ECB','BOE','BOJ'], minutes_before=30, minutes_after=30, calendar_url for fetching economic calendar. Add MultiPairConfig dataclass with pairs=['XAUUSD','EURUSD','GBPUSD','USDJPY'] and yfinance_tickers mapping.",
     "2. Create python_bridge/data/multi_timeframe.py: MultiTimeframeDataFetcher class that fetches OHLCV for all configured timeframes using yfinance, computes features per timeframe using MarketDataFetcher.compute_features(), and concatenates them into a combined feature matrix. Include alignment logic to handle different bar counts across timeframes. Output shape should be (seq_len, num_features_per_tf * num_timeframes).",
@@ -27,5 +27,5 @@
     "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -v"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 125 tests pass (62 new + 63 existing). The news calendar actually fetches real data from ForexFactory JSON API (open internet). Tests that mock empty calendars need to also mock requests.get to prevent real network calls from _ensure_calendar_loaded(). Use python3 (not python) for test commands. The dict field default_factory in dataclass works fine for Python 3.9."
 }
