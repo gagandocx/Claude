@@ -26,11 +26,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.settings import (
     MainConfig, DataConfig, SignalConfig, RiskConfig,
     TransformerConfig, LSTMConfig, EnsembleConfig,
+    MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
 from data.sentiment import SentimentAnalyzer
 from data.alternative_data import AlternativeDataFetcher
+from data.multi_timeframe import MultiTimeframeDataFetcher
+from data.news_calendar import NewsCalendarFilter
 from models.ensemble import EnsembleManager
 from strategies.signal_generator import SignalGenerator
 from strategies.regime_detector import RegimeDetector
@@ -93,6 +96,20 @@ class PythonMLBridge:
         self.signal_generator = SignalGenerator()
         self.bridge = MT5Bridge()
 
+        # Professional trading modules
+        self.multi_tf = (
+            MultiTimeframeDataFetcher()
+            if self.config.enable_multi_timeframe else None
+        )
+        self.news_filter = (
+            NewsCalendarFilter()
+            if self.config.enable_news_filter else None
+        )
+        self.multi_pair_config = (
+            MultiPairConfig()
+            if self.config.enable_multi_pair else None
+        )
+
         # Load models if checkpoints exist
         self._load_models()
 
@@ -101,6 +118,9 @@ class PythonMLBridge:
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
         self.logger.info(f"  Sentiment: {self.config.enable_sentiment}")
         self.logger.info(f"  Alt data: {self.config.enable_alternative_data}")
+        self.logger.info(f"  Multi-timeframe: {self.config.enable_multi_timeframe}")
+        self.logger.info(f"  News filter: {self.config.enable_news_filter}")
+        self.logger.info(f"  Multi-pair: {self.config.enable_multi_pair}")
 
     def _load_models(self):
         """Load model checkpoints if available."""
@@ -117,6 +137,13 @@ class PythonMLBridge:
         """
         Run a single prediction cycle.
 
+        Professional trading logic:
+        1. Check news calendar - skip if high-impact event window
+        2. Fetch multi-timeframe data for trend confirmation
+        3. Get cross-pair correlation features for context
+        4. Run ensemble prediction with enriched features
+        5. Gate signal through risk filters
+
         Returns:
             Dict with cycle results including signal generated
         """
@@ -124,6 +151,19 @@ class PythonMLBridge:
         result = {"timestamp": datetime.now().isoformat(), "signal": None, "error": None}
 
         try:
+            # 0. NEWS FILTER - Professional traders never trade through major events
+            if self.news_filter:
+                if self.news_filter.is_high_impact_window():
+                    upcoming = self.news_filter.get_upcoming_events(hours_ahead=2)
+                    event_info = upcoming[0]["title"] if upcoming else "Unknown"
+                    self.logger.info(
+                        f"NEWS FILTER: Skipping cycle - high impact event window "
+                        f"({event_info}). No trades during NFP/FOMC/CPI."
+                    )
+                    result["error"] = f"News filter active: {event_info}"
+                    result["news_filtered"] = True
+                    return result
+
             # 1. Fetch market data
             df = self.data_fetcher.fetch_ohlcv(interval="1h", period="3mo")
             if df.empty:
@@ -161,7 +201,44 @@ class PythonMLBridge:
                 except Exception as e:
                     self.logger.debug(f"Alt data fetch error: {e}")
 
-            # 7. Generate signal
+            # 7. Multi-timeframe trend confirmation (professional HTF analysis)
+            htf_bias = None
+            if self.multi_tf:
+                try:
+                    htf_bias = self.multi_tf.get_htf_trend_bias()
+                    if htf_bias:
+                        self.logger.debug(
+                            f"HTF Bias: H1={htf_bias.get('1h', 0):.2f} "
+                            f"H4={htf_bias.get('4h', 0):.2f}"
+                        )
+                except Exception as e:
+                    self.logger.debug(f"Multi-TF error: {e}")
+
+            # 8. Cross-pair correlation analysis
+            cross_pair_info = None
+            if self.multi_pair_config:
+                try:
+                    pair_data = self.data_fetcher.fetch_multi_pair(
+                        self.multi_pair_config, period="1mo", interval="1h"
+                    )
+                    if pair_data:
+                        cross_features = self.data_fetcher.compute_cross_pair_features(
+                            pair_data, self.multi_pair_config
+                        )
+                        if not cross_features.empty:
+                            # Extract latest USD strength for logging
+                            if "xpair_usd_strength" in cross_features.columns:
+                                usd_str = cross_features["xpair_usd_strength"].iloc[-1]
+                                cross_pair_info = {"usd_strength": float(usd_str)}
+                                self.logger.debug(
+                                    f"USD Strength: {usd_str:.4f} "
+                                    f"({'strong' if usd_str > 0 else 'weak'} - "
+                                    f"{'bearish' if usd_str > 0 else 'bullish'} for gold)"
+                                )
+                except Exception as e:
+                    self.logger.debug(f"Multi-pair error: {e}")
+
+            # 9. Generate signal
             signal = self.signal_generator.generate_signal(
                 features=feature_input,
                 prices=df,
@@ -171,20 +248,29 @@ class PythonMLBridge:
                 vix_level=vix_level
             )
 
-            # 8. Write signal to bridge
+            # 10. Write signal to bridge
             if signal.action != "HOLD":
                 self.bridge.write_signal(signal)
                 self.logger.info(
                     f"Signal: {signal.action} | Conf: {signal.confidence:.2f} | "
                     f"Lot: {signal.lot_size} | Regime: {signal.regime}"
                 )
+                if htf_bias:
+                    self.logger.info(
+                        f"  HTF Confirmation: H1={htf_bias.get('1h', 0):.2f} "
+                        f"H4={htf_bias.get('4h', 0):.2f}"
+                    )
+                if cross_pair_info:
+                    self.logger.info(
+                        f"  USD Strength: {cross_pair_info.get('usd_strength', 0):.4f}"
+                    )
             else:
                 self.logger.debug("No signal (HOLD)")
 
-            # 9. Write heartbeat
+            # 11. Write heartbeat
             self.bridge.write_heartbeat()
 
-            # 10. Check confirmations from MT5
+            # 12. Check confirmations from MT5
             confirmations = self.bridge.read_confirmations()
             if confirmations:
                 for conf in confirmations:
@@ -192,6 +278,8 @@ class PythonMLBridge:
                 self.bridge.clear_confirmations()
 
             result["signal"] = signal.to_dict()
+            result["htf_bias"] = htf_bias
+            result["cross_pair_info"] = cross_pair_info
 
         except Exception as e:
             result["error"] = str(e)

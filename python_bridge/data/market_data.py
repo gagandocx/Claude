@@ -13,12 +13,12 @@ import yfinance as yf
 import ta
 import json
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DataConfig, MODEL_DIR
+from config.settings import DataConfig, MultiPairConfig, MODEL_DIR
 
 
 class MarketDataFetcher:
@@ -338,3 +338,154 @@ class MarketDataFetcher:
             window=self.config.atr_period
         )
         return float(atr.iloc[-1]) if not atr.empty else 0.0
+
+    def fetch_multi_pair(self, multi_pair_config: Optional['MultiPairConfig'] = None,
+                         period: str = "3mo", interval: str = "1h") -> Dict[str, pd.DataFrame]:
+        """
+        Fetch OHLCV data for all configured currency pairs.
+
+        Professional traders monitor correlated pairs to detect:
+        - USD strength/weakness (via DXY, EURUSD, USDJPY)
+        - Risk-on/risk-off flows (gold vs equities)
+        - Divergences that signal upcoming gold moves
+
+        Args:
+            multi_pair_config: Multi-pair configuration
+            period: Data period to fetch
+            interval: Bar interval
+
+        Returns:
+            Dict mapping pair name to OHLCV DataFrame
+        """
+        if multi_pair_config is None:
+            multi_pair_config = MultiPairConfig()
+
+        pair_data: Dict[str, pd.DataFrame] = {}
+
+        for pair, ticker in multi_pair_config.yfinance_tickers.items():
+            try:
+                data = yf.download(ticker, period=period, interval=interval,
+                                   progress=False)
+                if data.empty:
+                    continue
+
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(0)
+
+                data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+                data.dropna(inplace=True)
+
+                if not data.empty:
+                    pair_data[pair] = data
+
+            except Exception as e:
+                print(f"[MarketData] Error fetching {pair} ({ticker}): {e}")
+                continue
+
+        return pair_data
+
+    def compute_cross_pair_features(self, pair_data: Dict[str, pd.DataFrame],
+                                    multi_pair_config: Optional['MultiPairConfig'] = None) -> pd.DataFrame:
+        """
+        Compute cross-pair correlation and momentum features.
+
+        Professional institutional features:
+        1. Inter-market momentum: Rate of change in correlated pairs
+        2. Relative strength: Performance of gold vs USD pairs
+        3. Correlation signals: Rolling correlation and divergence detection
+        4. USD strength index: Composite USD strength from multiple pairs
+
+        These features give the model context about broader market flows
+        that drive gold prices.
+
+        Args:
+            pair_data: Dict of pair -> OHLCV DataFrame from fetch_multi_pair()
+            multi_pair_config: Configuration for feature computation
+
+        Returns:
+            DataFrame with cross-pair features aligned to common index
+        """
+        if multi_pair_config is None:
+            multi_pair_config = MultiPairConfig()
+
+        if len(pair_data) < 2:
+            return pd.DataFrame()
+
+        # Extract close prices and align to common index
+        closes = {}
+        for pair, df in pair_data.items():
+            if not df.empty:
+                closes[pair] = df["Close"]
+
+        if len(closes) < 2:
+            return pd.DataFrame()
+
+        # Create aligned DataFrame of close prices
+        close_df = pd.DataFrame(closes)
+        close_df.dropna(inplace=True)
+
+        if close_df.empty or len(close_df) < max(multi_pair_config.momentum_periods):
+            return pd.DataFrame()
+
+        features = pd.DataFrame(index=close_df.index)
+
+        # --- Inter-market Momentum ---
+        for pair in close_df.columns:
+            for period in multi_pair_config.momentum_periods:
+                features[f"xpair_{pair}_mom_{period}"] = close_df[pair].pct_change(period)
+
+        # --- Relative Strength (Gold vs each pair) ---
+        if "XAUUSD" in close_df.columns:
+            gold_returns = close_df["XAUUSD"].pct_change(
+                multi_pair_config.relative_strength_window
+            )
+            for pair in close_df.columns:
+                if pair != "XAUUSD":
+                    pair_returns = close_df[pair].pct_change(
+                        multi_pair_config.relative_strength_window
+                    )
+                    features[f"xpair_rs_gold_vs_{pair}"] = gold_returns - pair_returns
+
+        # --- Rolling Correlations ---
+        window = multi_pair_config.correlation_window
+        if "XAUUSD" in close_df.columns:
+            gold_returns_short = close_df["XAUUSD"].pct_change()
+            for pair in close_df.columns:
+                if pair != "XAUUSD":
+                    pair_returns_short = close_df[pair].pct_change()
+                    corr = gold_returns_short.rolling(window).corr(pair_returns_short)
+                    features[f"xpair_corr_gold_{pair}"] = corr
+
+                    # Divergence signal: correlation deviation from expected
+                    key = f"XAUUSD_{pair}"
+                    expected = multi_pair_config.expected_correlations.get(key, 0.0)
+                    features[f"xpair_div_gold_{pair}"] = corr - expected
+
+        # --- Composite USD Strength ---
+        usd_strength_components = []
+        # EURUSD down = USD strong, GBPUSD down = USD strong, USDJPY up = USD strong
+        if "EURUSD" in close_df.columns:
+            eur_mom = -close_df["EURUSD"].pct_change(10)  # Negative = USD strong
+            usd_strength_components.append(eur_mom)
+        if "GBPUSD" in close_df.columns:
+            gbp_mom = -close_df["GBPUSD"].pct_change(10)  # Negative = USD strong
+            usd_strength_components.append(gbp_mom)
+        if "USDJPY" in close_df.columns:
+            jpy_mom = close_df["USDJPY"].pct_change(10)   # Positive = USD strong
+            usd_strength_components.append(jpy_mom)
+
+        if usd_strength_components:
+            usd_composite = pd.concat(usd_strength_components, axis=1).mean(axis=1)
+            features["xpair_usd_strength"] = usd_composite
+            # USD strength trend (is it accelerating?)
+            features["xpair_usd_strength_accel"] = usd_composite.diff(5)
+
+        # --- Volatility Regime Cross-Check ---
+        for pair in close_df.columns:
+            returns = close_df[pair].pct_change()
+            features[f"xpair_{pair}_vol_20"] = returns.rolling(20).std()
+
+        # Drop NaN rows
+        features.dropna(inplace=True)
+
+        return features

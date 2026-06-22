@@ -11,3 +11,4 @@ pytest>=7.3.0
 yfinance>=0.2.0
 feedparser>=6.0.0
 hmmlearn>=0.3.0
+beautifulsoup4>=4.12.0

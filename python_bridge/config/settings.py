@@ -186,6 +186,120 @@ class RegimeConfig:
 
 
 # ─────────────────────────────────────────────
+#  MULTI-TIMEFRAME ANALYSIS
+# ─────────────────────────────────────────────
+@dataclass
+class MultiTimeframeConfig:
+    """Multi-timeframe data pipeline configuration.
+
+    Professional traders analyze multiple timeframes to confirm
+    trend direction, identify key support/resistance levels, and
+    time entries precisely. This config enables M1/M5/M15/H1/H4
+    analysis for institutional-grade signal quality.
+    """
+    timeframes: List[str] = field(default_factory=lambda: [
+        "1m", "5m", "15m", "1h", "4h"
+    ])
+    # Period to fetch for each timeframe (yfinance limits differ per interval)
+    periods: dict = field(default_factory=lambda: {
+        "1m": "7d",       # yfinance max for 1m
+        "5m": "60d",
+        "15m": "60d",
+        "1h": "2y",
+        "4h": "2y",       # We'll use 1h and resample to 4h
+    })
+    # Feature aggregation across timeframes
+    aggregate_method: str = "concat"  # concat | weighted_avg
+    # Minimum bars required per timeframe for valid features
+    min_bars: int = 200
+    # Higher timeframe trend confirmation weight
+    htf_trend_weight: float = 0.6
+    # Lower timeframe entry precision weight
+    ltf_entry_weight: float = 0.4
+    # Enable alignment (forward-fill lower timeframe features to match)
+    align_to_lowest: bool = True
+
+
+# ─────────────────────────────────────────────
+#  NEWS CALENDAR FILTER
+# ─────────────────────────────────────────────
+@dataclass
+class NewsFilterConfig:
+    """News calendar filter to avoid trading during high-impact events.
+
+    Professional traders never hold positions through NFP, FOMC, or CPI
+    releases. These events cause extreme volatility with unpredictable
+    direction, making technical signals unreliable. This filter gates
+    all trade entries during critical event windows.
+    """
+    high_impact_events: List[str] = field(default_factory=lambda: [
+        "NFP", "FOMC", "CPI", "ECB", "BOE", "BOJ",
+        "GDP", "Retail Sales", "PMI", "Interest Rate Decision",
+        "Non-Farm Payrolls", "Consumer Price Index",
+        "Federal Funds Rate", "ECB Interest Rate",
+        "BOE Interest Rate", "BOJ Interest Rate"
+    ])
+    # Minutes to stop trading before event
+    minutes_before: int = 30
+    # Minutes to wait after event before resuming
+    minutes_after: int = 30
+    # Calendar data source URL (free investing.com RSS)
+    calendar_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    # Local cache path for fetched calendar data
+    cache_file: str = "news_calendar_cache.json"
+    # How often to refresh calendar (hours)
+    refresh_interval_hours: int = 6
+    # Enable strict mode (also avoid medium-impact USD events for gold)
+    strict_mode: bool = True
+    # Currencies to monitor (events affecting these currencies matter for XAUUSD)
+    monitored_currencies: List[str] = field(default_factory=lambda: [
+        "USD", "EUR", "GBP", "JPY", "CHF"
+    ])
+
+
+# ─────────────────────────────────────────────
+#  MULTI-PAIR CORRELATION
+# ─────────────────────────────────────────────
+@dataclass
+class MultiPairConfig:
+    """Multi-pair support for cross-market correlation analysis.
+
+    Gold is inversely correlated with USD strength. Professional traders
+    monitor EURUSD, GBPUSD, USDJPY, DXY, and bond yields to gauge USD
+    direction. Cross-pair momentum and divergence signals provide
+    additional confirmation and early warnings for XAUUSD moves.
+    """
+    pairs: List[str] = field(default_factory=lambda: [
+        "XAUUSD", "EURUSD", "GBPUSD", "USDJPY"
+    ])
+    # Yahoo Finance ticker mapping for each pair
+    yfinance_tickers: dict = field(default_factory=lambda: {
+        "XAUUSD": "GC=F",
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X",
+        "USDJPY": "JPY=X",
+        "DXY": "DX-Y.NYB",
+    })
+    # Correlation rolling window (bars)
+    correlation_window: int = 50
+    # Cross-pair momentum lookback periods
+    momentum_periods: List[int] = field(default_factory=lambda: [5, 10, 20])
+    # Relative strength comparison window
+    relative_strength_window: int = 20
+    # Expected correlations (for divergence detection)
+    expected_correlations: dict = field(default_factory=lambda: {
+        "XAUUSD_EURUSD": 0.6,    # Gold and EUR tend to move together (anti-USD)
+        "XAUUSD_DXY": -0.8,      # Gold strongly inverse to USD
+        "XAUUSD_USDJPY": -0.4,   # Gold inverse to USD/JPY
+        "EURUSD_GBPUSD": 0.7,    # EUR and GBP correlated
+    })
+    # Divergence threshold (correlation deviation that signals opportunity)
+    divergence_threshold: float = 0.3
+    # Enable inter-market momentum as features
+    enable_cross_features: bool = True
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -196,4 +310,7 @@ class MainConfig:
     enable_sentiment: bool = True
     enable_alternative_data: bool = True
     enable_regime_detection: bool = True
+    enable_multi_timeframe: bool = True     # Multi-timeframe analysis
+    enable_news_filter: bool = True         # News calendar event filter
+    enable_multi_pair: bool = True          # Cross-pair correlation analysis
     paper_trading: bool = True              # Paper trading mode by default

@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add multi-timeframe data pipeline, news calendar filter, and multi-pair support to the data layer and config. This gives the model M1/M5/M15/H1/H4 inputs, avoids trading during NFP/FOMC/CPI, and processes EURUSD/GBPUSD/USDJPY alongside gold.",
+  "status": "in_progress",
+  "steps": [
+    "1. Update python_bridge/config/settings.py: Add MultiTimeframeConfig dataclass with timeframes=['1m','5m','15m','1h','4h'] and feature aggregation settings. Add NewsFilterConfig dataclass with high_impact_events=['NFP','FOMC','CPI','ECB','BOE','BOJ'], minutes_before=30, minutes_after=30, calendar_url for fetching economic calendar. Add MultiPairConfig dataclass with pairs=['XAUUSD','EURUSD','GBPUSD','USDJPY'] and yfinance_tickers mapping.",
+    "2. Create python_bridge/data/multi_timeframe.py: MultiTimeframeDataFetcher class that fetches OHLCV for all configured timeframes using yfinance, computes features per timeframe using MarketDataFetcher.compute_features(), and concatenates them into a combined feature matrix. Include alignment logic to handle different bar counts across timeframes. Output shape should be (seq_len, num_features_per_tf * num_timeframes).",
+    "3. Create python_bridge/data/news_calendar.py: NewsCalendarFilter class with methods: fetch_calendar() - downloads economic calendar from a free API (e.g., ForexFactory scraping or investing.com RSS), is_high_impact_window() - returns True if current time is within the buffer window around a high-impact event, get_upcoming_events() - returns list of events in next N hours. Store fetched calendar in a local JSON cache with daily refresh.",
+    "4. Update python_bridge/data/market_data.py: Add fetch_multi_pair() method to MarketDataFetcher that fetches OHLCV for all configured pairs and computes cross-pair correlation features (e.g., EURUSD momentum as a feature for XAUUSD prediction since gold/USD are inversely correlated). Add compute_cross_pair_features() that returns inter-market momentum, relative strength, and correlation signals.",
+    "5. Update python_bridge/main.py: Integrate MultiTimeframeDataFetcher and NewsCalendarFilter into PythonMLBridge. In run_cycle(), check news filter before generating signals (skip if in high-impact window). Pass multi-timeframe features to signal generator. Log multi-pair correlation data.",
+    "6. Create python_bridge/tests/test_multi_timeframe.py: Test MultiTimeframeDataFetcher with mock yfinance data. Verify output shape matches expected (seq_len, total_features). Test feature alignment across timeframes.",
+    "7. Create python_bridge/tests/test_news_calendar.py: Test NewsCalendarFilter with mocked API responses. Verify is_high_impact_window() correctly identifies event windows. Test cache refresh logic.",
+    "8. Update python_bridge/requirements.txt: Add any new dependencies needed (beautifulsoup4 for calendar scraping if used)."
+  ],
+  "acceptance_criteria": [
+    "MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig exist in settings.py with sensible defaults",
+    "MultiTimeframeDataFetcher.fetch_all_timeframes() returns a combined feature array",
+    "NewsCalendarFilter.is_high_impact_window() correctly gates trading around NFP/FOMC/CPI events",
+    "MarketDataFetcher.fetch_multi_pair() fetches EURUSD, GBPUSD, USDJPY data and computes cross-pair features",
+    "Main loop checks news filter before signal generation",
+    "All new tests pass: python -m pytest tests/test_multi_timeframe.py tests/test_news_calendar.py -v"
+  ],
+  "verification": [
+    "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/test_multi_timeframe.py tests/test_news_calendar.py -v",
+    "cd /projects/sandbox/Claude/python_bridge && python -c \"from data.multi_timeframe import MultiTimeframeDataFetcher; from data.news_calendar import NewsCalendarFilter; print('Imports OK')\"",
+    "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -v"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
