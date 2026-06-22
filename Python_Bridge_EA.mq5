@@ -37,6 +37,7 @@ input string   InpStatusFile       = "python_bridge_status.txt"; // Status file 
 
 // --- Dynamic Trailing Stop Parameters ---
 input double   InpBreakevenProfit  = 0.50;     // Profit $ to move SL to breakeven
+input double   InpBEProfitBuffer   = 0.10;     // Extra $ above entry for BE SL (covers spread + small profit)
 input double   InpTrailStart       = 1.00;     // Profit $ to start trailing ($0.50 trail)
 input double   InpTrailTight       = 2.00;     // Profit $ for tight trail ($0.30 trail)
 input double   InpTrailVeryTight   = 3.00;     // Profit $ for very tight trail ($0.20 trail)
@@ -669,9 +670,17 @@ void ManageOpenPositions()
         }
         else if(profit >= InpBreakevenProfit)
         {
-            // Tier 1: Breakeven (move SL to entry price)
-            newSL = NormalizeDouble(entryPrice, digits);
-            tierLabel = "BE";
+            // Tier 1: Breakeven+ (move SL to entry price + spread + buffer)
+            // This ensures a breakeven trade does not lose money to spread.
+            // SL is placed a few pips in profit beyond entry so if it triggers,
+            // the trader still nets a small gain after spread costs.
+            double spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+            double beBuffer = spreadPoints + InpBEProfitBuffer;
+            if(posType == POSITION_TYPE_BUY)
+                newSL = NormalizeDouble(entryPrice + beBuffer, digits);
+            else
+                newSL = NormalizeDouble(entryPrice - beBuffer, digits);
+            tierLabel = "BE+";
         }
         else
         {

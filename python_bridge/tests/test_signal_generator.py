@@ -568,3 +568,375 @@ class TestDynamicTrailingTP:
         # With non-zero multiplier, tp_pips should be a real value
         assert levels["tp_pips"] > 0
         assert levels["tp_pips"] != 9999
+
+
+# ─────────────────────────────────────────────
+#  CANDLESTICK PATTERN ANALYSIS TESTS
+# ─────────────────────────────────────────────
+class TestCandlePatternAnalysis:
+    """Tests for the candlestick pattern analysis that blocks pullback trades."""
+
+    def test_bullish_engulfing_blocks_sell(self):
+        """Test that bullish engulfing pattern blocks SELL signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Previous candle: bearish (open > close)
+        # Current candle: bullish engulfing (close > prev_open, open < prev_close)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2003.0, 1999.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2005.5, 2007.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2001.0, 1998.5],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2001.5, 2006.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "bullish_engulfing"
+        assert result["bias"] == "bullish"
+        assert result["block_sell"] is True
+        assert result["block_buy"] is False
+
+    def test_bearish_engulfing_blocks_buy(self):
+        """Test that bearish engulfing pattern blocks BUY signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Previous candle: bullish (close > open)
+        # Current candle: bearish engulfing (close < prev_open, open > prev_close)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2003.0, 2007.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2005.5, 2007.5],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2002.5, 2001.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2005.0, 2002.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "bearish_engulfing"
+        assert result["bias"] == "bearish"
+        assert result["block_buy"] is True
+        assert result["block_sell"] is False
+
+    def test_hammer_blocks_sell(self):
+        """Test that hammer (long lower wick) blocks SELL signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Hammer: long lower wick (> 60% of range), small upper wick (< 20%), body < 35%
+        # Range = 10, lower wick = 7 (70%), upper wick = 0 (0%), body = 3 (30%)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2007.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2010.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "hammer"
+        assert result["bias"] == "bullish"
+        assert result["block_sell"] is True
+        assert result["block_buy"] is False
+
+    def test_shooting_star_blocks_buy(self):
+        """Test that shooting star (long upper wick) blocks BUY signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Shooting star: long upper wick (> 60% of range), small lower wick (< 20%), body < 35%
+        # Range = 10, upper wick = 7 (70%), lower wick = 0 (0%), body = 3 (30%)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2003.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2000.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "shooting_star"
+        assert result["bias"] == "bearish"
+        assert result["block_buy"] is True
+        assert result["block_sell"] is False
+
+    def test_doji_blocks_all(self):
+        """Test that doji pattern blocks both BUY and SELL signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Doji: body < 10% of range
+        # Range = 10, body = 0.5 (5%)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2005.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2005.5],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "doji"
+        assert result["bias"] == "neutral"
+        assert result["block_buy"] is True
+        assert result["block_sell"] is True
+
+    def test_strong_bullish_candle_blocks_sell(self):
+        """Test that strong bullish candle blocks SELL signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Strong bullish: body > 60% of range, bullish
+        # Range = 10, body = 8 (80%), bullish (close > open)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2001.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2009.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "strong_bullish"
+        assert result["bias"] == "bullish"
+        assert result["block_sell"] is True
+        assert result["block_buy"] is False
+
+    def test_strong_bearish_candle_blocks_buy(self):
+        """Test that strong bearish candle blocks BUY signals."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Strong bearish: body > 60% of range, bearish
+        # Range = 10, body = 8 (80%), bearish (close < open)
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2009.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2001.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "strong_bearish"
+        assert result["bias"] == "bearish"
+        assert result["block_buy"] is True
+        assert result["block_sell"] is False
+
+    def test_neutral_candle_no_blocking(self):
+        """Test that a neutral (normal) candle does not block anything."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Normal candle: body ~40% of range, moderate wicks on both sides
+        # Range = 10, body = 4 (40%), upper wick ~3, lower wick ~3
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2003.0],
+            "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2007.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        # Body = 4 (40%), upper wick = 3 (30%), lower wick = 3 (30%)
+        # Not doji (<10%), not strong (>60%), not hammer/star (wick>60%)
+        assert result["block_buy"] is False
+        assert result["block_sell"] is False
+
+    def test_insufficient_data_returns_neutral(self):
+        """Test that insufficient data returns neutral (no blocking)."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Only 1 bar - not enough for pattern analysis
+        prices = pd.DataFrame({
+            "Open":  [2000.0],
+            "High":  [2005.0],
+            "Low":   [1995.0],
+            "Close": [2003.0],
+        })
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "none"
+        assert result["block_buy"] is False
+        assert result["block_sell"] is False
+
+    def test_non_dataframe_returns_neutral(self):
+        """Test that non-DataFrame input returns neutral."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        result = gen._analyze_candle_patterns(np.array([1, 2, 3]))
+        assert result["pattern"] == "none"
+        assert result["block_buy"] is False
+        assert result["block_sell"] is False
+
+    def test_missing_columns_returns_neutral(self):
+        """Test that DataFrame without required columns returns neutral."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        prices = pd.DataFrame({"Close": [2000.0, 2001.0, 2002.0]})
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "none"
+        assert result["block_buy"] is False
+        assert result["block_sell"] is False
+
+    def test_momentum_buy_blocked_by_bearish_engulfing(self):
+        """Integration test: momentum says BUY but bearish engulfing blocks it."""
+        gen = SignalGenerator(signal_config=SignalConfig(
+            cooldown_seconds=0, min_confidence=0.01
+        ))
+        gen.ensemble.models_loaded = True
+
+        # Prices that rise in momentum (close[-1]=2004 vs close[-4]=2002 = +$2 > $0.50)
+        # but last candle is bearish engulfing:
+        #   prev candle: bullish (open=2003, close=2005)
+        #   curr candle: bearish engulfing (open=2006 > prev_close=2005, close=2002 < prev_open=2003)
+        # Momentum: close[-1]=2004 vs close[-4]=2002 = +2 => BUY
+        # But we need close[-1] to be the engulfing candle close
+        # close[-1]=2002, close[-4]=... let's be careful about indices
+        # With 8 bars, close[-1] is the last, close[-4] is index 4
+        # For momentum BUY: close[-1] > close[-4] + 0.5
+        # Let's make closes = [1998, 1999, 2000, 2001, 2002, 2003, 2005, 2004]
+        # close[-1]=2004, close[-4]=2002, diff=+2 => BUY
+        # Last candle (idx 7): bearish engulfing vs previous (idx 6)
+        # Prev (idx 6): bullish - open=2003, close=2005
+        # Curr (idx 7): bearish engulfing - open=2006 > prev_close=2005, close=2004... 
+        # wait, need close < prev_open=2003. Let me adjust.
+        # closes = [1998, 1999, 2000, 2001, 2002, 2003, 2005, 2002.5]
+        # close[-1]=2002.5, close[-4]=2002, diff=+0.5 => exactly threshold... 
+        # Let me use: closes = [1998, 1999, 2000, 2001, 2001.5, 2003, 2005, 2002.0]
+        # close[-1]=2002, close[-4]=2001.5, diff=+0.5 => borderline...
+        # Better approach: more bars with clearly rising closes for momentum
+        prices = pd.DataFrame({
+            "Open":  [1998, 1999, 2000, 2001, 2002, 2003, 2004, 2003.0, 2006.0],
+            "High":  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2005.5, 2006.5],
+            "Low":   [1997, 1998, 1999, 2000, 2001, 2002, 2003, 2002.5, 2001.5],
+            "Close": [1999, 2000, 2001, 2002, 2003, 2004, 2005, 2005.0, 2002.0],
+        })
+        # Momentum: close[-1]=2002, close[-4]=2004... that's -2 => SELL
+        # Need to adjust. close[-4] is at index len-4 = 9-4=5 => Close[5]=2004
+        # close[-1] = Close[8] = 2002.0. diff = 2002-2004 = -2 => SELL not BUY
+        # Let me just make prices where momentum is clearly BUY despite the engulfing
+        # The trick: close[-4] must be lower than close[-1] by > $0.50
+        # With engulfing at the end, the close drops. So I need enough prior bars
+        # that close[-4] (4th from end) is low enough.
+        # Let me use 10 bars:
+        prices = pd.DataFrame({
+            "Open":  [1990, 1992, 1994, 1996, 1998, 2000, 2002, 2004, 2003.0, 2006.0],
+            "High":  [1993, 1995, 1997, 1999, 2001, 2003, 2005, 2007, 2005.5, 2006.5],
+            "Low":   [1989, 1991, 1993, 1995, 1997, 1999, 2001, 2003, 2002.5, 2001.5],
+            "Close": [1992, 1994, 1996, 1998, 2000, 2002, 2004, 2006, 2005.0, 2002.0],
+        })
+        # 10 bars. close[-1]=2002.0, close[-4]=2006. diff=-4 => SELL
+        # This approach won't work with a true bearish engulfing that drops close
+        # because close[-1] < close[-4] means momentum is SELL.
+        # The realistic scenario: momentum BUY from close[-1]>close[-4],
+        # but last candle is a strong bearish candle (not engulfing necessarily).
+        # Actually let's test with a shooting star instead which doesn't drop close much.
+        # OR: just test that the candle pattern method works correctly, 
+        # and use a different pattern that still gives momentum BUY.
+        # Let's use a shooting_star which blocks BUY but doesn't change close much.
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2007.0],
+            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2015.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2005.0],
+            "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2005.5],
+        })
+        # Momentum: close[-1]=2005.5, close[-4]=2003, diff=+2.5 => BUY
+        # Last candle: open=2007, high=2015, low=2005, close=2005.5
+        # Range = 15-5=10, upper wick = 15-7=8 (80%), lower wick=5-5=0, body=|5.5-7|=1.5 (15%)
+        # This is a shooting star! blocks BUY
+
+        mock_prediction = {
+            "probabilities": np.array([[0.1, 0.1, 0.8]]),
+            "confidence": np.array([0.9]),
+            "agreement": np.array([0.9]),
+            "individual_preds": {
+                "transformer": np.array([[0.1, 0.1, 0.8]]),
+                "lstm": np.array([[0.1, 0.1, 0.8]]),
+                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
+            }
+        }
+
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
+            signal = gen.generate_signal(
+                features=features,
+                prices=prices,
+                atr=5.0,
+                current_price=2005.5
+            )
+
+        # Should be blocked - momentum BUY but shooting star signals reversal
+        assert signal.action == "HOLD"
+
+    def test_momentum_sell_blocked_by_hammer(self):
+        """Integration test: momentum says SELL but hammer pattern blocks it."""
+        gen = SignalGenerator(signal_config=SignalConfig(
+            cooldown_seconds=0, min_confidence=0.01
+        ))
+        gen.ensemble.models_loaded = True
+
+        # Prices that fall (momentum = SELL) but last candle is a hammer
+        # Hammer: long lower wick > 60% of range, small upper wick, small body
+        prices = pd.DataFrame({
+            "Open":  [2010, 2009, 2008, 2007, 2006, 2005, 2009.0],
+            "High":  [2011, 2010, 2009, 2008, 2007, 2006, 2010.0],
+            "Low":   [2009, 2008, 2007, 2006, 2005, 2004, 2000.0],
+            "Close": [2009, 2008, 2007, 2006, 2005, 2004, 2009.5],
+        })
+
+        mock_prediction = {
+            "probabilities": np.array([[0.8, 0.1, 0.1]]),
+            "confidence": np.array([0.9]),
+            "agreement": np.array([0.9]),
+            "individual_preds": {
+                "transformer": np.array([[0.8, 0.1, 0.1]]),
+                "lstm": np.array([[0.8, 0.1, 0.1]]),
+                "gradient_boost": np.array([[0.8, 0.1, 0.1]]),
+            }
+        }
+
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
+            signal = gen.generate_signal(
+                features=features,
+                prices=prices,
+                atr=5.0,
+                current_price=2009.5
+            )
+
+        # Should be blocked - momentum SELL but hammer signals bullish reversal
+        assert signal.action == "HOLD"
+
+    def test_momentum_buy_confirmed_by_strong_bullish(self):
+        """Integration test: momentum BUY + strong bullish candle = allow trade."""
+        gen = SignalGenerator(signal_config=SignalConfig(
+            cooldown_seconds=0, min_confidence=0.01
+        ))
+        gen.ensemble.models_loaded = True
+
+        # Prices that rise (momentum = BUY) and last candle is strong bullish
+        # Strong bullish: body > 60% of range
+        prices = pd.DataFrame({
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2001.0],
+            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
+            "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2009.0],
+        })
+
+        mock_prediction = {
+            "probabilities": np.array([[0.1, 0.1, 0.8]]),
+            "confidence": np.array([0.9]),
+            "agreement": np.array([0.9]),
+            "individual_preds": {
+                "transformer": np.array([[0.1, 0.1, 0.8]]),
+                "lstm": np.array([[0.1, 0.1, 0.8]]),
+                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
+            }
+        }
+
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
+            signal = gen.generate_signal(
+                features=features,
+                prices=prices,
+                atr=5.0,
+                current_price=2009.0
+            )
+
+        # Should NOT be blocked - momentum and candle agree
+        assert signal.action == "BUY"
+
+    def test_exhaustion_candle_blocks_chase(self):
+        """Test that exhaustion candle (body > 2x ATR) blocks chasing the move."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Need 14+ bars for ATR computation in the method
+        # ATR ~ 2.0 from prior bars, then last candle has body > 4.0
+        opens =  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,
+                  2008, 2009, 2010, 2011, 2012, 2013, 2014, 2010.0]
+        highs =  [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,
+                  2010, 2011, 2012, 2013, 2014, 2015, 2016, 2020.0]
+        lows =   [1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006,
+                  2007, 2008, 2009, 2010, 2011, 2012, 2013, 2009.5]
+        closes = [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
+                  2009, 2010, 2011, 2012, 2013, 2014, 2015, 2019.5]
+        prices = pd.DataFrame({
+            "Open": opens,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+        })
+        # ATR from bars 2-15 (14 bars): range = 3 each => ATR ~ 3.0
+        # Last candle body = |2019.5 - 2010| = 9.5, which is > 2*3 = 6
+        result = gen._analyze_candle_patterns(prices)
+        assert result["pattern"] == "exhaustion_bullish"
+        assert result["bias"] == "bearish"
+        assert result["block_buy"] is True

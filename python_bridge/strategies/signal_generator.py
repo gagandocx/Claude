@@ -101,6 +101,197 @@ class SignalGenerator:
         self._last_signal_time = 0.0
         self._signal_count = 0
 
+    def _analyze_candle_patterns(self, prices_df) -> Dict:
+        """
+        Analyze the most recent candle(s) for candlestick patterns that indicate
+        potential reversals or continuations.
+
+        Detects:
+            - Bullish engulfing (previous bearish, current bullish body engulfs previous)
+            - Bearish engulfing (previous bullish, current bearish body engulfs previous)
+            - Hammer / pin bar (long lower wick = bullish reversal signal)
+            - Shooting star (long upper wick = bearish reversal signal)
+            - Doji (very small body relative to range = indecision)
+            - Strong bullish candle (body > 60% of range)
+            - Strong bearish candle (body > 60% of range)
+            - Exhaustion candle (body > 2x ATR = likely reversal coming)
+
+        Args:
+            prices_df: DataFrame with Open, High, Low, Close columns.
+                       Uses iloc[-1] for current candle, iloc[-2] for previous.
+
+        Returns:
+            Dict with keys:
+                "pattern": str - name of detected pattern
+                "bias": str - "bullish", "bearish", or "neutral"
+                "block_buy": bool - whether to block BUY signals
+                "block_sell": bool - whether to block SELL signals
+        """
+        import pandas as pd
+
+        result = {
+            "pattern": "none",
+            "bias": "neutral",
+            "block_buy": False,
+            "block_sell": False,
+        }
+
+        if not isinstance(prices_df, pd.DataFrame):
+            return result
+
+        required_cols = {"Open", "High", "Low", "Close"}
+        if not required_cols.issubset(prices_df.columns):
+            return result
+
+        if len(prices_df) < 2:
+            return result
+
+        # Current candle (most recent)
+        curr = prices_df.iloc[-1]
+        prev = prices_df.iloc[-2]
+
+        curr_open = float(curr["Open"])
+        curr_high = float(curr["High"])
+        curr_low = float(curr["Low"])
+        curr_close = float(curr["Close"])
+
+        prev_open = float(prev["Open"])
+        prev_high = float(prev["High"])
+        prev_low = float(prev["Low"])
+        prev_close = float(prev["Close"])
+
+        # Candle metrics for current candle
+        curr_range = curr_high - curr_low
+        curr_body = abs(curr_close - curr_open)
+        curr_upper_wick = curr_high - max(curr_open, curr_close)
+        curr_lower_wick = min(curr_open, curr_close) - curr_low
+        curr_is_bullish = curr_close > curr_open
+        curr_is_bearish = curr_close < curr_open
+
+        # Previous candle metrics
+        prev_body = abs(prev_close - prev_open)
+        prev_is_bullish = prev_close > prev_open
+        prev_is_bearish = prev_close < prev_open
+
+        # Avoid division by zero
+        if curr_range < 0.01:
+            # Essentially a zero-range candle (doji-like)
+            result["pattern"] = "doji"
+            result["bias"] = "neutral"
+            result["block_buy"] = True
+            result["block_sell"] = True
+            logger.info("[CandlePattern] Doji detected (zero range) - blocking all trades")
+            return result
+
+        body_ratio = curr_body / curr_range
+
+        # Compute ATR from recent bars for exhaustion detection
+        atr_value = 0.0
+        if len(prices_df) >= 14:
+            recent_ranges = (prices_df["High"].iloc[-14:] - prices_df["Low"].iloc[-14:]).values
+            atr_value = float(np.mean(recent_ranges))
+
+        # --- Pattern Detection (priority order) ---
+
+        # 1. Doji: body is < 10% of range
+        if body_ratio < 0.10:
+            result["pattern"] = "doji"
+            result["bias"] = "neutral"
+            result["block_buy"] = True
+            result["block_sell"] = True
+            logger.info("[CandlePattern] Doji detected (body=%.1f%% of range) - "
+                        "blocking all trades (indecision)", body_ratio * 100)
+            return result
+
+        # 2. Bullish Engulfing: previous bearish, current bullish body engulfs previous body
+        if (prev_is_bearish and curr_is_bullish and
+                curr_close > prev_open and curr_open < prev_close):
+            result["pattern"] = "bullish_engulfing"
+            result["bias"] = "bullish"
+            result["block_buy"] = False
+            result["block_sell"] = True  # Block sells during bullish engulfing
+            logger.info("[CandlePattern] Bullish Engulfing detected - "
+                        "confirms BUY, blocks SELL")
+            return result
+
+        # 3. Bearish Engulfing: previous bullish, current bearish body engulfs previous body
+        if (prev_is_bullish and curr_is_bearish and
+                curr_close < prev_open and curr_open > prev_close):
+            result["pattern"] = "bearish_engulfing"
+            result["bias"] = "bearish"
+            result["block_buy"] = True  # Block buys during bearish engulfing
+            result["block_sell"] = False
+            logger.info("[CandlePattern] Bearish Engulfing detected - "
+                        "confirms SELL, blocks BUY")
+            return result
+
+        # 4. Hammer / Pin Bar: long lower wick (> 60% of range), small upper wick
+        if (curr_lower_wick > 0.6 * curr_range and
+                curr_upper_wick < 0.2 * curr_range and
+                body_ratio < 0.35):
+            result["pattern"] = "hammer"
+            result["bias"] = "bullish"
+            result["block_buy"] = False
+            result["block_sell"] = True  # Block sells - hammer signals bullish reversal
+            logger.info("[CandlePattern] Hammer/Pin Bar detected (lower wick=%.1f%%) - "
+                        "confirms BUY, blocks SELL", (curr_lower_wick / curr_range) * 100)
+            return result
+
+        # 5. Shooting Star: long upper wick (> 60% of range), small lower wick
+        if (curr_upper_wick > 0.6 * curr_range and
+                curr_lower_wick < 0.2 * curr_range and
+                body_ratio < 0.35):
+            result["pattern"] = "shooting_star"
+            result["bias"] = "bearish"
+            result["block_buy"] = True  # Block buys - shooting star signals bearish reversal
+            result["block_sell"] = False
+            logger.info("[CandlePattern] Shooting Star detected (upper wick=%.1f%%) - "
+                        "confirms SELL, blocks BUY", (curr_upper_wick / curr_range) * 100)
+            return result
+
+        # 6. Exhaustion candle: body > 2x ATR (overextended, reversal likely)
+        if atr_value > 0 and curr_body > 2.0 * atr_value:
+            if curr_is_bullish:
+                result["pattern"] = "exhaustion_bullish"
+                result["bias"] = "bearish"  # Reversal expected
+                result["block_buy"] = True  # Don't chase the exhaustion move
+                result["block_sell"] = False
+                logger.info("[CandlePattern] Bullish Exhaustion candle (body=%.2f > 2xATR=%.2f) - "
+                            "reversal likely, blocks BUY", curr_body, 2.0 * atr_value)
+            else:
+                result["pattern"] = "exhaustion_bearish"
+                result["bias"] = "bullish"  # Reversal expected
+                result["block_buy"] = False
+                result["block_sell"] = True  # Don't chase the exhaustion move
+                logger.info("[CandlePattern] Bearish Exhaustion candle (body=%.2f > 2xATR=%.2f) - "
+                            "reversal likely, blocks SELL", curr_body, 2.0 * atr_value)
+            return result
+
+        # 7. Strong bullish candle: body > 60% of range, bullish
+        if body_ratio > 0.60 and curr_is_bullish:
+            result["pattern"] = "strong_bullish"
+            result["bias"] = "bullish"
+            result["block_buy"] = False
+            result["block_sell"] = True  # Don't sell against a strong bullish candle
+            logger.info("[CandlePattern] Strong Bullish candle (body=%.1f%% of range) - "
+                        "confirms BUY, blocks SELL", body_ratio * 100)
+            return result
+
+        # 8. Strong bearish candle: body > 60% of range, bearish
+        if body_ratio > 0.60 and curr_is_bearish:
+            result["pattern"] = "strong_bearish"
+            result["bias"] = "bearish"
+            result["block_buy"] = True  # Don't buy against a strong bearish candle
+            result["block_sell"] = False
+            logger.info("[CandlePattern] Strong Bearish candle (body=%.1f%% of range) - "
+                        "confirms SELL, blocks BUY", body_ratio * 100)
+            return result
+
+        # No significant pattern detected - neutral, no blocking
+        logger.info("[CandlePattern] No significant pattern - neutral (body=%.1f%% of range)",
+                    body_ratio * 100)
+        return result
+
     def _compute_momentum_direction(self, prices) -> str:
         """
         Compute short-term momentum direction from the last few M1 candles.
@@ -222,6 +413,28 @@ class SignalGenerator:
         if momentum_direction == "FLAT":
             logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction)")
             return hold_signal
+
+        # 1b. Analyze candlestick patterns to detect pullbacks / reversals
+        candle_info = self._analyze_candle_patterns(prices)
+        candle_pattern = candle_info["pattern"]
+        candle_bias = candle_info["bias"]
+
+        # Block trades that go against the candle structure
+        if momentum_direction == "BUY" and candle_info["block_buy"]:
+            logger.info("[SignalGen] HOLD - momentum BUY blocked by candle pattern '%s' "
+                        "(bias=%s). Pullback/reversal detected!",
+                        candle_pattern, candle_bias)
+            return hold_signal
+
+        if momentum_direction == "SELL" and candle_info["block_sell"]:
+            logger.info("[SignalGen] HOLD - momentum SELL blocked by candle pattern '%s' "
+                        "(bias=%s). Pullback/reversal detected!",
+                        candle_pattern, candle_bias)
+            return hold_signal
+
+        logger.info("[SignalGen] Candle pattern: '%s' (bias=%s) - %s",
+                    candle_pattern, candle_bias,
+                    "CONFIRMS momentum" if candle_bias != "neutral" else "neutral/no block")
 
         # 2. Get ensemble prediction for TIMING (confidence gate)
         try:
