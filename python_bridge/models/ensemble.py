@@ -288,14 +288,18 @@ class EnsembleManager:
         transformer_path = os.path.join(path, "transformer.pth")
         if os.path.exists(transformer_path):
             self.transformer.load_state_dict(
-                torch.load(transformer_path, map_location=self.device)
+                torch.load(transformer_path, map_location=self.device,
+                           weights_only=False),
+                strict=False
             )
             nn_loaded = True
 
         lstm_path = os.path.join(path, "lstm.pth")
         if os.path.exists(lstm_path):
             self.lstm.load_state_dict(
-                torch.load(lstm_path, map_location=self.device)
+                torch.load(lstm_path, map_location=self.device,
+                           weights_only=False),
+                strict=False
             )
             nn_loaded = True
 

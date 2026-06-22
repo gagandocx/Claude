@@ -40,7 +40,7 @@ LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 @dataclass
 class TransformerConfig:
     """Transformer model hyperparameters."""
-    input_features: int = 64        # Number of input features
+    input_features: int = 46        # Number of input features
     d_model: int = 256              # Model dimension
     n_heads: int = 8                # Number of attention heads
     n_layers: int = 4               # Number of encoder layers
@@ -58,7 +58,7 @@ class TransformerConfig:
 @dataclass
 class LSTMConfig:
     """Bidirectional LSTM model hyperparameters."""
-    input_features: int = 64        # Number of input features
+    input_features: int = 46        # Number of input features
     hidden_size: int = 128          # LSTM hidden units
     num_layers: int = 3             # Number of LSTM layers
     dropout: float = 0.3            # Dropout rate
