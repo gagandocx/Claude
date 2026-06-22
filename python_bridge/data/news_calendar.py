@@ -38,7 +38,7 @@ class NewsCalendarFilter:
     major news releases. This class:
     1. Fetches the economic calendar from ForexFactory
     2. Identifies high-impact events (NFP, FOMC, CPI, etc.)
-    3. Creates buffer zones (default 30min before/after)
+    3. Creates buffer zones (10min before with volatility check, 2min hard block)
     4. Gates all trade entries during these windows
     5. Caches calendar data to minimize API calls
     """
@@ -304,16 +304,19 @@ class NewsCalendarFilter:
                              normal_atr: Optional[float] = None,
                              check_time: Optional[datetime] = None) -> dict:
         """
-        Smart news filter that checks post-event volatility before resuming.
+        Smart news filter with tiered pre-event blocking and post-event volatility check.
 
-        Instead of blocking for the full minutes_after window unconditionally,
-        this method implements a 'wait and see' approach:
-        1. Pre-event window (event_time - minutes_before to event_time): always block
-        2. Post-event window (event_time to event_time + minutes_after):
+        Implements a nuanced approach to news-based trade gating:
+        1. Hard block zone (event_time - hard_block_minutes to event_time):
+           Always block, no exceptions. Too close to the event.
+        2. Soft block zone (event_time - minutes_before to event_time - hard_block_minutes):
+           Check volatility. If market is calm (ATR not elevated), allow trading.
+           If volatility is elevated or ATR data unavailable, block.
+        3. Post-event window (event_time to event_time + minutes_after):
            - If within post_news_min_wait: block (always wait a few minutes)
            - If past min_wait and volatility is low: allow trading (resume early)
            - If past min_wait and volatility is high: keep blocking
-        3. Outside any window: allow trading
+        4. Outside any window: allow trading
 
         Args:
             current_atr: Current ATR value (recent volatility measure)
@@ -324,7 +327,8 @@ class NewsCalendarFilter:
             Dict with keys:
                 - blocked (bool): Whether trading should be blocked
                 - reason (str): Human-readable reason for the state
-                - state (str): One of 'clear', 'pre_news', 'post_news_min_wait',
+                - state (str): One of 'clear', 'pre_news_hard', 'pre_news_soft',
+                              'pre_news_calm', 'post_news_min_wait',
                               'post_news_high_vol', 'post_news_safe'
         """
         # If no calendar data in memory, try local cache file (no network)
@@ -340,6 +344,7 @@ class NewsCalendarFilter:
 
         buffer_before = timedelta(minutes=self.config.minutes_before)
         buffer_after = timedelta(minutes=self.config.minutes_after)
+        hard_block = timedelta(minutes=getattr(self.config, 'hard_block_minutes', 2))
         min_wait = timedelta(minutes=self.config.post_news_min_wait)
 
         for event in self._calendar:
@@ -359,12 +364,43 @@ class NewsCalendarFilter:
             # We are in some part of the event window
             event_title = event.get("title", "Unknown")
 
-            # PRE-EVENT: always block
+            # PRE-EVENT: tiered blocking
             if check_time < event_time:
+                minutes_until = (event_time - check_time).total_seconds() / 60.0
+
+                # Hard block zone: within hard_block_minutes of event (default 2 min)
+                # No exceptions, trading is completely stopped
+                if check_time >= (event_time - hard_block):
+                    return {
+                        "blocked": True,
+                        "reason": f"Pre-news hard block: {minutes_until:.0f}min to {event_title}",
+                        "state": "pre_news_hard",
+                    }
+
+                # Soft block zone: between minutes_before and hard_block_minutes
+                # Check volatility - if market is calm, allow trading
+                if current_atr is not None and normal_atr is not None and normal_atr > 0:
+                    volatility_ratio = current_atr / normal_atr
+                    if volatility_ratio < self.config.post_news_volatility_threshold:
+                        # Market is calm, allow trading despite upcoming event
+                        return {
+                            "blocked": False,
+                            "reason": f"Pre-news: market calm, trading allowed ({event_title} in {minutes_until:.0f}min)",
+                            "state": "pre_news_calm",
+                        }
+                    else:
+                        # Volatility is elevated, block trading
+                        return {
+                            "blocked": True,
+                            "reason": f"Pre-news: elevated volatility ({event_title} in {minutes_until:.0f}min)",
+                            "state": "pre_news_soft",
+                        }
+
+                # No ATR data available - block as precaution
                 return {
                     "blocked": True,
-                    "reason": f"Pre-news: paused ({event_title})",
-                    "state": "pre_news",
+                    "reason": f"Pre-news: paused, no ATR data ({event_title} in {minutes_until:.0f}min)",
+                    "state": "pre_news_soft",
                 }
 
             # POST-EVENT: check how long since event

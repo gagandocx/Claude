@@ -468,7 +468,8 @@ class TestNewsFilterConfig:
     def test_default_buffer_times(self):
         """Test default buffer times."""
         config = NewsFilterConfig()
-        assert config.minutes_before == 30
+        assert config.minutes_before == 10
+        assert config.hard_block_minutes == 2
         assert config.minutes_after == 30
 
     def test_default_monitored_currencies(self):
@@ -505,15 +506,15 @@ class TestShouldBlockTrading:
     """Tests for should_block_trading method with post-news volatility check."""
 
     def test_blocks_during_pre_event_window(self, filter_with_events, sample_calendar):
-        """Test that should_block_trading blocks during pre-event window."""
+        """Test that should_block_trading blocks during pre-event hard-block zone."""
         nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
-        # 10 minutes before NFP
-        check_time = nfp_time - timedelta(minutes=10)
+        # 1 minute before NFP (within 2-min hard block zone)
+        check_time = nfp_time - timedelta(minutes=1)
         result = filter_with_events.should_block_trading(
-            current_atr=5.0, normal_atr=3.0, check_time=check_time
+            current_atr=3.0, normal_atr=5.0, check_time=check_time
         )
         assert result["blocked"] is True
-        assert result["state"] == "pre_news"
+        assert result["state"] == "pre_news_hard"
         assert "Pre-news" in result["reason"]
 
     def test_blocks_during_post_news_min_wait(self, filter_with_events, sample_calendar):

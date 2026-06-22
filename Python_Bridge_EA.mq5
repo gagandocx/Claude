@@ -101,6 +101,9 @@ int OnInit()
     // Render price chart (candles, grid, indicators) BEHIND graphical objects
     // so the dashboard panel is fully opaque and not see-through
     ChartSetInteger(0, CHART_FOREGROUND, false);
+    // Hide trade levels and object descriptions that could show through the panel
+    ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, false);
+    ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
 
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
@@ -1048,6 +1051,8 @@ void DashboardBackground(string name, int x, int y, int width, int height, color
     ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
     // Ensure rectangle renders in foreground layer (on top of chart elements)
     ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+    // Force to top z-order for full opacity
+    ObjectSetInteger(0, objName, OBJPROP_ZORDER, 1000);
 }
 
 //+------------------------------------------------------------------+
@@ -1057,7 +1062,7 @@ void UpdateDashboard()
 {
     int panelX      = 10;
     int panelY      = 30;
-    int panelWidth  = 320;
+    int panelWidth  = 330;
     int panelHeight = 420;
     int lineHeight  = 18;
     int leftMargin  = 20;
@@ -1074,8 +1079,14 @@ void UpdateDashboard()
     color clrBgPanel    = C'20,20,30';
     color clrBgHeader   = C'30,35,50';
 
-    // --- Background panels (fully opaque, no transparency) ---
+    // --- Background panels: multiple stacked layers for guaranteed full opacity ---
+    // Layer 1 (bottom): base background
     DashboardBackground("bg_main", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
+    // Layer 2 (middle): identical rectangle stacked on top for double opacity
+    DashboardBackground("bg_main2", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
+    // Layer 3 (top): third layer ensures absolutely no bleed-through
+    DashboardBackground("bg_main3", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
+    // Title bar background
     DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
 
     // --- Title ---

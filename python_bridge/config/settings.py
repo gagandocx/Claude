@@ -240,8 +240,10 @@ class NewsFilterConfig:
         "Federal Funds Rate", "ECB Interest Rate",
         "BOE Interest Rate", "BOJ Interest Rate"
     ])
-    # Minutes to stop trading before event
-    minutes_before: int = 30
+    # Minutes to stop trading before event (soft block with volatility check)
+    minutes_before: int = 10
+    # Minutes for hard block before event (no exceptions, no trading at all)
+    hard_block_minutes: int = 2
     # Minutes to wait after event before resuming (max post-event window)
     minutes_after: int = 30
     # Post-news volatility check: how often to re-check (seconds)
