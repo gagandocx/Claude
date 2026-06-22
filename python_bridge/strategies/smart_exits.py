@@ -66,9 +66,15 @@ class SmartExitManager:
     """
 
     def __init__(self, config: Optional[SmartExitConfig] = None,
-                 rl_config: Optional[RLConfig] = None):
+                 rl_config: Optional[RLConfig] = None,
+                 rl_agent: Optional[RLAgent] = None):
         self.config = config or SmartExitConfig()
-        self.rl_agent = RLAgent(rl_config or RLConfig())
+        # Share a single RL agent with SignalGenerator to unify replay buffer
+        # and avoid splitting the learning signal between two independent agents.
+        if rl_agent is not None:
+            self.rl_agent = rl_agent
+        else:
+            self.rl_agent = RLAgent(rl_config or RLConfig())
 
         # Track positions being managed
         self._position_history: Dict[str, List[ExitDecision]] = {}

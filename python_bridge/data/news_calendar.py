@@ -235,6 +235,10 @@ class NewsCalendarFilter:
         (event_time + minutes_after). During this window, no new
         trades should be opened.
 
+        NOTE: This method may trigger a blocking network fetch if calendar
+        data is stale. For the hot signal loop, prefer is_high_impact_window_cached()
+        which only reads from already-loaded data.
+
         Args:
             check_time: Time to check (defaults to current UTC time)
 
@@ -242,6 +246,35 @@ class NewsCalendarFilter:
             True if currently in a high-impact event window
         """
         self._ensure_calendar_loaded()
+        return self._check_window(check_time)
+
+    def is_high_impact_window_cached(self, check_time: Optional[datetime] = None) -> bool:
+        """
+        Non-blocking check: only uses already-loaded calendar data.
+
+        This method never makes a network call. It reads from whatever
+        calendar data is currently in memory (populated by background
+        refresh or a previous fetch_calendar() call). If no data is loaded,
+        it attempts to read from the local file cache only.
+
+        Use this in the main signal loop to avoid blocking on HTTP requests.
+        Schedule background refreshes separately.
+
+        Args:
+            check_time: Time to check (defaults to current UTC time)
+
+        Returns:
+            True if currently in a high-impact event window
+        """
+        # If no calendar data in memory, try local cache file (no network)
+        if not self._calendar:
+            cached = self._load_cache()
+            if cached:
+                self._calendar = cached
+        return self._check_window(check_time)
+
+    def _check_window(self, check_time: Optional[datetime] = None) -> bool:
+        """Internal: check if time is in a high-impact event window."""
 
         if check_time is None:
             check_time = datetime.now(timezone.utc)

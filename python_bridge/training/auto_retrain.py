@@ -192,8 +192,21 @@ class AutoRetrainer:
             if train_fn:
                 train_fn()
             else:
-                # Use default train_all from train.py
-                from train import train_all
+                # Import train_all from the correct module path.
+                # train.py is in the python_bridge package root.
+                try:
+                    from python_bridge.train import train_all
+                except ImportError:
+                    # Fallback: try relative import for when running from python_bridge/
+                    import importlib.util
+                    train_module_path = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "train.py"
+                    )
+                    spec = importlib.util.spec_from_file_location("train", train_module_path)
+                    train_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(train_module)
+                    train_all = train_module.train_all
                 train_all()
             logger.info("[AutoRetrain] Training completed")
 

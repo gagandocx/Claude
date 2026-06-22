@@ -102,9 +102,18 @@ class SignalGenerator:
                         atr: float = 0.0,
                         current_price: float = 0.0,
                         adx_series: Optional[object] = None,
-                        vix_level: Optional[float] = None) -> TradeSignal:
+                        vix_level: Optional[float] = None,
+                        htf_bias: Optional[Dict] = None,
+                        cross_pair_info: Optional[Dict] = None) -> TradeSignal:
         """
         Generate a trade signal from input features.
+
+        Professional signal generation with multi-timeframe confirmation
+        and cross-pair context:
+        - HTF bias filters: Only take longs if H1/H4 bias is bullish
+        - USD strength: Adjusts confidence for gold (inverse correlation)
+        - Model input shape remains fixed (46 features); auxiliary data
+          is used for filtering and confidence scaling, not model input.
 
         Args:
             features: Input features array (1, seq_len, num_features)
@@ -113,6 +122,8 @@ class SignalGenerator:
             current_price: Current market price
             adx_series: ADX series for regime detection
             vix_level: Current VIX level
+            htf_bias: Higher timeframe trend bias dict (e.g. {'1h': 0.7, '4h': 0.3})
+            cross_pair_info: Cross-pair context (e.g. {'usd_strength': 0.5})
 
         Returns:
             TradeSignal object
@@ -201,6 +212,53 @@ class SignalGenerator:
 
         logger.info("[SignalGen] Action decision: %s (buy_prob=%.4f, sell_prob=%.4f, conf=%.4f), regime=%s",
                     action, buy_prob, sell_prob, confidence, regime_name)
+
+        # 4a. PROFESSIONAL SIGNAL FILTERING: HTF trend confirmation
+        # Use higher timeframe bias to filter counter-trend trades and
+        # boost confidence for trend-aligned signals. This is how
+        # professional prop traders use multi-timeframe analysis.
+        htf_confidence_adj = 0.0
+        if htf_bias and action != "HOLD":
+            h1_bias = htf_bias.get("1h", 0.0)
+            h4_bias = htf_bias.get("4h", 0.0)
+            # Combined HTF score: H4 weighted more (institutional timeframe)
+            htf_score = h1_bias * 0.3 + h4_bias * 0.7
+
+            if action == "BUY" and htf_score < -0.3:
+                # Buying against strong bearish HTF trend: penalize confidence
+                htf_confidence_adj = -0.10
+                logger.info("[SignalGen] HTF FILTER: Penalizing BUY (HTF bearish, score=%.2f)", htf_score)
+            elif action == "SELL" and htf_score > 0.3:
+                # Selling against strong bullish HTF trend: penalize confidence
+                htf_confidence_adj = -0.10
+                logger.info("[SignalGen] HTF FILTER: Penalizing SELL (HTF bullish, score=%.2f)", htf_score)
+            elif (action == "BUY" and htf_score > 0.3) or (action == "SELL" and htf_score < -0.3):
+                # Signal aligned with HTF trend: boost confidence
+                htf_confidence_adj = 0.05
+                logger.info("[SignalGen] HTF CONFIRM: Signal aligned with HTF trend (score=%.2f)", htf_score)
+
+        # 4b. PROFESSIONAL SIGNAL FILTERING: Cross-pair USD strength context
+        # Gold is inversely correlated with USD. Strong USD = bearish gold,
+        # Weak USD = bullish gold. Adjust confidence accordingly.
+        xpair_confidence_adj = 0.0
+        if cross_pair_info and action != "HOLD":
+            usd_strength = cross_pair_info.get("usd_strength", 0.0)
+            if action == "BUY" and usd_strength > 0.5:
+                # Buying gold while USD is strong: reduce confidence
+                xpair_confidence_adj = -0.05
+                logger.info("[SignalGen] XPAIR FILTER: Penalizing BUY (USD strong=%.3f)", usd_strength)
+            elif action == "SELL" and usd_strength < -0.5:
+                # Selling gold while USD is weak: reduce confidence
+                xpair_confidence_adj = -0.05
+                logger.info("[SignalGen] XPAIR FILTER: Penalizing SELL (USD weak=%.3f)", usd_strength)
+            elif (action == "BUY" and usd_strength < -0.3) or (action == "SELL" and usd_strength > 0.3):
+                # Signal aligned with USD/gold correlation: boost
+                xpair_confidence_adj = 0.03
+                logger.info("[SignalGen] XPAIR CONFIRM: Signal aligned with USD (strength=%.3f)", usd_strength)
+
+        # Apply auxiliary feature adjustments to confidence
+        confidence = confidence + htf_confidence_adj + xpair_confidence_adj
+        confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
 
         # 4. Apply confidence threshold (adjusted by regime)
         min_confidence = regime_adjustments.get(
@@ -303,7 +361,9 @@ class SignalGenerator:
 
         Feeds reward signal to the RL agent for learning position
         management, and updates ensemble weights for prediction quality.
-        Also records the trade in the PerformanceTracker for analytics.
+
+        Note: Performance tracking is handled exclusively by main.py from
+        MT5 confirmations to prevent double-counting (Fix #6).
 
         Args:
             trade_id: Unique trade identifier
@@ -321,27 +381,7 @@ class SignalGenerator:
             "gradient_boost": predicted_action,
         })
 
-        # Feed performance tracker with trade result details
-        if self._performance_tracker and trade_id in self._open_positions:
-            pos_info = self._open_positions[trade_id]
-            from dashboard.performance_tracker import TradeRecord
-            direction = "BUY" if pos_info.get("direction", 1) == 1 else "SELL"
-            trade_record = TradeRecord(
-                trade_id=trade_id,
-                entry_time=pos_info.get("open_time", datetime.now().isoformat()),
-                exit_time=datetime.now().isoformat(),
-                direction=direction,
-                pnl=pnl,
-                model=pos_info.get("model", "ensemble"),
-                regime=pos_info.get("regime", "ranging"),
-                entry_price=pos_info.get("entry_price", 0.0),
-                exit_price=pos_info.get("current_price", 0.0),
-                confidence=pos_info.get("initial_confidence", 0.0),
-                hold_bars=pos_info.get("hold_bars", 0),
-            )
-            self._performance_tracker.record_trade(trade_record)
-
-        # Feed RL agent with trade outcome
+        # Feed RL agent with trade outcome (learning only, no perf tracking)
         if trade_id in self._open_positions:
             pos_info = self._open_positions[trade_id]
             # Create terminal state for RL agent

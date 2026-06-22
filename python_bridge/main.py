@@ -16,6 +16,7 @@ import sys
 import time
 import signal
 import logging
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -110,14 +111,20 @@ class PythonMLBridge:
             NewsCalendarFilter()
             if self.config.enable_news_filter else None
         )
+        # Pre-fetch news calendar in a background thread (non-blocking)
+        if self.news_filter:
+            self._news_refresh_thread: Optional[threading.Thread] = None
+            self._start_news_refresh()
         self.multi_pair_config = (
             MultiPairConfig()
             if self.config.enable_multi_pair else None
         )
 
         # AI-driven exit management (RL agent + dynamic trailing stops)
+        # Share a single RL agent between SignalGenerator and SmartExitManager
+        # to accumulate experience in one replay buffer (avoids split learning)
         self.smart_exits = (
-            SmartExitManager(SmartExitConfig(), RLConfig())
+            SmartExitManager(SmartExitConfig(), rl_agent=self.signal_generator._rl_agent)
             if self.config.enable_smart_exits else None
         )
 
@@ -175,6 +182,24 @@ class PythonMLBridge:
         else:
             self.logger.info("No model checkpoints found, using untrained models")
 
+    def _start_news_refresh(self):
+        """Start a background thread to refresh the news calendar.
+
+        This avoids blocking the main signal loop with a 10s HTTP call.
+        The calendar data is refreshed periodically in the background,
+        and is_high_impact_window() reads from the already-loaded cache.
+        """
+        def _refresh():
+            try:
+                self.news_filter.fetch_calendar()
+            except Exception as e:
+                self.logger.debug(f"Background news refresh error: {e}")
+
+        self._news_refresh_thread = threading.Thread(
+            target=_refresh, daemon=True, name="NewsRefresh"
+        )
+        self._news_refresh_thread.start()
+
     def run_cycle(self) -> dict:
         """
         Run a single prediction cycle.
@@ -208,8 +233,16 @@ class PythonMLBridge:
                         self._load_models()  # Reload newly trained models
 
             # 0. NEWS FILTER - Professional traders never trade through major events
+            # Uses cached calendar data (refreshed in background thread) to avoid
+            # blocking the signal loop with network calls.
             if self.news_filter:
-                if self.news_filter.is_high_impact_window():
+                # Trigger background refresh if needed (non-blocking)
+                if self.news_filter._needs_refresh():
+                    if (self._news_refresh_thread is None
+                            or not self._news_refresh_thread.is_alive()):
+                        self._start_news_refresh()
+
+                if self.news_filter.is_high_impact_window_cached():
                     upcoming = self.news_filter.get_upcoming_events(hours_ahead=2)
                     event_info = upcoming[0]["title"] if upcoming else "Unknown"
                     self.logger.info(
@@ -301,7 +334,9 @@ class PythonMLBridge:
                 atr=atr,
                 current_price=current_price,
                 adx_series=adx_series,
-                vix_level=vix_level
+                vix_level=vix_level,
+                htf_bias=htf_bias,
+                cross_pair_info=cross_pair_info,
             )
 
             # 10. Write signal to bridge
@@ -326,9 +361,27 @@ class PythonMLBridge:
             # 10b. SMART EXITS - AI-driven position management for open positions
             if self.smart_exits:
                 try:
-                    # Process any exit signals from RL agent
-                    # (In live mode, open positions are tracked via confirmations)
+                    # Update unrealized PnL for all open positions each cycle (Fix #4)
                     open_positions = self.signal_generator._open_positions
+                    for ticket, pos_info in list(open_positions.items()):
+                        direction = pos_info.get("direction", 1)
+                        entry_price = pos_info.get("entry_price", current_price)
+                        if direction == 1:  # LONG
+                            unrealized = current_price - entry_price
+                        else:  # SHORT
+                            unrealized = entry_price - current_price
+                        pos_info["current_price"] = current_price
+                        pos_info["unrealized_pnl"] = unrealized
+                        pos_info["atr"] = atr
+                        # Track max favorable and adverse excursion
+                        pos_info["max_favorable"] = max(
+                            pos_info.get("max_favorable", 0.0), unrealized
+                        )
+                        pos_info["max_adverse"] = min(
+                            pos_info.get("max_adverse", 0.0), unrealized
+                        )
+
+                    # Process exit signals from RL agent
                     exit_signals = []
                     for ticket, pos_info in list(open_positions.items()):
                         from models.rl_agent import PositionState
@@ -385,10 +438,37 @@ class PythonMLBridge:
             if confirmations:
                 for conf in confirmations:
                     self.logger.info(f"MT5 Confirmation: {conf}")
-                    # Feed trade closures to performance tracker
+
+                    # Fix #1: Register new positions when MT5 confirms an entry fill
+                    if conf.get("type") == "open" or conf.get("type") == "fill":
+                        trade_id = str(conf.get("ticket", ""))
+                        direction = 1 if conf.get("direction", "BUY") == "BUY" else -1
+                        entry_price = float(conf.get("entry_price", current_price))
+                        confidence_val = float(conf.get("confidence", 0.5))
+                        sl_pips_val = float(conf.get("sl_pips", 0.0))
+                        tp_pips_val = float(conf.get("tp_pips", 0.0))
+                        self.signal_generator.register_open_position(
+                            trade_id=trade_id,
+                            direction=direction,
+                            entry_price=entry_price,
+                            confidence=confidence_val,
+                            atr=atr,
+                            sl_pips=sl_pips_val,
+                            tp_pips=tp_pips_val,
+                        )
+                        self.logger.info(
+                            f"  Registered position {trade_id} for RL tracking "
+                            f"(dir={direction}, entry={entry_price:.2f})"
+                        )
+
+                    # Fix #6: Only feed trade closures to PerformanceTracker from
+                    # MT5 confirmations (not from update_from_execution) to prevent
+                    # double-counting. The signal_generator.update_from_execution()
+                    # handles RL learning only, not performance tracking.
                     if self.performance_tracker and conf.get("type") == "close":
+                        trade_id = str(conf.get("ticket", ""))
                         trade_record = TradeRecord(
-                            trade_id=str(conf.get("ticket", "")),
+                            trade_id=trade_id,
                             entry_time=conf.get("open_time", datetime.now().isoformat()),
                             exit_time=conf.get("close_time", datetime.now().isoformat()),
                             direction=conf.get("direction", "BUY"),

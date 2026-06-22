@@ -455,6 +455,14 @@ void ProcessExitSignals()
     FileClose(fileHandle);
 
     // Delete the exit file after processing
+    // NOTE: Race condition exists here - between FileClose and FileDelete,
+    // the Python bridge may write a new exit signal file that gets deleted
+    // unread. A safer approach would be a read-then-rename pattern:
+    //   1. Rename exit file to .processing
+    //   2. Read from .processing
+    //   3. Delete .processing
+    // This ensures new signals written by Python are never lost.
+    // Low priority: at M1 frequency this window is <1ms.
     FileDelete(InpExitFile, FILE_COMMON);
 }
 
