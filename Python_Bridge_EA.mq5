@@ -101,9 +101,6 @@ int OnInit()
     // Render price chart (candles, grid, indicators) BEHIND graphical objects
     // so the dashboard panel is fully opaque and not see-through
     ChartSetInteger(0, CHART_FOREGROUND, false);
-    // Hide trade levels and object descriptions that could show through the panel
-    ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, false);
-    ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
 
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
@@ -121,6 +118,8 @@ void OnDeinit(const int reason)
     // Remove all dashboard graphical objects
     ObjectsDeleteAll(0, "PB_");
     Comment("");
+    // Restore default chart rendering when EA is removed
+    ChartSetInteger(0, CHART_FOREGROUND, true);
     ChartRedraw(0);
     Print("[PythonBridge] EA removed. Trades executed: ", g_tradesExecuted);
 }
