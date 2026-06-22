@@ -393,12 +393,14 @@ class NewsCalendarFilter:
                         "state": "post_news_high_vol",
                     }
 
-            # Past min wait but no ATR data provided - allow trading
-            # (If caller cannot provide volatility data, assume safe after min wait)
+            # Past min wait but no ATR data - fail closed (keep blocking)
+            # When we cannot measure volatility during a post-news window,
+            # it is safer to stay out of the market than to risk trading
+            # into a volatile event aftermath.
             return {
-                "blocked": False,
-                "reason": f"Post-news: min wait passed, no vol data ({event_title})",
-                "state": "post_news_safe",
+                "blocked": True,
+                "reason": f"Post-news: ATR unavailable, staying cautious ({event_title})",
+                "state": "post_news_high_vol",
             }
 
         # Not in any event window

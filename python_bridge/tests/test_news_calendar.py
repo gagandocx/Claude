@@ -564,17 +564,18 @@ class TestShouldBlockTrading:
         assert result["blocked"] is False
         assert result["state"] == "clear"
 
-    def test_allows_after_min_wait_no_atr_data(self, filter_with_events, sample_calendar):
-        """Test that should_block_trading allows after min_wait when no ATR data provided."""
+    def test_blocks_after_min_wait_no_atr_data(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading blocks after min_wait when no ATR data (fail-closed)."""
         nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
         # 5 minutes after NFP (past 2 min wait)
         check_time = nfp_time + timedelta(minutes=5)
-        # No ATR data provided
+        # No ATR data provided - should fail closed (keep blocking)
         result = filter_with_events.should_block_trading(
             current_atr=None, normal_atr=None, check_time=check_time
         )
-        assert result["blocked"] is False
-        assert result["state"] == "post_news_safe"
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_high_vol"
+        assert "ATR unavailable" in result["reason"]
 
     def test_blocks_at_exact_event_time_within_min_wait(self, filter_with_events, sample_calendar):
         """Test at exact event time (within min wait period)."""

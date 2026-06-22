@@ -329,13 +329,35 @@ class MarketDataFetcher:
         return data.reshape(1, seq_length, -1)
 
     def get_current_atr(self) -> float:
-        """Get the current ATR value for position sizing."""
+        """Get the current ATR value for position sizing (14-period default)."""
         df = self.fetch_ohlcv()
         if df.empty:
             return 0.0
         atr = ta.volatility.average_true_range(
             df["High"], df["Low"], df["Close"],
             window=self.config.atr_period
+        )
+        return float(atr.iloc[-1]) if not atr.empty else 0.0
+
+    def get_short_atr(self, window: int = 5) -> float:
+        """Get a short-window ATR to detect recent volatility spikes.
+
+        Used by the post-news volatility check: compare short-window ATR
+        (last few bars, reflecting immediate market conditions) against the
+        longer baseline ATR to determine if volatility has subsided.
+
+        Args:
+            window: ATR lookback period (default 5 bars for recent activity)
+
+        Returns:
+            Short-window ATR value, 0.0 on failure
+        """
+        df = self.fetch_ohlcv()
+        if df.empty or len(df) < window + 1:
+            return 0.0
+        atr = ta.volatility.average_true_range(
+            df["High"], df["Low"], df["Close"],
+            window=window
         )
         return float(atr.iloc[-1]) if not atr.empty else 0.0
 

@@ -152,6 +152,14 @@ class PythonMLBridge:
         self._dashboard_last_render = 0.0
         self._trades_since_render = 0
 
+        # Rolling ATR baseline for post-news volatility comparison.
+        # Stores recent ATR values from each signal cycle to compute a
+        # "normal" baseline. The short ATR (5-period) is compared against
+        # this rolling average to detect post-news volatility spikes.
+        self._atr_history: list = []
+        self._atr_history_max_size: int = 30  # ~30 cycles of history
+        self._last_news_vol_check: float = 0.0  # timestamp of last vol check
+
         # Load models if checkpoints exist
         self._load_models()
 
@@ -242,13 +250,35 @@ class PythonMLBridge:
                             or not self._news_refresh_thread.is_alive()):
                         self._start_news_refresh()
 
-                # Get current ATR for post-news volatility check
-                try:
-                    current_atr = self.data_fetcher.get_current_atr()
-                    normal_atr = self.data_fetcher.get_current_atr()  # baseline ATR
-                except Exception:
-                    current_atr = None
-                    normal_atr = None
+                # Get ATR values for post-news volatility check.
+                # current_atr: short-window (5-period) reflecting immediate volatility
+                # normal_atr: rolling average of the 14-period ATR from recent cycles
+                # This ensures a meaningful comparison: spiky short-term ATR vs calm baseline.
+                current_atr = None
+                normal_atr = None
+
+                # Throttle ATR fetches using post_news_check_interval config
+                now_ts = time.time()
+                check_interval = self.news_filter.config.post_news_check_interval
+                if now_ts - self._last_news_vol_check >= check_interval:
+                    try:
+                        current_atr = self.data_fetcher.get_short_atr(window=5)
+                        baseline_atr = self.data_fetcher.get_current_atr()
+                        self._last_news_vol_check = now_ts
+
+                        # Update rolling ATR history for baseline calculation
+                        if baseline_atr and baseline_atr > 0:
+                            self._atr_history.append(baseline_atr)
+                            if len(self._atr_history) > self._atr_history_max_size:
+                                self._atr_history = self._atr_history[-self._atr_history_max_size:]
+
+                        # Normal ATR is the rolling average of recent 14-period ATR values
+                        if self._atr_history:
+                            normal_atr = sum(self._atr_history) / len(self._atr_history)
+                    except Exception:
+                        # ATR fetch failed - leave both as None (fail-closed in should_block_trading)
+                        current_atr = None
+                        normal_atr = None
 
                 news_status = self.news_filter.should_block_trading(
                     current_atr=current_atr,
