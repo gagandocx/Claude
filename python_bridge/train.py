@@ -104,6 +104,19 @@ def prepare_data(config: DataConfig = None,
     X = np.vstack(all_X)
     y = np.hstack(all_y)
 
+    # Re-compute and save normalization stats from the COMBINED dataset so that
+    # inference normalization matches training. Each timeframe's call to
+    # prepare_model_input() saved stats from only that timeframe; here we
+    # overwrite with the combined statistics that the model actually trained on.
+    combined_means = np.mean(X, axis=(0, 1))  # mean across samples and time steps
+    combined_stds = np.std(X, axis=(0, 1)) + 1e-10
+    fetcher._save_normalization_stats(
+        feature_cols=[f"feat_{i}" for i in range(X.shape[2])],
+        means=combined_means,
+        stds=combined_stds,
+    )
+    logger.info("Saved combined normalization stats from all %d sequences", len(X))
+
     logger.info(f"Total training sequences: {len(X)} (target: 25,000+)")
     logger.info(f"Class distribution: {np.bincount(y)}")
 

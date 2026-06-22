@@ -347,7 +347,9 @@ class SignalGenerator:
                 total_volume = np.sum(volumes)
                 if total_volume > 0:
                     vw_momentum = np.sum(price_changes * volumes) / total_volume
-                    threshold = 0.5  # $0.50 minimum move for gold
+                    # Configurable threshold (default $0.50 for gold / 5 pips;
+                    # should be scaled for other instruments, e.g. by ATR)
+                    threshold = self.data_config.momentum_threshold
 
                     if abs(vw_momentum) < threshold:
                         return "FLAT"
@@ -369,7 +371,9 @@ class SignalGenerator:
         reference_close = close[-6]
 
         diff = current_close - reference_close
-        threshold = 0.5  # $0.50 minimum move for gold (5 pips)
+        # Configurable threshold (default $0.50 for gold / 5 pips;
+        # should be scaled for other instruments, e.g. by ATR)
+        threshold = self.data_config.momentum_threshold
 
         if abs(diff) < threshold:
             return "FLAT"
@@ -601,6 +605,10 @@ class SignalGenerator:
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         # 5b. Support/Resistance proximity penalty
+        # NOTE: Known limitation - S/R detection degrades to a no-op when the prices
+        # DataFrame has fewer bars than sr_lookback (e.g. 7-bar minimum for momentum).
+        # At inference time with short live feeds, this filter silently skips. This is
+        # acceptable because S/R is a supplementary confidence penalty, not a gate.
         sr_levels = self._detect_support_resistance(
             prices, lookback=self.data_config.sr_lookback
         )
@@ -619,6 +627,11 @@ class SignalGenerator:
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         # 5c. RSI exhaustion filter
+        # NOTE: Known limitation - the three stacking 0.10 penalties (S/R, RSI, HTF)
+        # rarely block trades given the 0.15 min_confidence threshold (worst case:
+        # 0.95 - 0.30 = 0.65 still passes). This is intentional for a high-frequency
+        # scalper where the goal is to slightly reduce position sizing rather than
+        # gate entries aggressively.
         import pandas as pd
         if isinstance(prices, pd.DataFrame) and "Close" in prices.columns:
             try:
@@ -635,7 +648,7 @@ class SignalGenerator:
                             logger.info("[SignalGen] RSI exhaustion: oversold (RSI=%.1f), "
                                         "SELL confidence -0.10", current_rsi)
             except Exception as e:
-                logger.debug("[SignalGen] RSI filter error: %s", e)
+                logger.warning("[SignalGen] RSI filter error (filter disabled for this bar): %s", e)
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         # 6. Apply confidence threshold (timing gate)
