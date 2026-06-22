@@ -657,8 +657,8 @@ void BuildFeatureVector(double &features[])
    features[idx++] = buf_rsi[1] / 100.0;  // rsi_14 normalized 0-1
 
    // --- VWAP distance proxy (feature 14) ---
-   // Compute cumulative VWAP proxy: sum(close*volume) / sum(volume) over last N bars
-   // This matches the Python trainer's compute_vwap_proxy() approach
+   // Compute VWAP proxy: sum(typical_price*volume) / sum(volume) over 50-bar rolling window
+   // This matches the Python trainer's compute_vwap_proxy(window=50) approach
    int vwap_period = 50;
    double cum_tp_vol = 0.0;
    double cum_vol_vwap = 0.0;
@@ -761,11 +761,10 @@ void BuildFeatureVector(double &features[])
 
    // --- 7. Session/Killzone features (features 41-45) ---
    MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
-   int hour = dt.hour;
    features[idx++] = IsPreMarket() ? 1.0 : 0.0;        // is_premarket
    features[idx++] = IsRegularSession() ? 1.0 : 0.0;   // is_regular_session
    features[idx++] = IsPowerHour() ? 1.0 : 0.0;        // is_power_hour
-   features[idx++] = (double)hour / 24.0;               // time_of_day (normalized)
+   features[idx++] = (double)(dt.hour * 60 + dt.min) / 1440.0;  // time_of_day (minute resolution, normalized 0-1)
    // day_of_week: MQL5 day_of_week is 0=Sun,1=Mon,...,5=Fri
    // Python uses weekday()/4.0 where Mon=0, Fri=1.0
    // Match Python: (day_of_week - 1) / 4.0 gives Mon=0.0, Tue=0.25, ..., Fri=1.0
@@ -1337,10 +1336,8 @@ void ComputePremiumDiscount(double close,
       pd_position = (close - range_low) / range;
       pd_position = MathMax(0.0, MathMin(1.0, pd_position));
 
-      double equilibrium = (range_high + range_low) / 2.0;
-      double atr = buf_atr[1];
-      if(atr > 0)
-         eq_distance = (close - equilibrium) / atr;
+      // Match Python: abs(pd_position - 0.5) * 2.0 (bounded 0-1, unsigned)
+      eq_distance = MathAbs(pd_position - 0.5) * 2.0;
 
       is_premium  = (pd_position > 0.5) ? 1.0 : 0.0;
       is_discount = (pd_position < 0.5) ? 1.0 : 0.0;

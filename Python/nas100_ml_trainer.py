@@ -275,21 +275,21 @@ def compute_atr(high, low, close, period=14):
     return atr
 
 
-def compute_vwap_proxy(high, low, close, volume):
+def compute_vwap_proxy(high, low, close, volume, window=50):
     """
-    Compute a VWAP proxy using typical price * volume cumulative.
-    Resets daily (approximation for intraday VWAP).
+    Compute a VWAP proxy using typical price * volume over a rolling window.
+    Uses a 50-bar rolling window to match the MQL5 EA's real-time computation.
     """
     n = len(close)
     typical_price = (high + low + close) / 3.0
     vwap = np.zeros(n)
 
-    cum_vol = 0.0
-    cum_tp_vol = 0.0
-
     for i in range(n):
-        cum_vol += volume[i]
-        cum_tp_vol += typical_price[i] * volume[i]
+        start = max(0, i - window + 1)
+        window_vol = volume[start:i+1]
+        window_tp = typical_price[start:i+1]
+        cum_vol = np.sum(window_vol)
+        cum_tp_vol = np.sum(window_tp * window_vol)
 
         if cum_vol > 0:
             vwap[i] = cum_tp_vol / cum_vol
