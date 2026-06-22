@@ -61,11 +61,19 @@ class MT5Bridge:
     def __init__(self, signal_path: Optional[str] = None,
                  confirmation_path: Optional[str] = None,
                  exit_signal_path: Optional[str] = None,
-                 status_path: Optional[str] = None):
+                 status_path: Optional[str] = None,
+                 heartbeat_path: Optional[str] = None):
         self.signal_path = signal_path or SIGNAL_FILE
         self.confirmation_path = confirmation_path or CONFIRMATION_FILE
         self.exit_signal_path = exit_signal_path or EXIT_SIGNAL_FILE
         self.status_path = status_path or STATUS_FILE
+        # Heartbeat defaults to same directory as signal file
+        if heartbeat_path:
+            self.heartbeat_path = heartbeat_path
+        else:
+            self.heartbeat_path = os.path.join(
+                os.path.dirname(self.signal_path), "python_bridge_heartbeat.txt"
+            )
         self._ensure_directories()
 
     def _ensure_directories(self):
@@ -206,11 +214,8 @@ class MT5Bridge:
 
     def write_heartbeat(self):
         """Write a heartbeat file to indicate the bridge is running."""
-        heartbeat_path = os.path.join(
-            os.path.dirname(self.signal_path), "python_bridge_heartbeat.txt"
-        )
         try:
-            with open(heartbeat_path, "w") as f:
+            with open(self.heartbeat_path, "w") as f:
                 f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("Python ML Bridge Active\n")
         except Exception as e:
