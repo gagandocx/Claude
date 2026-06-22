@@ -80,7 +80,7 @@ class EnsembleConfig:
     lstm_weight: float = 0.35
     gradient_boost_weight: float = 0.25
     meta_learner_features: int = 9  # 3 models x 3 classes
-    min_agreement: float = 0.6      # Minimum model agreement for signal
+    min_agreement: float = 0.35     # Minimum model agreement for signal
     dynamic_weights: bool = True    # Adjust weights based on recent accuracy
     weight_lookback: int = 50       # Number of recent predictions for weight calc
 
@@ -140,8 +140,8 @@ class SentimentConfig:
 @dataclass
 class SignalConfig:
     """Signal generation thresholds."""
-    min_confidence: float = 0.65            # Minimum confidence to generate signal
-    strong_confidence: float = 0.80         # Strong signal threshold
+    min_confidence: float = 0.40            # Minimum confidence to generate signal
+    strong_confidence: float = 0.60         # Strong signal threshold
     atr_sl_multiplier: float = 1.5          # SL = ATR * multiplier
     atr_tp_multiplier: float = 2.5          # TP = ATR * multiplier (1:1.67 R:R)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
@@ -165,7 +165,7 @@ class RiskConfig:
     max_lot_size: float = 1.0               # Maximum lot size
 
     # Time filters (UTC hours to avoid trading)
-    no_trade_hours: List[int] = field(default_factory=lambda: [0, 23])
+    no_trade_hours: List[int] = field(default_factory=lambda: [])
     # Days to avoid (0=Monday, 4=Friday afternoon)
     reduced_risk_days: List[int] = field(default_factory=lambda: [4])
 

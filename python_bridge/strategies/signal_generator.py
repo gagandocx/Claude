@@ -9,16 +9,19 @@
 
 import numpy as np
 import time
+import logging
 from datetime import datetime
 from typing import Dict, Optional
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import SignalConfig, DataConfig
+from config.settings import SignalConfig, DataConfig, MODEL_DIR
 from models.ensemble import EnsembleManager
 from strategies.risk_manager import RiskManager
 from strategies.regime_detector import RegimeDetector, MarketRegime
+
+logger = logging.getLogger(__name__)
 
 
 class TradeSignal:
@@ -123,22 +126,40 @@ class SignalGenerator:
         # Cooldown check
         elapsed = time.time() - self._last_signal_time
         if elapsed < self.signal_config.cooldown_seconds:
+            logger.info("[SignalGen] HOLD - cooldown active (%.1fs remaining)",
+                        self.signal_config.cooldown_seconds - elapsed)
             return hold_signal
 
         # Guard: refuse to generate non-HOLD signals if models are not loaded
+        # Fallback: if checkpoint files exist on disk, allow signal generation
         if not self.ensemble.models_loaded:
-            return hold_signal
+            checkpoint_dir = MODEL_DIR
+            has_checkpoints = os.path.isdir(checkpoint_dir) and any(
+                f.endswith('.pt') or f.endswith('.pth') or f.endswith('.pkl')
+                for f in os.listdir(checkpoint_dir)
+            ) if os.path.isdir(checkpoint_dir) else False
+
+            if has_checkpoints:
+                logger.info("[SignalGen] models_loaded=False but checkpoint files found - "
+                            "allowing signal generation")
+            else:
+                logger.info("[SignalGen] HOLD - models not loaded and no checkpoints found")
+                return hold_signal
 
         # 1. Get ensemble prediction
         try:
             prediction = self.ensemble.predict(features)
         except Exception as e:
-            print(f"[SignalGen] Model prediction error: {e}")
+            logger.error("[SignalGen] Model prediction error: %s", e)
             return hold_signal
 
         probabilities = prediction["probabilities"][0]  # (3,)
         confidence = float(prediction["confidence"][0])
         agreement = float(prediction["agreement"][0])
+
+        logger.info("[SignalGen] Prediction probs: SELL=%.4f HOLD=%.4f BUY=%.4f",
+                    probabilities[0], probabilities[1], probabilities[2])
+        logger.info("[SignalGen] Confidence=%.4f, Agreement=%.4f", confidence, agreement)
 
         # 2. Detect regime
         import pandas as pd
@@ -156,28 +177,37 @@ class SignalGenerator:
         action_idx = int(np.argmax(probabilities))
         action_map = {0: "SELL", 1: "HOLD", 2: "BUY"}
         action = action_map[action_idx]
+        logger.info("[SignalGen] Predicted action: %s (idx=%d), regime=%s",
+                    action, action_idx, regime_name)
 
         # 4. Apply confidence threshold (adjusted by regime)
         min_confidence = regime_adjustments.get(
             "confidence_threshold", self.signal_config.min_confidence
         )
         if confidence < min_confidence:
+            logger.info("[SignalGen] HOLD - confidence %.4f < threshold %.4f (regime: %s)",
+                        confidence, min_confidence, regime_name)
             return hold_signal
 
         # 5. If HOLD, return hold signal
         if action == "HOLD":
+            logger.info("[SignalGen] HOLD - model predicted HOLD action")
             return hold_signal
 
         # 6. Check model agreement
         if agreement < self.ensemble.config.min_agreement:
+            logger.info("[SignalGen] HOLD - agreement %.4f < threshold %.4f",
+                        agreement, self.ensemble.config.min_agreement)
             return hold_signal
 
         # 7. Check risk manager
         if not self.risk_manager.is_trading_allowed():
+            logger.info("[SignalGen] HOLD - risk manager blocked trading (drawdown/daily limit)")
             return hold_signal
 
         # 8. Check correlation limits
         if not self.risk_manager.check_correlation_limit(action):
+            logger.info("[SignalGen] HOLD - correlation limit reached for %s", action)
             return hold_signal
 
         # 9. Calculate SL/TP based on ATR
@@ -203,6 +233,7 @@ class SignalGenerator:
         )
 
         if lot_size <= 0:
+            logger.info("[SignalGen] HOLD - calculated lot_size is 0")
             return hold_signal
 
         # 11. Determine which model contributed most
@@ -229,6 +260,10 @@ class SignalGenerator:
 
         self._last_signal_time = time.time()
         self._signal_count += 1
+
+        logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",
+                    signal.action, signal.symbol, signal.confidence,
+                    signal.lot_size, signal.regime)
 
         return signal
 
