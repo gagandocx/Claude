@@ -80,7 +80,10 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+    // Remove all dashboard graphical objects
+    ObjectsDeleteAll(0, "PB_");
     Comment("");
+    ChartRedraw(0);
     Print("[PythonBridge] EA removed. Trades executed: ", g_tradesExecuted);
 }
 
@@ -614,43 +617,230 @@ void CheckEmergencyCloseAll()
 }
 
 //+------------------------------------------------------------------+
-//| Update on-chart dashboard                                          |
+//| Calculate floating P/L for this EA's positions                     |
+//+------------------------------------------------------------------+
+double CalculateFloatingPL()
+{
+    double totalPL = 0.0;
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(g_position.SelectByIndex(i))
+        {
+            if(g_position.Magic() == InpMagicNumber &&
+               g_position.Symbol() == _Symbol)
+            {
+                totalPL += g_position.Profit() + g_position.Swap() + g_position.Commission();
+            }
+        }
+    }
+    return totalPL;
+}
+
+//+------------------------------------------------------------------+
+//| Count open positions for this EA                                   |
+//+------------------------------------------------------------------+
+int CountOpenPositions()
+{
+    int count = 0;
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(g_position.SelectByIndex(i))
+        {
+            if(g_position.Magic() == InpMagicNumber &&
+               g_position.Symbol() == _Symbol)
+            {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Create or update a label object on the chart                       |
+//+------------------------------------------------------------------+
+void DashboardLabel(string name, int x, int y, string text, color clr, int fontSize = 9, string font = "Consolas")
+{
+    string objName = "PB_" + name;
+    if(ObjectFind(0, objName) < 0)
+    {
+        ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+        ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+    }
+    ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+    ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+    ObjectSetString(0, objName, OBJPROP_TEXT, text);
+    ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
+    ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
+    ObjectSetString(0, objName, OBJPROP_FONT, font);
+}
+
+//+------------------------------------------------------------------+
+//| Create or update the background panel                              |
+//+------------------------------------------------------------------+
+void DashboardBackground(string name, int x, int y, int width, int height, color bgColor, int transparency)
+{
+    string objName = "PB_" + name;
+    if(ObjectFind(0, objName) < 0)
+    {
+        ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+        ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+    }
+    ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+    ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+    ObjectSetInteger(0, objName, OBJPROP_XSIZE, width);
+    ObjectSetInteger(0, objName, OBJPROP_YSIZE, height);
+    ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgColor);
+    ObjectSetInteger(0, objName, OBJPROP_COLOR, clrDimGray);
+    ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
+    // OBJPROP_BACK is not needed for RECTANGLE_LABEL (it's always in foreground as overlay)
+}
+
+//+------------------------------------------------------------------+
+//| Update on-chart dashboard with professional graphical panel        |
 //+------------------------------------------------------------------+
 void UpdateDashboard()
 {
-    string dashboard = "";
-    dashboard += "\n";
-    dashboard += "  +========================================+\n";
-    dashboard += "  |  PYTHON ML BRIDGE // HF SCALPER v2.0   |\n";
-    dashboard += "  +========================================+\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  |  >>> STATUS                            |\n";
-    dashboard += "  |  " + g_status + "\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  |  >>> LAST SIGNAL                       |\n";
-    dashboard += "  |  Action ...... " + g_lastAction + "\n";
-    dashboard += "  |  Confidence .. " + DoubleToString(g_lastConfidence, 4) + "\n";
-    dashboard += "  |  Model ....... " + g_lastModel + "\n";
-    dashboard += "  |  Regime ...... " + g_lastRegime + "\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  |  >>> EXECUTION                         |\n";
-    dashboard += "  |  Lot Size .... " + DoubleToString(g_lastLotSize, 2) + "\n";
-    dashboard += "  |  SL (pips) ... " + DoubleToString(g_lastSLPips, 1) + "\n";
-    dashboard += "  |  TP (pips) ... " + DoubleToString(g_lastTPPips, 1) + "\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  |  >>> STATISTICS                        |\n";
-    dashboard += "  |  Signals ...... " + IntegerToString(g_signalsRead) + "\n";
-    dashboard += "  |  Trades ....... " + IntegerToString(g_tradesExecuted) + "\n";
-    dashboard += "  |  Max Positions. " + IntegerToString(InpMaxOpenTrades) + "\n";
-    dashboard += "  |  Signal Time .. " + TimeToString(g_lastSignalTime) + "\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  |  >>> SCALPER CONFIG                    |\n";
-    dashboard += "  |  Cycle: 10s | ATR Cap: $5             |\n";
-    dashboard += "  |  SL: ~$3 | TP: ~$0.50 | WR: 85%+    |\n";
-    dashboard += "  |  Emergency Stop: $50 loss             |\n";
-    dashboard += "  |                                        |\n";
-    dashboard += "  +========================================+\n";
+    int panelX      = 10;
+    int panelY      = 30;
+    int panelWidth  = 300;
+    int panelHeight = 420;
+    int lineHeight  = 18;
+    int leftMargin  = 20;
+    int valueCol    = 155;
+    int y           = panelY + 12;
 
-    Comment(dashboard);
+    // Colors
+    color clrTitle      = clrGold;
+    color clrHeader     = clrDeepSkyBlue;
+    color clrLabel      = clrSilver;
+    color clrValue      = clrWhite;
+    color clrRunning    = clrLime;
+    color clrWarning    = clrRed;
+    color clrBgPanel    = C'20,20,30';
+    color clrBgHeader   = C'30,35,50';
+
+    // --- Background panels ---
+    DashboardBackground("bg_main", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 200);
+    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 220);
+
+    // --- Title ---
+    DashboardLabel("title", panelX + leftMargin, y, "PYTHON ML BRIDGE - HF SCALPER", clrTitle, 10, "Consolas Bold");
+    y += 28;
+
+    // --- Symbol & Timeframe ---
+    DashboardLabel("sym_lbl", panelX + leftMargin, y, "Symbol:", clrLabel);
+    DashboardLabel("sym_val", panelX + valueCol, y, _Symbol, clrValue);
+    y += lineHeight;
+    DashboardLabel("tf_lbl", panelX + leftMargin, y, "Timeframe:", clrLabel);
+    DashboardLabel("tf_val", panelX + valueCol, y, EnumToString(Period()), clrValue);
+    y += lineHeight + 6;
+
+    // --- Separator ---
+    DashboardLabel("sep1", panelX + leftMargin, y, "--- SIGNAL ---", clrHeader, 9);
+    y += lineHeight;
+
+    // Signal section
+    color actionClr = clrValue;
+    if(g_lastAction == "BUY") actionClr = clrLime;
+    else if(g_lastAction == "SELL") actionClr = clrRed;
+
+    DashboardLabel("sig_act_lbl", panelX + leftMargin, y, "Action:", clrLabel);
+    DashboardLabel("sig_act_val", panelX + valueCol, y, g_lastAction, actionClr);
+    y += lineHeight;
+    DashboardLabel("sig_conf_lbl", panelX + leftMargin, y, "Confidence:", clrLabel);
+    DashboardLabel("sig_conf_val", panelX + valueCol, y, DoubleToString(g_lastConfidence * 100, 1) + "%", clrValue);
+    y += lineHeight;
+    DashboardLabel("sig_mod_lbl", panelX + leftMargin, y, "Model:", clrLabel);
+    DashboardLabel("sig_mod_val", panelX + valueCol, y, (g_lastModel == "" ? "---" : g_lastModel), clrValue);
+    y += lineHeight;
+    DashboardLabel("sig_reg_lbl", panelX + leftMargin, y, "Regime:", clrLabel);
+    DashboardLabel("sig_reg_val", panelX + valueCol, y, (g_lastRegime == "" ? "---" : g_lastRegime), clrValue);
+    y += lineHeight + 6;
+
+    // --- Trade section ---
+    DashboardLabel("sep2", panelX + leftMargin, y, "--- TRADE ---", clrHeader, 9);
+    y += lineHeight;
+
+    DashboardLabel("trd_lot_lbl", panelX + leftMargin, y, "Lot Size:", clrLabel);
+    DashboardLabel("trd_lot_val", panelX + valueCol, y, DoubleToString(g_lastLotSize, 2), clrValue);
+    y += lineHeight;
+    DashboardLabel("trd_sl_lbl", panelX + leftMargin, y, "SL (pips):", clrLabel);
+    DashboardLabel("trd_sl_val", panelX + valueCol, y, DoubleToString(g_lastSLPips, 1), clrValue);
+    y += lineHeight;
+    DashboardLabel("trd_tp_lbl", panelX + leftMargin, y, "TP (pips):", clrLabel);
+    DashboardLabel("trd_tp_val", panelX + valueCol, y, DoubleToString(g_lastTPPips, 1), clrValue);
+    y += lineHeight + 6;
+
+    // --- Statistics section ---
+    DashboardLabel("sep3", panelX + leftMargin, y, "--- STATISTICS ---", clrHeader, 9);
+    y += lineHeight;
+
+    DashboardLabel("st_sig_lbl", panelX + leftMargin, y, "Signals Read:", clrLabel);
+    DashboardLabel("st_sig_val", panelX + valueCol, y, IntegerToString(g_signalsRead), clrValue);
+    y += lineHeight;
+    DashboardLabel("st_trd_lbl", panelX + leftMargin, y, "Trades Exec:", clrLabel);
+    DashboardLabel("st_trd_val", panelX + valueCol, y, IntegerToString(g_tradesExecuted), clrValue);
+    y += lineHeight;
+
+    int openPos = CountOpenPositions();
+    DashboardLabel("st_pos_lbl", panelX + leftMargin, y, "Open Positions:", clrLabel);
+    DashboardLabel("st_pos_val", panelX + valueCol, y, IntegerToString(openPos) + " / " + IntegerToString(InpMaxOpenTrades), clrValue);
+    y += lineHeight;
+
+    double floatingPL = CalculateFloatingPL();
+    color plColor = (floatingPL >= 0) ? clrLime : clrRed;
+    string plSign = (floatingPL >= 0) ? "+" : "";
+    DashboardLabel("st_pl_lbl", panelX + leftMargin, y, "Floating P/L:", clrLabel);
+    DashboardLabel("st_pl_val", panelX + valueCol, y, plSign + "$" + DoubleToString(floatingPL, 2), plColor);
+    y += lineHeight + 6;
+
+    // --- Scalper config ---
+    DashboardLabel("sep4", panelX + leftMargin, y, "--- CONFIG ---", clrHeader, 9);
+    y += lineHeight;
+
+    DashboardLabel("cfg1_lbl", panelX + leftMargin, y, "Cycle:", clrLabel);
+    DashboardLabel("cfg1_val", panelX + valueCol, y, "10s | ATR Cap: $5", clrValue);
+    y += lineHeight;
+    DashboardLabel("cfg2_lbl", panelX + leftMargin, y, "SL/TP:", clrLabel);
+    DashboardLabel("cfg2_val", panelX + valueCol, y, "~$3 / ~$0.50", clrValue);
+    y += lineHeight;
+    DashboardLabel("cfg3_lbl", panelX + leftMargin, y, "Emergency:", clrLabel);
+    DashboardLabel("cfg3_val", panelX + valueCol, y, "$50 loss stop", clrWarning);
+    y += lineHeight + 6;
+
+    // --- Status line ---
+    DashboardLabel("sep5", panelX + leftMargin, y, "--- STATUS ---", clrHeader, 9);
+    y += lineHeight;
+
+    color statusClr = clrRunning;
+    if(StringFind(g_status, "EMERGENCY") >= 0 || StringFind(g_status, "ERROR") >= 0)
+        statusClr = clrWarning;
+    else if(StringFind(g_status, "Ready") >= 0 || StringFind(g_status, "Running") >= 0 || StringFind(g_status, "RUNNING") >= 0)
+        statusClr = clrRunning;
+
+    DashboardLabel("status_val", panelX + leftMargin, y, g_status, statusClr);
+    y += lineHeight;
+
+    // Signal time
+    string sigTimeStr = (g_lastSignalTime > 0) ? TimeToString(g_lastSignalTime, TIME_DATE | TIME_MINUTES) : "---";
+    DashboardLabel("sigtime_lbl", panelX + leftMargin, y, "Last Signal:", clrLabel);
+    DashboardLabel("sigtime_val", panelX + valueCol, y, sigTimeStr, clrValue);
+
+    // Adjust panel height dynamically
+    int finalHeight = (y - panelY) + lineHeight + 10;
+    if(finalHeight != panelHeight)
+    {
+        string bgName = "PB_bg_main";
+        ObjectSetInteger(0, bgName, OBJPROP_YSIZE, finalHeight);
+    }
+
+    ChartRedraw(0);
 }
 //+------------------------------------------------------------------+
