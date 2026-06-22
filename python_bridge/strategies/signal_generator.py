@@ -314,6 +314,11 @@ class SignalGenerator:
             sl_mult=sl_mult, tp_mult=tp_mult
         )
 
+        # 9b. Dynamic trailing mode: if tp_pips == 0 (atr_tp_multiplier=0),
+        # set tp_pips=9999 to signal the EA to manage exit dynamically (no fixed TP)
+        if levels["tp_pips"] == 0:
+            levels["tp_pips"] = 9999
+
         # 10. Calculate position size
         position_mult = regime_adjustments.get("position_size_mult", 1.0)
         lot_size = self.risk_manager.calculate_position_size(

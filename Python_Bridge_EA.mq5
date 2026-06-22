@@ -35,6 +35,16 @@ input int      InpMaxOpenTrades    = 5;        // Max open trades (HF scalping)
 input bool     InpShowDashboard    = true;      // Show dashboard panel
 input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
 
+// --- Dynamic Trailing Stop Parameters ---
+input double   InpBreakevenProfit  = 0.50;     // Profit $ to move SL to breakeven
+input double   InpTrailStart       = 1.00;     // Profit $ to start trailing ($0.50 trail)
+input double   InpTrailTight       = 2.00;     // Profit $ for tight trail ($0.30 trail)
+input double   InpTrailVeryTight   = 3.00;     // Profit $ for very tight trail ($0.20 trail)
+input int      InpMomentumLookback = 30;       // Momentum lookback (seconds)
+input int      InpMaxHoldNoProfit  = 300;      // Max hold without profit (seconds = 5 min)
+input double   InpMinProfitTarget  = 1.00;     // Min profit target $ to keep position open
+input double   InpMomentumReverse  = 0.30;     // $ reversal threshold to close on momentum fade
+
 //+------------------------------------------------------------------+
 //| Global Variables                                                    |
 //+------------------------------------------------------------------+
@@ -61,6 +71,21 @@ string         g_newsWarning    = "";
 
 // Emergency close-all cooldown (5 seconds between triggers)
 datetime       g_lastEmergencyClose = 0;
+
+// --- Dynamic Trailing SL: Position tracking ---
+// Store entry time for each position (indexed by ticket)
+#define MAX_TRACKED_POSITIONS 20
+ulong          g_trackedTickets[MAX_TRACKED_POSITIONS];
+datetime       g_trackedEntryTimes[MAX_TRACKED_POSITIONS];
+double         g_trackedEntryPrices[MAX_TRACKED_POSITIONS];
+int            g_trackedCount = 0;
+
+// Momentum price snapshot for direction detection
+double         g_momentumPrice = 0.0;
+datetime       g_momentumTime  = 0;
+
+// Trailing status for dashboard display
+string         g_trailStatus   = "No positions";
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -97,11 +122,19 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    // Only process on new bar to avoid excessive file reads
+    // --- Dynamic position management runs on EVERY tick ---
+    ManageOpenPositions();
+
+    // --- Signal reading only on new bar (prevent excessive file reads) ---
     static datetime lastBarTime = 0;
     datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
     if(currentBarTime == lastBarTime)
+    {
+        // Still update dashboard on every tick for real-time trailing info
+        if(InpShowDashboard)
+            UpdateDashboard();
         return;
+    }
     lastBarTime = currentBarTime;
 
     // Read signal from Python bridge
@@ -379,11 +412,18 @@ void ExecuteSignal()
     // For gold: 1 pip = 0.1 (10 points if 2 digits, 100 if 3)
     double pipValue = point * 10;
 
+    // Dynamic trailing mode: if tp_pips >= 9990, set TP=0 (no fixed TP)
+    // The EA ManageOpenPositions() will manage exits dynamically
+    bool dynamicTPMode = (g_lastTPPips >= 9990);
+
     if(g_lastAction == "BUY")
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
         sl = NormalizeDouble(price - g_lastSLPips * pipValue, digits);
-        tp = NormalizeDouble(price + g_lastTPPips * pipValue, digits);
+        if(dynamicTPMode)
+            tp = 0;  // No fixed TP - EA manages exit via trailing
+        else
+            tp = NormalizeDouble(price + g_lastTPPips * pipValue, digits);
 
         if(g_trade.Buy(lotSize, _Symbol, price, sl, tp,
                        "PythonBridge|" + g_lastModel + "|" + g_lastRegime))
@@ -391,9 +431,11 @@ void ExecuteSignal()
             g_tradesExecuted++;
             g_status = "BUY executed @ " + DoubleToString(price, digits);
             Print("[PythonBridge] BUY ", lotSize, " lots @ ", price,
-                  " SL=", sl, " TP=", tp,
+                  " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
             WriteConfirmation("BUY", lotSize, price, sl, tp, "FILLED");
+            // Track position for dynamic trailing
+            TrackNewPosition(g_trade.ResultOrder(), price);
         }
         else
         {
@@ -407,7 +449,10 @@ void ExecuteSignal()
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
         sl = NormalizeDouble(price + g_lastSLPips * pipValue, digits);
-        tp = NormalizeDouble(price - g_lastTPPips * pipValue, digits);
+        if(dynamicTPMode)
+            tp = 0;  // No fixed TP - EA manages exit via trailing
+        else
+            tp = NormalizeDouble(price - g_lastTPPips * pipValue, digits);
 
         if(g_trade.Sell(lotSize, _Symbol, price, sl, tp,
                         "PythonBridge|" + g_lastModel + "|" + g_lastRegime))
@@ -415,9 +460,11 @@ void ExecuteSignal()
             g_tradesExecuted++;
             g_status = "SELL executed @ " + DoubleToString(price, digits);
             Print("[PythonBridge] SELL ", lotSize, " lots @ ", price,
-                  " SL=", sl, " TP=", tp,
+                  " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
             WriteConfirmation("SELL", lotSize, price, sl, tp, "FILLED");
+            // Track position for dynamic trailing
+            TrackNewPosition(g_trade.ResultOrder(), price);
         }
         else
         {
@@ -427,6 +474,242 @@ void ExecuteSignal()
             WriteConfirmation("SELL", lotSize, price, sl, tp, "FAILED");
         }
     }
+}
+
+//+------------------------------------------------------------------+
+//| Track a new position for dynamic trailing management               |
+//+------------------------------------------------------------------+
+void TrackNewPosition(ulong ticket, double entryPrice)
+{
+    if(g_trackedCount < MAX_TRACKED_POSITIONS)
+    {
+        g_trackedTickets[g_trackedCount] = ticket;
+        g_trackedEntryTimes[g_trackedCount] = TimeCurrent();
+        g_trackedEntryPrices[g_trackedCount] = entryPrice;
+        g_trackedCount++;
+        Print("[PythonBridge] Tracking position ticket=", ticket,
+              " entry=", DoubleToString(entryPrice, 2));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Remove a tracked position (after close)                            |
+//+------------------------------------------------------------------+
+void UntrackPosition(ulong ticket)
+{
+    for(int i = 0; i < g_trackedCount; i++)
+    {
+        if(g_trackedTickets[i] == ticket)
+        {
+            // Shift remaining entries down
+            for(int j = i; j < g_trackedCount - 1; j++)
+            {
+                g_trackedTickets[j] = g_trackedTickets[j + 1];
+                g_trackedEntryTimes[j] = g_trackedEntryTimes[j + 1];
+                g_trackedEntryPrices[j] = g_trackedEntryPrices[j + 1];
+            }
+            g_trackedCount--;
+            return;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get entry time for a tracked position                              |
+//+------------------------------------------------------------------+
+datetime GetTrackedEntryTime(ulong ticket)
+{
+    for(int i = 0; i < g_trackedCount; i++)
+    {
+        if(g_trackedTickets[i] == ticket)
+            return g_trackedEntryTimes[i];
+    }
+    return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Get entry price for a tracked position                             |
+//+------------------------------------------------------------------+
+double GetTrackedEntryPrice(ulong ticket)
+{
+    for(int i = 0; i < g_trackedCount; i++)
+    {
+        if(g_trackedTickets[i] == ticket)
+            return g_trackedEntryPrices[i];
+    }
+    return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Manage open positions with dynamic trailing SL                     |
+//| Called on EVERY TICK for real-time position management              |
+//+------------------------------------------------------------------+
+void ManageOpenPositions()
+{
+    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double pipValue = point * 10;  // For gold: 1 pip = 0.1
+    datetime currentTime = TimeCurrent();
+    int positionsManaged = 0;
+    string trailInfo = "";
+
+    // Update momentum price snapshot every InpMomentumLookback seconds
+    if(g_momentumTime == 0 || (currentTime - g_momentumTime) >= InpMomentumLookback)
+    {
+        g_momentumPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        g_momentumTime = currentTime;
+    }
+
+    // Loop through all positions with this EA's magic number
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(!g_position.SelectByIndex(i))
+            continue;
+
+        if(g_position.Magic() != InpMagicNumber || g_position.Symbol() != _Symbol)
+            continue;
+
+        ulong ticket = g_position.Ticket();
+        double entryPrice = g_position.PriceOpen();
+        double currentSL = g_position.StopLoss();
+        double currentTP = g_position.TakeProfit();
+        double volume = g_position.Volume();
+        double profit = g_position.Profit() + g_position.Swap() + g_position.Commission();
+        ENUM_POSITION_TYPE posType = g_position.PositionType();
+
+        // Get current market price for this position direction
+        double currentPrice = (posType == POSITION_TYPE_BUY)
+            ? SymbolInfoDouble(_Symbol, SYMBOL_BID)
+            : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+        positionsManaged++;
+
+        // --- 1. TIME-BASED EXIT: Close if held too long without profit ---
+        datetime entryTime = GetTrackedEntryTime(ticket);
+        if(entryTime == 0)
+        {
+            // Position opened before tracking started - register it now
+            TrackNewPosition(ticket, entryPrice);
+            entryTime = currentTime;
+        }
+
+        int holdSeconds = (int)(currentTime - entryTime);
+        if(holdSeconds > InpMaxHoldNoProfit && profit < InpMinProfitTarget)
+        {
+            Print("[PythonBridge] TIME EXIT: Ticket ", ticket,
+                  " held ", holdSeconds, "s with profit $",
+                  DoubleToString(profit, 2), " < $", DoubleToString(InpMinProfitTarget, 2));
+            g_trade.PositionClose(ticket);
+            UntrackPosition(ticket);
+            g_trailStatus = "Time exit: " + IntegerToString(holdSeconds) + "s";
+            continue;
+        }
+
+        // --- 2. MOMENTUM CHECK: Close if price stalling/reversing ---
+        if(g_momentumPrice > 0 && holdSeconds > InpMomentumLookback)
+        {
+            double momentumDiff = currentPrice - g_momentumPrice;
+
+            bool momentumFading = false;
+            if(posType == POSITION_TYPE_BUY && momentumDiff < -InpMomentumReverse)
+                momentumFading = true;
+            else if(posType == POSITION_TYPE_SELL && momentumDiff > InpMomentumReverse)
+                momentumFading = true;
+
+            // Only close on momentum fade if position is in profit (preserve capital)
+            if(momentumFading && profit > 0)
+            {
+                Print("[PythonBridge] MOMENTUM EXIT: Ticket ", ticket,
+                      " momentum reversed $", DoubleToString(MathAbs(momentumDiff), 2),
+                      " against position. Profit: $", DoubleToString(profit, 2));
+                g_trade.PositionClose(ticket);
+                UntrackPosition(ticket);
+                g_trailStatus = "Momentum exit: $" + DoubleToString(profit, 2);
+                continue;
+            }
+        }
+
+        // --- 3. PROGRESSIVE TRAILING STOP LOSS ---
+        double newSL = currentSL;
+        string tierLabel = "";
+
+        if(profit >= InpTrailVeryTight)
+        {
+            // Tier 4: Very tight trail ($0.20 behind current price)
+            double trailDist = 0.20;
+            if(posType == POSITION_TYPE_BUY)
+                newSL = NormalizeDouble(currentPrice - trailDist, digits);
+            else
+                newSL = NormalizeDouble(currentPrice + trailDist, digits);
+            tierLabel = "T4($0.20)";
+        }
+        else if(profit >= InpTrailTight)
+        {
+            // Tier 3: Tight trail ($0.30 behind current price)
+            double trailDist = 0.30;
+            if(posType == POSITION_TYPE_BUY)
+                newSL = NormalizeDouble(currentPrice - trailDist, digits);
+            else
+                newSL = NormalizeDouble(currentPrice + trailDist, digits);
+            tierLabel = "T3($0.30)";
+        }
+        else if(profit >= InpTrailStart)
+        {
+            // Tier 2: Standard trail ($0.50 behind current price)
+            double trailDist = 0.50;
+            if(posType == POSITION_TYPE_BUY)
+                newSL = NormalizeDouble(currentPrice - trailDist, digits);
+            else
+                newSL = NormalizeDouble(currentPrice + trailDist, digits);
+            tierLabel = "T2($0.50)";
+        }
+        else if(profit >= InpBreakevenProfit)
+        {
+            // Tier 1: Breakeven (move SL to entry price)
+            newSL = NormalizeDouble(entryPrice, digits);
+            tierLabel = "BE";
+        }
+        else
+        {
+            tierLabel = "Init";
+        }
+
+        // Only move SL in favorable direction (never widen the stop)
+        bool shouldModify = false;
+        if(posType == POSITION_TYPE_BUY)
+        {
+            // For BUY: new SL must be HIGHER than current SL (tighter)
+            if(newSL > currentSL && newSL != currentSL)
+                shouldModify = true;
+        }
+        else
+        {
+            // For SELL: new SL must be LOWER than current SL (tighter)
+            if(currentSL == 0 || (newSL < currentSL && newSL != currentSL))
+                shouldModify = true;
+        }
+
+        if(shouldModify)
+        {
+            if(g_trade.PositionModify(ticket, newSL, currentTP))
+            {
+                Print("[PythonBridge] TRAIL ", tierLabel, ": Ticket ", ticket,
+                      " SL moved to ", DoubleToString(newSL, digits),
+                      " (profit $", DoubleToString(profit, 2), ")");
+            }
+        }
+
+        // Build trail info for dashboard
+        trailInfo = tierLabel + " P:" + DoubleToString(profit, 2);
+    }
+
+    // Update trail status for dashboard
+    if(positionsManaged == 0)
+        g_trailStatus = "No positions";
+    else if(trailInfo != "")
+        g_trailStatus = trailInfo;
+    else
+        g_trailStatus = IntegerToString(positionsManaged) + " pos managed";
 }
 
 //+------------------------------------------------------------------+
@@ -825,8 +1108,12 @@ void UpdateDashboard()
     DashboardLabel("trd_sl_lbl", panelX + leftMargin, y, "SL (pips):", clrLabel);
     DashboardLabel("trd_sl_val", panelX + valueCol, y, DoubleToString(g_lastSLPips, 1), clrValue);
     y += lineHeight;
-    DashboardLabel("trd_tp_lbl", panelX + leftMargin, y, "TP (pips):", clrLabel);
-    DashboardLabel("trd_tp_val", panelX + valueCol, y, DoubleToString(g_lastTPPips, 1), clrValue);
+    DashboardLabel("trd_tp_lbl", panelX + leftMargin, y, "TP Mode:", clrLabel);
+    string tpDisplay = (g_lastTPPips >= 9990) ? "Dynamic Trail" : DoubleToString(g_lastTPPips, 1) + " pips";
+    DashboardLabel("trd_tp_val", panelX + valueCol, y, tpDisplay, (g_lastTPPips >= 9990) ? clrGold : clrValue);
+    y += lineHeight;
+    DashboardLabel("trd_trail_lbl", panelX + leftMargin, y, "Trail:", clrLabel);
+    DashboardLabel("trd_trail_val", panelX + valueCol, y, g_trailStatus, clrGold);
     y += lineHeight + 6;
 
     // --- Statistics section ---
@@ -857,10 +1144,10 @@ void UpdateDashboard()
     y += lineHeight;
 
     DashboardLabel("cfg1_lbl", panelX + leftMargin, y, "Cycle:", clrLabel);
-    DashboardLabel("cfg1_val", panelX + valueCol, y, "10s | ATR Cap: $5", clrValue);
+    DashboardLabel("cfg1_val", panelX + valueCol, y, "Every tick | ATR Cap: $5", clrValue);
     y += lineHeight;
-    DashboardLabel("cfg2_lbl", panelX + leftMargin, y, "SL/TP:", clrLabel);
-    DashboardLabel("cfg2_val", panelX + valueCol, y, "~$3 / ~$0.50", clrValue);
+    DashboardLabel("cfg2_lbl", panelX + leftMargin, y, "Exit:", clrLabel);
+    DashboardLabel("cfg2_val", panelX + valueCol, y, "Dynamic Trail", clrGold);
     y += lineHeight;
     DashboardLabel("cfg3_lbl", panelX + leftMargin, y, "Emergency:", clrLabel);
     DashboardLabel("cfg3_val", panelX + valueCol, y, "$50 loss stop", clrWarning);

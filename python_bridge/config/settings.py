@@ -143,7 +143,7 @@ class SignalConfig:
     min_confidence: float = 0.15            # Very low threshold for aggressive trading
     strong_confidence: float = 0.40         # Strong signal threshold
     atr_sl_multiplier: float = 0.6          # SL = ATR * multiplier (ATR~5 -> $3 SL = 30 pips)
-    atr_tp_multiplier: float = 0.1          # TP = ATR * multiplier (ATR~5 -> $0.50 TP = 5 pips)
+    atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
     cooldown_seconds: int = 2               # Ultra-fast cooldown for HF scalping
 
