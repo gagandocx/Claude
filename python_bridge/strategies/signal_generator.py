@@ -91,6 +91,9 @@ class SignalGenerator:
         # Track open positions for RL agent state
         self._open_positions: Dict[str, Dict] = {}
 
+        # Optional performance tracker reference (set from main.py)
+        self._performance_tracker = None
+
         self._last_signal_time = 0.0
         self._signal_count = 0
 
@@ -286,6 +289,13 @@ class SignalGenerator:
 
         return signal
 
+    def set_performance_tracker(self, tracker) -> None:
+        """
+        Set a reference to the PerformanceTracker for trade result recording.
+        Called from main.py during initialization.
+        """
+        self._performance_tracker = tracker
+
     def update_from_execution(self, trade_id: str, pnl: float,
                               predicted_action: int, actual_outcome: int):
         """
@@ -293,6 +303,7 @@ class SignalGenerator:
 
         Feeds reward signal to the RL agent for learning position
         management, and updates ensemble weights for prediction quality.
+        Also records the trade in the PerformanceTracker for analytics.
 
         Args:
             trade_id: Unique trade identifier
@@ -309,6 +320,26 @@ class SignalGenerator:
             "lstm": predicted_action,
             "gradient_boost": predicted_action,
         })
+
+        # Feed performance tracker with trade result details
+        if self._performance_tracker and trade_id in self._open_positions:
+            pos_info = self._open_positions[trade_id]
+            from dashboard.performance_tracker import TradeRecord
+            direction = "BUY" if pos_info.get("direction", 1) == 1 else "SELL"
+            trade_record = TradeRecord(
+                trade_id=trade_id,
+                entry_time=pos_info.get("open_time", datetime.now().isoformat()),
+                exit_time=datetime.now().isoformat(),
+                direction=direction,
+                pnl=pnl,
+                model=pos_info.get("model", "ensemble"),
+                regime=pos_info.get("regime", "ranging"),
+                entry_price=pos_info.get("entry_price", 0.0),
+                exit_price=pos_info.get("current_price", 0.0),
+                confidence=pos_info.get("initial_confidence", 0.0),
+                hold_bars=pos_info.get("hold_bars", 0),
+            )
+            self._performance_tracker.record_trade(trade_record)
 
         # Feed RL agent with trade outcome
         if trade_id in self._open_positions:

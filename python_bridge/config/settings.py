@@ -389,6 +389,31 @@ class RetrainConfig:
 
 
 # ─────────────────────────────────────────────
+#  LIVE PERFORMANCE DASHBOARD
+# ─────────────────────────────────────────────
+@dataclass
+class DashboardConfig:
+    """Live performance dashboard configuration.
+
+    Professional prop desks track every metric in real-time. This
+    dashboard computes institutional-grade analytics: Sharpe ratio,
+    Sortino ratio, profit factor, per-model alpha, and per-regime
+    performance. Updated after every trade closure and rendered
+    periodically to console, log, and HTML report.
+    """
+    update_interval_trades: int = 1          # Update after every N trade closures
+    html_output_path: str = "dashboard/report.html"  # HTML report output path
+    console_refresh_seconds: int = 60        # Console dashboard refresh interval
+    track_per_model: bool = True             # Track per-model performance
+    track_per_regime: bool = True            # Track per-regime performance
+    min_trades_for_stats: int = 10           # Min trades before stats are meaningful
+    enable_console: bool = True              # Show console dashboard
+    enable_html_report: bool = True          # Generate HTML reports
+    enable_log_output: bool = True           # Structured log output
+    use_colors: bool = True                  # ANSI colors in console
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -404,4 +429,5 @@ class MainConfig:
     enable_multi_pair: bool = True          # Cross-pair correlation analysis
     enable_smart_exits: bool = True         # AI-driven exit management (RL agent)
     enable_auto_retrain: bool = True        # Weekend auto-retraining scheduler
+    enable_dashboard: bool = True           # Live performance dashboard
     paper_trading: bool = True              # Paper trading mode by default

@@ -27,7 +27,7 @@ from config.settings import (
     MainConfig, DataConfig, SignalConfig, RiskConfig,
     TransformerConfig, LSTMConfig, EnsembleConfig,
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
-    SmartExitConfig, RLConfig, RetrainConfig,
+    SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -42,6 +42,8 @@ from strategies.risk_manager import RiskManager
 from strategies.smart_exits import SmartExitManager, ExitDecision
 from signals.bridge import MT5Bridge
 from training.auto_retrain import AutoRetrainer
+from dashboard.performance_tracker import PerformanceTracker, TradeRecord
+from dashboard.dashboard_renderer import DashboardRenderer
 
 
 # ─────────────────────────────────────────────
@@ -125,8 +127,30 @@ class PythonMLBridge:
             if self.config.enable_auto_retrain else None
         )
 
+        # Live performance dashboard (prop desk style analytics)
+        self.dashboard_config = DashboardConfig()
+        self.performance_tracker = (
+            PerformanceTracker(
+                min_trades_for_stats=self.dashboard_config.min_trades_for_stats
+            )
+            if self.config.enable_dashboard else None
+        )
+        self.dashboard_renderer = (
+            DashboardRenderer(
+                self.performance_tracker,
+                use_colors=self.dashboard_config.use_colors
+            )
+            if self.performance_tracker else None
+        )
+        self._dashboard_last_render = 0.0
+        self._trades_since_render = 0
+
         # Load models if checkpoints exist
         self._load_models()
+
+        # Connect performance tracker to signal generator for trade feedback
+        if self.performance_tracker:
+            self.signal_generator.set_performance_tracker(self.performance_tracker)
 
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
@@ -138,6 +162,7 @@ class PythonMLBridge:
         self.logger.info(f"  Multi-pair: {self.config.enable_multi_pair}")
         self.logger.info(f"  Smart exits (RL): {self.config.enable_smart_exits}")
         self.logger.info(f"  Auto-retrain: {self.config.enable_auto_retrain}")
+        self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
 
     def _load_models(self):
         """Load model checkpoints if available."""
@@ -360,7 +385,40 @@ class PythonMLBridge:
             if confirmations:
                 for conf in confirmations:
                     self.logger.info(f"MT5 Confirmation: {conf}")
+                    # Feed trade closures to performance tracker
+                    if self.performance_tracker and conf.get("type") == "close":
+                        trade_record = TradeRecord(
+                            trade_id=str(conf.get("ticket", "")),
+                            entry_time=conf.get("open_time", datetime.now().isoformat()),
+                            exit_time=conf.get("close_time", datetime.now().isoformat()),
+                            direction=conf.get("direction", "BUY"),
+                            pnl=float(conf.get("pnl", 0.0)),
+                            model=conf.get("model", "ensemble"),
+                            regime=conf.get("regime", "ranging"),
+                            entry_price=float(conf.get("entry_price", 0.0)),
+                            exit_price=float(conf.get("exit_price", 0.0)),
+                            lot_size=float(conf.get("lot_size", 0.0)),
+                            confidence=float(conf.get("confidence", 0.0)),
+                        )
+                        self.performance_tracker.record_trade(trade_record)
+                        self._trades_since_render += 1
                 self.bridge.clear_confirmations()
+
+            # 13. Periodic dashboard rendering
+            if self.dashboard_renderer:
+                now = time.time()
+                should_render = (
+                    now - self._dashboard_last_render
+                    >= self.dashboard_config.console_refresh_seconds
+                    and self.performance_tracker.total_trades > 0
+                )
+                if should_render:
+                    if self.dashboard_config.enable_console:
+                        dashboard_output = self.dashboard_renderer.render_console()
+                        self.logger.info("\n" + dashboard_output)
+                    if self.dashboard_config.enable_log_output:
+                        self.dashboard_renderer.render_log()
+                    self._dashboard_last_render = now
 
             result["signal"] = signal.to_dict()
             result["htf_bias"] = htf_bias
@@ -401,8 +459,17 @@ class PythonMLBridge:
         self.logger.info("Bridge stopped")
 
     def stop(self):
-        """Stop the main loop."""
+        """Stop the main loop and generate final reports."""
         self._running = False
+        # Generate final HTML report on shutdown
+        if (self.dashboard_renderer and self.dashboard_config.enable_html_report
+                and self.performance_tracker.total_trades > 0):
+            try:
+                html_path = self.dashboard_config.html_output_path
+                self.dashboard_renderer.render_html(html_path)
+                self.logger.info(f"Final performance report saved to: {html_path}")
+            except Exception as e:
+                self.logger.warning(f"Could not generate final report: {e}")
         self.logger.info("Stop requested")
 
     def _shutdown_handler(self, signum, frame):
