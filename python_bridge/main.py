@@ -242,23 +242,49 @@ class PythonMLBridge:
                             or not self._news_refresh_thread.is_alive()):
                         self._start_news_refresh()
 
-                if self.news_filter.is_high_impact_window_cached():
-                    # Use cached variant to avoid blocking HTTP fetch
-                    # (is_high_impact_window_cached just confirmed data is loaded)
+                # Get current ATR for post-news volatility check
+                try:
+                    current_atr = self.data_fetcher.get_current_atr()
+                    normal_atr = self.data_fetcher.get_current_atr()  # baseline ATR
+                except Exception:
+                    current_atr = None
+                    normal_atr = None
+
+                news_status = self.news_filter.should_block_trading(
+                    current_atr=current_atr,
+                    normal_atr=normal_atr,
+                )
+
+                if news_status["blocked"]:
                     upcoming = self.news_filter.get_upcoming_events_cached(hours_ahead=2)
                     event_info = upcoming[0]["title"] if upcoming else "Unknown"
+                    state = news_status["state"]
+
+                    if state == "pre_news":
+                        status_msg = f"Pre-news: paused - {event_info}"
+                    elif state == "post_news_min_wait":
+                        status_msg = f"Post-news: waiting minimum period - {event_info}"
+                    elif state == "post_news_high_vol":
+                        status_msg = f"Post-news: checking volatility... - {event_info}"
+                    else:
+                        status_msg = f"News filter active: {event_info}"
+
                     self.logger.info(
-                        f"NEWS FILTER: Skipping cycle - high impact event window "
-                        f"({event_info}). No trades during NFP/FOMC/CPI."
+                        f"NEWS FILTER: Skipping cycle - {news_status['reason']}"
                     )
-                    result["error"] = f"News filter active: {event_info}"
+                    result["error"] = f"News filter: {news_status['reason']}"
                     result["news_filtered"] = True
-                    # Write status for MT5 dashboard display
-                    self.bridge.write_status(
-                        "NEWS",
-                        f"High impact event: {event_info} - No trades during NFP/FOMC/CPI"
-                    )
+                    self.bridge.write_status("NEWS", status_msg)
                     return result
+
+                # Log if we just resumed after news
+                if news_status["state"] == "post_news_safe":
+                    self.logger.info(
+                        f"NEWS FILTER: {news_status['reason']} - resuming trades"
+                    )
+                    self.bridge.write_status(
+                        "OK", f"Post-news: low vol, resuming"
+                    )
 
             # 1. Fetch market data
             df = self.data_fetcher.fetch_ohlcv(interval="1h", period="3mo")

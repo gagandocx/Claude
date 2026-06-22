@@ -489,3 +489,185 @@ class TestNewsFilterConfig:
         """Test strict mode default."""
         config = NewsFilterConfig()
         assert config.strict_mode is True
+
+    def test_post_news_config_defaults(self):
+        """Test post-news volatility check config defaults."""
+        config = NewsFilterConfig()
+        assert config.post_news_check_interval == 60
+        assert config.post_news_volatility_threshold == 2.0
+        assert config.post_news_min_wait == 2
+
+
+# ─────────────────────────────────────────────
+#  SHOULD_BLOCK_TRADING TESTS (POST-NEWS VOLATILITY)
+# ─────────────────────────────────────────────
+class TestShouldBlockTrading:
+    """Tests for should_block_trading method with post-news volatility check."""
+
+    def test_blocks_during_pre_event_window(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading blocks during pre-event window."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 10 minutes before NFP
+        check_time = nfp_time - timedelta(minutes=10)
+        result = filter_with_events.should_block_trading(
+            current_atr=5.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "pre_news"
+        assert "Pre-news" in result["reason"]
+
+    def test_blocks_during_post_news_min_wait(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading blocks during post_news_min_wait (2 min after event)."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 1 minute after NFP (within 2 min wait)
+        check_time = nfp_time + timedelta(minutes=1)
+        result = filter_with_events.should_block_trading(
+            current_atr=5.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_min_wait"
+
+    def test_allows_after_min_wait_low_volatility(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading allows trading after min_wait if volatility is low."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 5 minutes after NFP (past 2 min wait)
+        check_time = nfp_time + timedelta(minutes=5)
+        # current_atr=3.0, normal_atr=3.0 -> ratio=1.0 < threshold 2.0
+        result = filter_with_events.should_block_trading(
+            current_atr=3.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is False
+        assert result["state"] == "post_news_safe"
+        assert "low volatility" in result["reason"]
+
+    def test_blocks_after_min_wait_high_volatility(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading keeps blocking if volatility is high after min_wait."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 5 minutes after NFP (past 2 min wait)
+        check_time = nfp_time + timedelta(minutes=5)
+        # current_atr=8.0, normal_atr=3.0 -> ratio=2.67 >= threshold 2.0
+        result = filter_with_events.should_block_trading(
+            current_atr=8.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_high_vol"
+        assert "checking volatility" in result["reason"]
+
+    def test_allows_outside_any_window(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading allows trading outside any event window."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 2 hours before NFP (well outside window)
+        check_time = nfp_time - timedelta(hours=2)
+        result = filter_with_events.should_block_trading(
+            current_atr=5.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is False
+        assert result["state"] == "clear"
+
+    def test_allows_after_min_wait_no_atr_data(self, filter_with_events, sample_calendar):
+        """Test that should_block_trading allows after min_wait when no ATR data provided."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        # 5 minutes after NFP (past 2 min wait)
+        check_time = nfp_time + timedelta(minutes=5)
+        # No ATR data provided
+        result = filter_with_events.should_block_trading(
+            current_atr=None, normal_atr=None, check_time=check_time
+        )
+        assert result["blocked"] is False
+        assert result["state"] == "post_news_safe"
+
+    def test_blocks_at_exact_event_time_within_min_wait(self, filter_with_events, sample_calendar):
+        """Test at exact event time (within min wait period)."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        result = filter_with_events.should_block_trading(
+            current_atr=5.0, normal_atr=3.0, check_time=nfp_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_min_wait"
+
+    def test_volatility_threshold_boundary(self, filter_with_events, sample_calendar):
+        """Test at exact volatility threshold boundary."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        check_time = nfp_time + timedelta(minutes=5)
+        # ratio = 6.0/3.0 = 2.0, which equals threshold (not below)
+        result = filter_with_events.should_block_trading(
+            current_atr=6.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_high_vol"
+
+    def test_volatility_just_below_threshold(self, filter_with_events, sample_calendar):
+        """Test just below volatility threshold allows trading."""
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+        check_time = nfp_time + timedelta(minutes=5)
+        # ratio = 5.9/3.0 = 1.967, which is below threshold 2.0
+        result = filter_with_events.should_block_trading(
+            current_atr=5.9, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is False
+        assert result["state"] == "post_news_safe"
+
+    def test_custom_min_wait_config(self, sample_calendar):
+        """Test with custom post_news_min_wait configuration."""
+        config = NewsFilterConfig(
+            minutes_before=30,
+            minutes_after=30,
+            strict_mode=False,
+            post_news_min_wait=5,  # 5 minutes min wait
+        )
+        nf = NewsCalendarFilter(config=config)
+        nf._calendar = sample_calendar
+        nf._last_refresh = datetime.now(timezone.utc)
+
+        nfp_time = datetime.fromisoformat(sample_calendar[0]["date"])
+
+        # 3 minutes after event (within 5 min wait)
+        check_time = nfp_time + timedelta(minutes=3)
+        result = nf.should_block_trading(
+            current_atr=3.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is True
+        assert result["state"] == "post_news_min_wait"
+
+        # 6 minutes after event (past 5 min wait, low vol)
+        check_time = nfp_time + timedelta(minutes=6)
+        result = nf.should_block_trading(
+            current_atr=3.0, normal_atr=3.0, check_time=check_time
+        )
+        assert result["blocked"] is False
+        assert result["state"] == "post_news_safe"
+
+
+# ─────────────────────────────────────────────
+#  IS_POST_NEWS_SAFE TESTS
+# ─────────────────────────────────────────────
+class TestIsPostNewsSafe:
+    """Tests for is_post_news_safe method."""
+
+    def test_safe_when_low_volatility(self, filter_with_events):
+        """Test returns True when volatility ratio is below threshold."""
+        # ratio = 3.0/3.0 = 1.0 < 2.0 threshold
+        assert filter_with_events.is_post_news_safe(3.0, 3.0) is True
+
+    def test_not_safe_when_high_volatility(self, filter_with_events):
+        """Test returns False when volatility ratio is above threshold."""
+        # ratio = 8.0/3.0 = 2.67 >= 2.0 threshold
+        assert filter_with_events.is_post_news_safe(8.0, 3.0) is False
+
+    def test_not_safe_when_at_threshold(self, filter_with_events):
+        """Test returns False when volatility ratio equals threshold."""
+        # ratio = 6.0/3.0 = 2.0, not < 2.0
+        assert filter_with_events.is_post_news_safe(6.0, 3.0) is False
+
+    def test_not_safe_when_normal_atr_zero(self, filter_with_events):
+        """Test returns False when normal_atr is zero (avoid division)."""
+        assert filter_with_events.is_post_news_safe(5.0, 0.0) is False
+
+    def test_not_safe_when_normal_atr_negative(self, filter_with_events):
+        """Test returns False when normal_atr is negative."""
+        assert filter_with_events.is_post_news_safe(5.0, -1.0) is False
+
+    def test_safe_when_volatility_very_low(self, filter_with_events):
+        """Test returns True when current volatility is much lower than normal."""
+        # ratio = 1.0/5.0 = 0.2, well below threshold
+        assert filter_with_events.is_post_news_safe(1.0, 5.0) is True

@@ -300,6 +300,140 @@ class NewsCalendarFilter:
 
         return False
 
+    def should_block_trading(self, current_atr: Optional[float] = None,
+                             normal_atr: Optional[float] = None,
+                             check_time: Optional[datetime] = None) -> dict:
+        """
+        Smart news filter that checks post-event volatility before resuming.
+
+        Instead of blocking for the full minutes_after window unconditionally,
+        this method implements a 'wait and see' approach:
+        1. Pre-event window (event_time - minutes_before to event_time): always block
+        2. Post-event window (event_time to event_time + minutes_after):
+           - If within post_news_min_wait: block (always wait a few minutes)
+           - If past min_wait and volatility is low: allow trading (resume early)
+           - If past min_wait and volatility is high: keep blocking
+        3. Outside any window: allow trading
+
+        Args:
+            current_atr: Current ATR value (recent volatility measure)
+            normal_atr: Baseline/normal ATR value for comparison
+            check_time: Time to check (defaults to current UTC time)
+
+        Returns:
+            Dict with keys:
+                - blocked (bool): Whether trading should be blocked
+                - reason (str): Human-readable reason for the state
+                - state (str): One of 'clear', 'pre_news', 'post_news_min_wait',
+                              'post_news_high_vol', 'post_news_safe'
+        """
+        # If no calendar data in memory, try local cache file (no network)
+        if not self._calendar:
+            cached = self._load_cache()
+            if cached:
+                self._calendar = cached
+
+        if check_time is None:
+            check_time = datetime.now(timezone.utc)
+        elif check_time.tzinfo is None:
+            check_time = check_time.replace(tzinfo=timezone.utc)
+
+        buffer_before = timedelta(minutes=self.config.minutes_before)
+        buffer_after = timedelta(minutes=self.config.minutes_after)
+        min_wait = timedelta(minutes=self.config.post_news_min_wait)
+
+        for event in self._calendar:
+            if not self._is_high_impact_event(event):
+                continue
+
+            event_time = self._parse_event_time(event)
+            if event_time is None:
+                continue
+
+            window_start = event_time - buffer_before
+            window_end = event_time + buffer_after
+
+            if not (window_start <= check_time <= window_end):
+                continue
+
+            # We are in some part of the event window
+            event_title = event.get("title", "Unknown")
+
+            # PRE-EVENT: always block
+            if check_time < event_time:
+                return {
+                    "blocked": True,
+                    "reason": f"Pre-news: paused ({event_title})",
+                    "state": "pre_news",
+                }
+
+            # POST-EVENT: check how long since event
+            time_since_event = check_time - event_time
+
+            # Still within minimum wait period
+            if time_since_event < min_wait:
+                return {
+                    "blocked": True,
+                    "reason": f"Post-news: waiting minimum period ({event_title})",
+                    "state": "post_news_min_wait",
+                }
+
+            # Past min wait - check volatility if ATR values provided
+            if current_atr is not None and normal_atr is not None and normal_atr > 0:
+                if self.is_post_news_safe(current_atr, normal_atr, check_time):
+                    return {
+                        "blocked": False,
+                        "reason": f"Post-news: low volatility, resuming ({event_title})",
+                        "state": "post_news_safe",
+                    }
+                else:
+                    return {
+                        "blocked": True,
+                        "reason": f"Post-news: checking volatility... ({event_title})",
+                        "state": "post_news_high_vol",
+                    }
+
+            # Past min wait but no ATR data provided - allow trading
+            # (If caller cannot provide volatility data, assume safe after min wait)
+            return {
+                "blocked": False,
+                "reason": f"Post-news: min wait passed, no vol data ({event_title})",
+                "state": "post_news_safe",
+            }
+
+        # Not in any event window
+        return {
+            "blocked": False,
+            "reason": "No high-impact events nearby",
+            "state": "clear",
+        }
+
+    def is_post_news_safe(self, current_atr: float, normal_atr: float,
+                          check_time: Optional[datetime] = None) -> bool:
+        """
+        Check if it is safe to resume trading after a news event.
+
+        Returns True if volatility has subsided enough after the event.
+        This is used by should_block_trading() internally, but can also
+        be called independently.
+
+        Conditions for safe:
+        1. current_atr / normal_atr < post_news_volatility_threshold
+
+        Args:
+            current_atr: Current ATR (recent volatility)
+            normal_atr: Baseline/normal ATR for comparison
+            check_time: Time to check (defaults to current UTC time)
+
+        Returns:
+            True if volatility is low enough to resume trading
+        """
+        if normal_atr <= 0:
+            return False
+
+        volatility_ratio = current_atr / normal_atr
+        return volatility_ratio < self.config.post_news_volatility_threshold
+
     def get_upcoming_events(self, hours_ahead: int = 24,
                             check_time: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """

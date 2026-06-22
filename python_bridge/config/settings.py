@@ -242,8 +242,14 @@ class NewsFilterConfig:
     ])
     # Minutes to stop trading before event
     minutes_before: int = 30
-    # Minutes to wait after event before resuming
+    # Minutes to wait after event before resuming (max post-event window)
     minutes_after: int = 30
+    # Post-news volatility check: how often to re-check (seconds)
+    post_news_check_interval: int = 60
+    # Post-news volatility threshold: ATR multiplier (resume if below this)
+    post_news_volatility_threshold: float = 2.0
+    # Post-news minimum wait after event time before checking volatility (minutes)
+    post_news_min_wait: int = 2
     # Calendar data source URL (free investing.com RSS)
     calendar_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     # Local cache path for fetched calendar data
