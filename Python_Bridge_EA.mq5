@@ -23,6 +23,7 @@
 //+------------------------------------------------------------------+
 input string   InpSignalFile       = "python_bridge_signal.csv";   // Signal file name
 input string   InpConfirmFile      = "python_bridge_confirm.csv";  // Confirmation file name
+input string   InpExitFile         = "python_bridge_exit.csv";     // Exit signal file name
 input string   InpHeartbeatFile    = "python_bridge_heartbeat.txt"; // Heartbeat file name
 input int      InpMaxSignalAge     = 300;       // Max signal age (seconds)
 input int      InpMaxHeartbeatAge  = 60;        // Max heartbeat age (seconds)
@@ -102,6 +103,9 @@ void OnTick()
             ExecuteSignal();
         }
     }
+
+    // Process exit signals from Smart Exit Manager (RL agent)
+    ProcessExitSignals();
 
     // Update dashboard
     if(InpShowDashboard)
@@ -394,6 +398,145 @@ void WriteConfirmation(string action, double lots, double price,
               status);
 
     FileClose(fileHandle);
+}
+
+//+------------------------------------------------------------------+
+//| Process exit signals from Python Smart Exit Manager               |
+//+------------------------------------------------------------------+
+void ProcessExitSignals()
+{
+    int fileHandle = FileOpen(InpExitFile, FILE_READ | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
+    if(fileHandle == INVALID_HANDLE)
+        return;  // No exit signal file
+
+    // Skip header row (6 fields: timestamp,ticket,action,lot_pct,new_sl,reason)
+    if(!FileIsEnding(fileHandle))
+    {
+        for(int i = 0; i < 6; i++)
+            FileReadString(fileHandle);
+    }
+
+    // Read exit signal rows
+    while(!FileIsEnding(fileHandle))
+    {
+        string timestamp = FileReadString(fileHandle);
+        string ticket    = FileReadString(fileHandle);
+        string action    = FileReadString(fileHandle);
+        string lotPct    = FileReadString(fileHandle);
+        string newSL     = FileReadString(fileHandle);
+        string reason    = FileReadString(fileHandle);
+
+        if(StringLen(ticket) == 0)
+            break;
+
+        long ticketNum = StringToInteger(ticket);
+        double lotPercent = StringToDouble(lotPct);
+        double newStopLoss = StringToDouble(newSL);
+
+        Print("[PythonBridge] Exit signal: ticket=", ticket,
+              " action=", action, " lot_pct=", lotPct,
+              " new_sl=", newSL, " reason=", reason);
+
+        // Execute exit action
+        if(action == "CLOSE_FULL")
+        {
+            ClosePosition(ticketNum, 1.0);
+        }
+        else if(action == "CLOSE_PARTIAL")
+        {
+            ClosePosition(ticketNum, lotPercent);
+        }
+        else if(action == "MODIFY_SL")
+        {
+            ModifyPositionSL(ticketNum, newStopLoss);
+        }
+    }
+
+    FileClose(fileHandle);
+
+    // Delete the exit file after processing
+    FileDelete(InpExitFile, FILE_COMMON);
+}
+
+//+------------------------------------------------------------------+
+//| Close a position (full or partial)                                 |
+//+------------------------------------------------------------------+
+void ClosePosition(long ticket, double lotPercent)
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(g_position.SelectByIndex(i))
+        {
+            if(g_position.Magic() == InpMagicNumber &&
+               g_position.Ticket() == (ulong)ticket)
+            {
+                double volume = g_position.Volume();
+                double closeVolume = NormalizeDouble(volume * lotPercent,
+                                     (int)MathLog10(1.0 / SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP)));
+
+                // Ensure minimum lot size
+                double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+                closeVolume = MathMax(closeVolume, minLot);
+                closeVolume = MathMin(closeVolume, volume);
+
+                if(g_position.PositionType() == POSITION_TYPE_BUY)
+                {
+                    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+                    if(g_trade.Sell(closeVolume, _Symbol, price, 0, 0,
+                                    "SmartExit|Close"))
+                    {
+                        Print("[PythonBridge] SmartExit: Closed ", closeVolume,
+                              " lots of ticket ", ticket);
+                    }
+                }
+                else
+                {
+                    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                    if(g_trade.Buy(closeVolume, _Symbol, price, 0, 0,
+                                   "SmartExit|Close"))
+                    {
+                        Print("[PythonBridge] SmartExit: Closed ", closeVolume,
+                              " lots of ticket ", ticket);
+                    }
+                }
+                return;
+            }
+        }
+    }
+    Print("[PythonBridge] SmartExit: Ticket ", ticket, " not found");
+}
+
+//+------------------------------------------------------------------+
+//| Modify stop loss for a position                                    |
+//+------------------------------------------------------------------+
+void ModifyPositionSL(long ticket, double newSL)
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(g_position.SelectByIndex(i))
+        {
+            if(g_position.Magic() == InpMagicNumber &&
+               g_position.Ticket() == (ulong)ticket)
+            {
+                int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+                double sl = NormalizeDouble(newSL, digits);
+                double tp = g_position.TakeProfit();
+
+                if(g_trade.PositionModify((ulong)ticket, sl, tp))
+                {
+                    Print("[PythonBridge] SmartExit: Modified SL to ",
+                          DoubleToString(sl, digits), " for ticket ", ticket);
+                }
+                else
+                {
+                    Print("[PythonBridge] SmartExit: Failed to modify SL for ticket ",
+                          ticket, " error=", g_trade.ResultRetcode());
+                }
+                return;
+            }
+        }
+    }
+    Print("[PythonBridge] SmartExit: Ticket ", ticket, " not found for SL modify");
 }
 
 //+------------------------------------------------------------------+

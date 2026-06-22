@@ -27,6 +27,7 @@ from config.settings import (
     MainConfig, DataConfig, SignalConfig, RiskConfig,
     TransformerConfig, LSTMConfig, EnsembleConfig,
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
+    SmartExitConfig, RLConfig, RetrainConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -38,7 +39,9 @@ from models.ensemble import EnsembleManager
 from strategies.signal_generator import SignalGenerator
 from strategies.regime_detector import RegimeDetector
 from strategies.risk_manager import RiskManager
+from strategies.smart_exits import SmartExitManager, ExitDecision
 from signals.bridge import MT5Bridge
+from training.auto_retrain import AutoRetrainer
 
 
 # ─────────────────────────────────────────────
@@ -110,6 +113,18 @@ class PythonMLBridge:
             if self.config.enable_multi_pair else None
         )
 
+        # AI-driven exit management (RL agent + dynamic trailing stops)
+        self.smart_exits = (
+            SmartExitManager(SmartExitConfig(), RLConfig())
+            if self.config.enable_smart_exits else None
+        )
+
+        # Weekend auto-retraining scheduler
+        self.auto_retrainer = (
+            AutoRetrainer(RetrainConfig())
+            if self.config.enable_auto_retrain else None
+        )
+
         # Load models if checkpoints exist
         self._load_models()
 
@@ -121,6 +136,8 @@ class PythonMLBridge:
         self.logger.info(f"  Multi-timeframe: {self.config.enable_multi_timeframe}")
         self.logger.info(f"  News filter: {self.config.enable_news_filter}")
         self.logger.info(f"  Multi-pair: {self.config.enable_multi_pair}")
+        self.logger.info(f"  Smart exits (RL): {self.config.enable_smart_exits}")
+        self.logger.info(f"  Auto-retrain: {self.config.enable_auto_retrain}")
 
     def _load_models(self):
         """Load model checkpoints if available."""
@@ -151,6 +168,20 @@ class PythonMLBridge:
         result = {"timestamp": datetime.now().isoformat(), "signal": None, "error": None}
 
         try:
+            # 0a. AUTO-RETRAIN CHECK - Professional firms retrain on weekends
+            if self.auto_retrainer:
+                if self.auto_retrainer.should_retrain():
+                    self.logger.info(
+                        "[AutoRetrain] Weekend retraining triggered. "
+                        "Running training pipeline..."
+                    )
+                    retrain_result = self.auto_retrainer.run_retrain()
+                    self.logger.info(
+                        f"[AutoRetrain] Result: {retrain_result.get('reason', '')}"
+                    )
+                    if retrain_result.get("deployed"):
+                        self._load_models()  # Reload newly trained models
+
             # 0. NEWS FILTER - Professional traders never trade through major events
             if self.news_filter:
                 if self.news_filter.is_high_impact_window():
@@ -266,6 +297,60 @@ class PythonMLBridge:
                     )
             else:
                 self.logger.debug("No signal (HOLD)")
+
+            # 10b. SMART EXITS - AI-driven position management for open positions
+            if self.smart_exits:
+                try:
+                    # Process any exit signals from RL agent
+                    # (In live mode, open positions are tracked via confirmations)
+                    open_positions = self.signal_generator._open_positions
+                    exit_signals = []
+                    for ticket, pos_info in list(open_positions.items()):
+                        from models.rl_agent import PositionState
+                        # Decay confidence over time
+                        pos_info["hold_bars"] = pos_info.get("hold_bars", 0) + 1
+                        pos_info["confidence"] = self.smart_exits.decay_confidence(
+                            pos_info.get("initial_confidence", 0.5),
+                            pos_info["hold_bars"]
+                        )
+                        position = PositionState(
+                            direction=pos_info.get("direction", 1),
+                            unrealized_pnl=pos_info.get("unrealized_pnl", 0.0),
+                            unrealized_pnl_atr=pos_info.get("unrealized_pnl", 0.0) / max(pos_info.get("atr", 2.0), 0.01),
+                            hold_bars=pos_info["hold_bars"],
+                            entry_price=pos_info.get("entry_price", 0.0),
+                            current_price=current_price,
+                            atr=atr,
+                            confidence=pos_info["confidence"],
+                            initial_confidence=pos_info.get("initial_confidence", 0.5),
+                            sl_distance_atr=pos_info.get("sl_distance_atr", 1.5),
+                            tp_distance_atr=pos_info.get("tp_distance_atr", 2.5),
+                            max_favorable=pos_info.get("max_favorable", 0.0),
+                            max_adverse=pos_info.get("max_adverse", 0.0),
+                            partial_closed_pct=pos_info.get("partial_closed_pct", 0.0),
+                            regime_changed=pos_info.get("regime_changed", False),
+                            ticket=ticket
+                        )
+                        decision = self.smart_exits.evaluate_exit(
+                            position, market_features=feature_input
+                        )
+                        if decision.action != "HOLD":
+                            exit_signals.append({
+                                "ticket": ticket,
+                                "action": decision.action,
+                                "lot_pct": decision.lot_pct_to_close,
+                                "new_sl": decision.new_sl_price,
+                                "reason": decision.reason,
+                            })
+                            self.logger.info(
+                                f"  Exit signal: {decision.action} ticket={ticket} "
+                                f"reason={decision.reason}"
+                            )
+                    # Write exit signals to bridge
+                    if exit_signals:
+                        self.bridge.write_exit_signals(exit_signals)
+                except Exception as e:
+                    self.logger.debug(f"Smart exit processing error: {e}")
 
             # 11. Write heartbeat
             self.bridge.write_heartbeat()

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import SIGNAL_FILE, CONFIRMATION_FILE
+from config.settings import SIGNAL_FILE, CONFIRMATION_FILE, MT5_COMMON_PATH
 from strategies.signal_generator import TradeSignal
 
 
@@ -25,6 +25,13 @@ from strategies.signal_generator import TradeSignal
 SIGNAL_HEADERS = [
     "timestamp", "symbol", "action", "confidence",
     "sl_pips", "tp_pips", "lot_size", "model_name", "regime"
+]
+
+# Exit signal file for position management commands
+EXIT_SIGNAL_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_exit.csv")
+
+EXIT_SIGNAL_HEADERS = [
+    "timestamp", "ticket", "action", "lot_pct", "new_sl", "reason"
 ]
 
 CONFIRMATION_HEADERS = [
@@ -49,14 +56,16 @@ class MT5Bridge:
     """
 
     def __init__(self, signal_path: Optional[str] = None,
-                 confirmation_path: Optional[str] = None):
+                 confirmation_path: Optional[str] = None,
+                 exit_signal_path: Optional[str] = None):
         self.signal_path = signal_path or SIGNAL_FILE
         self.confirmation_path = confirmation_path or CONFIRMATION_FILE
+        self.exit_signal_path = exit_signal_path or EXIT_SIGNAL_FILE
         self._ensure_directories()
 
     def _ensure_directories(self):
         """Create necessary directories if they don't exist."""
-        for path in [self.signal_path, self.confirmation_path]:
+        for path in [self.signal_path, self.confirmation_path, self.exit_signal_path]:
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
@@ -200,6 +209,120 @@ class MT5Bridge:
                 f.write("Python ML Bridge Active\n")
         except Exception as e:
             print(f"[Bridge] Error writing heartbeat: {e}")
+
+    def write_exit_signal(self, ticket: str, action: str,
+                          lot_pct: float = 1.0, new_sl: float = 0.0,
+                          reason: str = "") -> bool:
+        """
+        Write an exit/modification signal for an open position.
+        MT5 EA reads this file to close, partial close, or modify SL.
+
+        Uses atomic write to prevent race conditions.
+
+        Args:
+            ticket: Position ticket number
+            action: CLOSE_FULL, CLOSE_PARTIAL, or MODIFY_SL
+            lot_pct: Percentage of position to close (0.0-1.0)
+            new_sl: New stop loss price (for MODIFY_SL)
+            reason: Human-readable reason for the action
+
+        Returns:
+            True if written successfully
+        """
+        try:
+            directory = os.path.dirname(self.exit_signal_path) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="exit_", dir=directory
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+                    header = ",".join(EXIT_SIGNAL_HEADERS) + "\r\n"
+                    f.write(header)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    data = (
+                        f"{timestamp},"
+                        f"{ticket},"
+                        f"{action},"
+                        f"{lot_pct:.2f},"
+                        f"{new_sl:.5f},"
+                        f"{reason}\r\n"
+                    )
+                    f.write(data)
+                os.replace(tmp_path, self.exit_signal_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+            return True
+        except Exception as e:
+            print(f"[Bridge] Error writing exit signal: {e}")
+            return False
+
+    def write_exit_signals(self, signals: List[Dict]) -> bool:
+        """
+        Write multiple exit signals at once (batch write).
+
+        Args:
+            signals: List of dicts with keys: ticket, action, lot_pct, new_sl, reason
+
+        Returns:
+            True if written successfully
+        """
+        if not signals:
+            return True
+
+        try:
+            directory = os.path.dirname(self.exit_signal_path) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="exit_", dir=directory
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+                    header = ",".join(EXIT_SIGNAL_HEADERS) + "\r\n"
+                    f.write(header)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for sig in signals:
+                        data = (
+                            f"{timestamp},"
+                            f"{sig['ticket']},"
+                            f"{sig['action']},"
+                            f"{sig.get('lot_pct', 1.0):.2f},"
+                            f"{sig.get('new_sl', 0.0):.5f},"
+                            f"{sig.get('reason', '')}\r\n"
+                        )
+                        f.write(data)
+                os.replace(tmp_path, self.exit_signal_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+            return True
+        except Exception as e:
+            print(f"[Bridge] Error writing exit signals: {e}")
+            return False
+
+    def read_exit_signal(self) -> Optional[List[Dict]]:
+        """Read exit signal file (for testing/verification)."""
+        if not os.path.exists(self.exit_signal_path):
+            return None
+        try:
+            signals = []
+            with open(self.exit_signal_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    signals.append(dict(row))
+            return signals if signals else None
+        except Exception as e:
+            print(f"[Bridge] Error reading exit signal: {e}")
+            return None
+
+    def clear_exit_signal(self):
+        """Clear exit signal file after MT5 has processed it."""
+        try:
+            if os.path.exists(self.exit_signal_path):
+                os.remove(self.exit_signal_path)
+        except Exception as e:
+            print(f"[Bridge] Error clearing exit signal: {e}")
 
     def get_bridge_status(self) -> Dict:
         """Get the current status of the bridge."""

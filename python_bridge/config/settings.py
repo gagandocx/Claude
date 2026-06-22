@@ -300,6 +300,95 @@ class MultiPairConfig:
 
 
 # ─────────────────────────────────────────────
+#  REINFORCEMENT LEARNING (DQN)
+# ─────────────────────────────────────────────
+@dataclass
+class RLConfig:
+    """DQN Reinforcement Learning agent configuration.
+
+    The RL agent learns position management like an experienced prop trader:
+    when to hold, when to cut losses quickly, when to take partial profits,
+    and when to let winners run with a tightened stop.
+    """
+    # Replay buffer
+    replay_buffer_size: int = 10000          # Experience replay buffer capacity
+    batch_size: int = 64                      # Mini-batch size for training
+    # Q-learning parameters
+    gamma: float = 0.99                       # Discount factor (value future rewards)
+    epsilon_start: float = 1.0                # Initial exploration rate
+    epsilon_end: float = 0.01                 # Minimum exploration rate
+    epsilon_decay: float = 0.995              # Epsilon decay per training step
+    learning_rate: float = 1e-3               # Adam learning rate
+    target_update_freq: int = 100             # Steps between target network updates
+    # Network architecture
+    hidden_size: int = 256                    # Hidden layer size (3-layer MLP)
+    state_size: int = 52                      # State dim: features + position info
+    num_actions: int = 5                      # HOLD, CLOSE_FULL, CLOSE_25, CLOSE_50, TIGHTEN
+    # Reward shaping (prop trader style)
+    hold_penalty_per_bar: float = -0.001      # Small penalty for holding (encourages decisions)
+    cut_loser_bonus: float = 0.5              # Bonus reward for cutting losing trades early
+    max_hold_bars_penalty: int = 100          # Hard penalty threshold for holding too long
+    winner_run_bonus: float = 0.3             # Bonus for letting winners run past 1R
+    # Training
+    min_replay_size: int = 256                # Minimum transitions before training starts
+    tau: float = 0.005                        # Soft target network update rate
+
+
+# ─────────────────────────────────────────────
+#  SMART EXIT MANAGEMENT
+# ─────────────────────────────────────────────
+@dataclass
+class SmartExitConfig:
+    """Smart AI-driven exit management configuration.
+
+    Implements dynamic trailing stops and partial closes like a professional
+    prop trader. High-confidence signals get wide trailing stops (let profits
+    run). Low/decaying confidence triggers tight stops (protect capital).
+    Partial closes at key R-multiples lock in profits while maintaining
+    upside exposure.
+    """
+    # Trailing stop parameters
+    trailing_atr_mult_tight: float = 0.5      # Tight trail when confidence is low
+    trailing_atr_mult_wide: float = 2.0       # Wide trail when confidence is high
+    confidence_decay_threshold: float = 0.3   # Below this: use tight trail
+    confidence_strong_threshold: float = 0.6  # Above this: use wide trail
+    # Partial close rules (prop trader style)
+    partial_close_at_2r: bool = True          # Close partial at 2R profit
+    partial_close_pct: float = 0.5            # Close 50% at first target
+    partial_close_at_3r: bool = True          # Close more at 3R
+    partial_close_3r_pct: float = 0.25        # Close 25% more at 3R
+    # Position management
+    max_hold_bars: int = 100                  # Maximum bars to hold a position
+    break_even_at_1r: bool = True             # Move stop to break-even at 1R profit
+    # Time-based decay
+    confidence_time_decay: float = 0.995      # Confidence decays per bar held
+    min_confidence_to_hold: float = 0.15      # Below this: close immediately
+
+
+# ─────────────────────────────────────────────
+#  AUTO-RETRAINING SCHEDULER
+# ─────────────────────────────────────────────
+@dataclass
+class RetrainConfig:
+    """Weekend auto-retraining scheduler configuration.
+
+    Professional trading firms retrain models on weekends when markets are
+    closed. Walk-forward validation ensures new models genuinely improve
+    before deployment. This prevents overfitting and adapts to changing
+    market regimes automatically.
+    """
+    retrain_day: str = "Saturday"             # Day to trigger retraining
+    min_days_between: int = 7                 # Minimum days between retrains
+    min_improvement_pct: float = 1.0          # Deploy only if >1% better
+    walk_forward_weeks: int = 2               # Walk-forward validation window
+    max_retrain_attempts: int = 3             # Max retrain attempts per session
+    save_retrain_history: bool = True         # Log retrain results to JSON
+    retrain_log_file: str = "retrain_history.json"  # History log filename
+    incorporate_trade_outcomes: bool = True   # Use trade results as training signal
+    min_trades_for_retrain: int = 20          # Minimum trades before incorporating
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -313,4 +402,6 @@ class MainConfig:
     enable_multi_timeframe: bool = True     # Multi-timeframe analysis
     enable_news_filter: bool = True         # News calendar event filter
     enable_multi_pair: bool = True          # Cross-pair correlation analysis
+    enable_smart_exits: bool = True         # AI-driven exit management (RL agent)
+    enable_auto_retrain: bool = True        # Weekend auto-retraining scheduler
     paper_trading: bool = True              # Paper trading mode by default

@@ -16,8 +16,9 @@ from typing import Dict, Optional
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import SignalConfig, DataConfig, MODEL_DIR
+from config.settings import SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR
 from models.ensemble import EnsembleManager
+from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
 from strategies.regime_detector import RegimeDetector, MarketRegime
 
@@ -84,6 +85,11 @@ class SignalGenerator:
         self.ensemble = EnsembleManager()
         self.risk_manager = RiskManager()
         self.regime_detector = RegimeDetector()
+
+        # RL agent for exit management feedback loop
+        self._rl_agent = RLAgent(RLConfig())
+        # Track open positions for RL agent state
+        self._open_positions: Dict[str, Dict] = {}
 
         self._last_signal_time = 0.0
         self._signal_count = 0
@@ -285,6 +291,9 @@ class SignalGenerator:
         """
         Update models based on trade execution results.
 
+        Feeds reward signal to the RL agent for learning position
+        management, and updates ensemble weights for prediction quality.
+
         Args:
             trade_id: Unique trade identifier
             pnl: Realized P&L
@@ -300,6 +309,67 @@ class SignalGenerator:
             "lstm": predicted_action,
             "gradient_boost": predicted_action,
         })
+
+        # Feed RL agent with trade outcome
+        if trade_id in self._open_positions:
+            pos_info = self._open_positions[trade_id]
+            # Create terminal state for RL agent
+            position = PositionState(
+                direction=pos_info.get("direction", 1),
+                unrealized_pnl=pnl,
+                unrealized_pnl_atr=pnl / max(pos_info.get("atr", 2.0), 0.01),
+                hold_bars=pos_info.get("hold_bars", 0),
+                entry_price=pos_info.get("entry_price", 0.0),
+                current_price=pos_info.get("current_price", 0.0),
+                atr=pos_info.get("atr", 2.0),
+                confidence=pos_info.get("confidence", 0.5),
+                initial_confidence=pos_info.get("initial_confidence", 0.5),
+                sl_distance_atr=pos_info.get("sl_distance_atr", 1.5),
+                tp_distance_atr=pos_info.get("tp_distance_atr", 2.5),
+                max_favorable=max(pnl, pos_info.get("max_favorable", 0.0)),
+                max_adverse=min(pnl, pos_info.get("max_adverse", 0.0)),
+                partial_closed_pct=pos_info.get("partial_closed_pct", 0.0),
+                regime_changed=pos_info.get("regime_changed", False),
+                ticket=trade_id
+            )
+            state = self._rl_agent.state_from_position(position)
+            reward = self._rl_agent.compute_reward(
+                position, ExitAction.CLOSE_FULL, realized_pnl=pnl, trade_closed=True
+            )
+            # Terminal transition
+            self._rl_agent.store_transition(
+                state, ExitAction.CLOSE_FULL, reward, state, done=True
+            )
+            self._rl_agent.train_step()
+            # Remove from tracked positions
+            del self._open_positions[trade_id]
+            logger.info(f"[SignalGen] RL agent received reward={reward:.4f} "
+                        f"for trade {trade_id} (PnL={pnl:.2f})")
+
+    def register_open_position(self, trade_id: str, direction: int,
+                               entry_price: float, confidence: float,
+                               atr: float, sl_pips: float, tp_pips: float):
+        """Register a new open position for RL agent tracking.
+
+        Called when MT5 confirms a trade execution so we can track
+        the position state for the RL learning loop.
+        """
+        self._open_positions[trade_id] = {
+            "direction": direction,
+            "entry_price": entry_price,
+            "current_price": entry_price,
+            "confidence": confidence,
+            "initial_confidence": confidence,
+            "atr": atr,
+            "sl_distance_atr": sl_pips * 0.1 / max(atr, 0.01),  # Convert pips to ATR
+            "tp_distance_atr": tp_pips * 0.1 / max(atr, 0.01),
+            "hold_bars": 0,
+            "max_favorable": 0.0,
+            "max_adverse": 0.0,
+            "partial_closed_pct": 0.0,
+            "regime_changed": False,
+            "open_time": datetime.now().isoformat(),
+        }
 
     @property
     def signal_count(self) -> int:
