@@ -114,8 +114,8 @@ void OnTick()
 bool ReadSignalFile()
 {
     // Open signal file from Common Files folder
-    int fileHandle = FileOpen(InpSignalFile, FILE_READ | FILE_CSV | FILE_COMMON,
-                              ',', CP_UTF8);
+    int fileHandle = FileOpen(InpSignalFile, FILE_READ | FILE_CSV | FILE_COMMON | FILE_ANSI,
+                              ',');
     if(fileHandle == INVALID_HANDLE)
     {
         // File not found - no signal available

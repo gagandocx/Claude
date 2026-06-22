@@ -67,6 +67,9 @@ class MT5Bridge:
         Uses atomic write (write to temp file, then rename) to prevent
         race conditions where MT5 reads a partially-written file.
 
+        Plain ASCII text with CRLF line endings - no BOM, no UTF-8.
+        This ensures MQL5's FileOpen with FILE_ANSI reads it cleanly.
+
         Args:
             signal: TradeSignal object to write
 
@@ -80,20 +83,24 @@ class MT5Bridge:
                 suffix=".tmp", prefix="signal_", dir=directory
             )
             try:
-                with os.fdopen(fd, "w", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(SIGNAL_HEADERS)
-                    writer.writerow([
-                        signal.timestamp,
-                        signal.symbol,
-                        signal.action,
-                        f"{signal.confidence:.4f}",
-                        f"{signal.sl_pips:.1f}",
-                        f"{signal.tp_pips:.1f}",
-                        f"{signal.lot_size:.2f}",
-                        signal.model_name,
-                        signal.regime,
-                    ])
+                with os.fdopen(fd, "w", encoding="ascii",
+                               newline="") as f:
+                    # Write header line with CRLF
+                    header = ",".join(SIGNAL_HEADERS) + "\r\n"
+                    f.write(header)
+                    # Write data line with CRLF
+                    data = (
+                        f"{signal.timestamp},"
+                        f"{signal.symbol},"
+                        f"{signal.action},"
+                        f"{signal.confidence:.4f},"
+                        f"{signal.sl_pips:.1f},"
+                        f"{signal.tp_pips:.1f},"
+                        f"{signal.lot_size:.2f},"
+                        f"{signal.model_name},"
+                        f"{signal.regime}\r\n"
+                    )
+                    f.write(data)
                 # Atomic rename (on POSIX this is atomic; on Windows it
                 # replaces if the target exists on Python 3.3+)
                 os.replace(tmp_path, self.signal_path)
