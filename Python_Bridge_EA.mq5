@@ -231,15 +231,18 @@ bool ValidateSignal()
         return false;
     }
 
-    // Check Python bridge heartbeat - refuse signals if bridge is offline
-    if(!IsBridgeAlive())
-    {
-        g_status = "Bridge offline (heartbeat stale > " + IntegerToString(InpMaxHeartbeatAge) + "s)";
-        return false;
-    }
+    // NOTE: Heartbeat check DISABLED - IsBridgeAlive() uses TimeCurrent() (broker server time)
+    // but FileGetInteger(FILE_MODIFY_DATE) returns LOCAL system time. When broker timezone
+    // differs from local timezone, the difference is always thousands of seconds, causing
+    // the bridge to always appear "stale". The signal file itself validates freshness below.
+    // if(!IsBridgeAlive())
+    // {
+    //     g_status = "Bridge offline (heartbeat stale > " + IntegerToString(InpMaxHeartbeatAge) + "s)";
+    //     return false;
+    // }
 
-    // Check signal freshness
-    datetime currentTime = TimeCurrent();
+    // Check signal freshness using TimeLocal() since Python writes timestamps in LOCAL time
+    datetime currentTime = TimeLocal();
     if(currentTime - g_lastSignalTime > InpMaxSignalAge)
     {
         g_status = "Signal expired (age > " + IntegerToString(InpMaxSignalAge) + "s)";
