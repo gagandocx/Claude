@@ -33,6 +33,7 @@ input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
 input int      InpMaxOpenTrades    = 5;        // Max open trades (HF scalping)
 input bool     InpShowDashboard    = true;      // Show dashboard panel
+input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                    |
@@ -53,6 +54,10 @@ datetime       g_lastSignalTime = 0;
 int            g_signalsRead    = 0;
 int            g_tradesExecuted = 0;
 string         g_status         = "Initializing...";
+
+// Python bridge status (news warnings, errors, running state)
+string         g_statusType     = "OK";
+string         g_newsWarning    = "";
 
 // Emergency close-all cooldown (5 seconds between triggers)
 datetime       g_lastEmergencyClose = 0;
@@ -116,6 +121,9 @@ void OnTick()
 
     // Emergency close-all: if floating loss exceeds $50, close all EA positions
     CheckEmergencyCloseAll();
+
+    // Read Python bridge status for dashboard news/warning display
+    ReadStatusFile();
 
     // Update dashboard
     if(InpShowDashboard)
@@ -231,6 +239,49 @@ bool IsBridgeAlive()
     }
 
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Read status file from Python bridge for dashboard display          |
+//| Format: "type|message\r\n"                                         |
+//| type: OK, NEWS, WARNING, ERROR                                     |
+//+------------------------------------------------------------------+
+void ReadStatusFile()
+{
+    int fileHandle = FileOpen(InpStatusFile, FILE_READ | FILE_TXT | FILE_COMMON | FILE_ANSI);
+    if(fileHandle == INVALID_HANDLE)
+    {
+        // No status file - bridge may not have written one yet
+        return;
+    }
+
+    // Read the single line: "type|message"
+    if(!FileIsEnding(fileHandle))
+    {
+        string line = FileReadString(fileHandle);
+        FileClose(fileHandle);
+
+        if(StringLen(line) == 0)
+            return;
+
+        // Parse "type|message" format
+        int separatorPos = StringFind(line, "|");
+        if(separatorPos > 0)
+        {
+            g_statusType = StringSubstr(line, 0, separatorPos);
+            g_newsWarning = StringSubstr(line, separatorPos + 1);
+        }
+        else
+        {
+            // No separator found - treat entire line as message with OK type
+            g_statusType = "OK";
+            g_newsWarning = line;
+        }
+    }
+    else
+    {
+        FileClose(fileHandle);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -827,6 +878,42 @@ void UpdateDashboard()
 
     DashboardLabel("status_val", panelX + leftMargin, y, g_status, statusClr);
     y += lineHeight;
+
+    // --- News/Warning section from Python bridge status file ---
+    if(g_statusType == "NEWS")
+    {
+        y += 4;
+        DashboardLabel("sep6", panelX + leftMargin, y, "--- NEWS FILTER ---", clrYellow, 9);
+        y += lineHeight;
+        // Truncate long messages for display
+        string newsMsg = g_newsWarning;
+        if(StringLen(newsMsg) > 38)
+            newsMsg = StringSubstr(newsMsg, 0, 35) + "...";
+        DashboardLabel("news_val", panelX + leftMargin, y, newsMsg, clrOrange);
+        y += lineHeight;
+        DashboardLabel("news_warn", panelX + leftMargin, y, "Trading paused - waiting for event", clrYellow);
+        y += lineHeight;
+    }
+    else if(g_statusType == "WARNING" || g_statusType == "ERROR")
+    {
+        y += 4;
+        DashboardLabel("sep6", panelX + leftMargin, y, "--- WARNING ---", clrRed, 9);
+        y += lineHeight;
+        string warnMsg = g_newsWarning;
+        if(StringLen(warnMsg) > 38)
+            warnMsg = StringSubstr(warnMsg, 0, 35) + "...";
+        DashboardLabel("news_val", panelX + leftMargin, y, warnMsg, clrRed);
+        y += lineHeight;
+        // Clear the "Trading paused" line when not in NEWS mode
+        DashboardLabel("news_warn", panelX + leftMargin, y, "", clrNONE);
+    }
+    else
+    {
+        // OK status - show in green, clear news labels
+        DashboardLabel("sep6", panelX + leftMargin, y, "", clrNONE);
+        DashboardLabel("news_val", panelX + leftMargin, y, "", clrNONE);
+        DashboardLabel("news_warn", panelX + leftMargin, y, "", clrNONE);
+    }
 
     // Signal time
     string sigTimeStr = (g_lastSignalTime > 0) ? TimeToString(g_lastSignalTime, TIME_DATE | TIME_MINUTES) : "---";

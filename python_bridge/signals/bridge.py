@@ -39,6 +39,9 @@ CONFIRMATION_HEADERS = [
     "open_price", "sl", "tp", "status"
 ]
 
+# Status file for communicating bridge state to MT5 dashboard
+STATUS_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_status.txt")
+
 
 class MT5Bridge:
     """
@@ -57,15 +60,18 @@ class MT5Bridge:
 
     def __init__(self, signal_path: Optional[str] = None,
                  confirmation_path: Optional[str] = None,
-                 exit_signal_path: Optional[str] = None):
+                 exit_signal_path: Optional[str] = None,
+                 status_path: Optional[str] = None):
         self.signal_path = signal_path or SIGNAL_FILE
         self.confirmation_path = confirmation_path or CONFIRMATION_FILE
         self.exit_signal_path = exit_signal_path or EXIT_SIGNAL_FILE
+        self.status_path = status_path or STATUS_FILE
         self._ensure_directories()
 
     def _ensure_directories(self):
         """Create necessary directories if they don't exist."""
-        for path in [self.signal_path, self.confirmation_path, self.exit_signal_path]:
+        for path in [self.signal_path, self.confirmation_path,
+                     self.exit_signal_path, self.status_path]:
             directory = os.path.dirname(path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
@@ -209,6 +215,56 @@ class MT5Bridge:
                 f.write("Python ML Bridge Active\n")
         except Exception as e:
             print(f"[Bridge] Error writing heartbeat: {e}")
+
+    def write_status(self, status_type: str, message: str) -> bool:
+        """
+        Write a status message for the MT5 dashboard to display.
+
+        The MT5 EA reads this file and shows the status on its
+        graphical chart panel. This allows traders to see news warnings,
+        errors, and running status without checking the Python terminal.
+
+        Format: Plain ASCII, "type|message\\r\\n"
+        Valid status_type values:
+            - "OK"      : Normal operation (green on dashboard)
+            - "NEWS"    : News event blocking trades (yellow/orange)
+            - "WARNING" : Error or warning condition (red)
+            - "ERROR"   : Critical error (red)
+
+        Uses atomic write to prevent MT5 from reading a partial file.
+
+        Args:
+            status_type: One of "OK", "NEWS", "WARNING", "ERROR"
+            message: Human-readable status message (ASCII only)
+
+        Returns:
+            True if written successfully
+        """
+        try:
+            # Sanitize message: strip non-ASCII and pipe characters
+            safe_message = "".join(
+                c for c in message if 32 <= ord(c) < 127 and c != "|"
+            ).strip()
+            # Limit length to avoid display issues on MT5 chart
+            if len(safe_message) > 200:
+                safe_message = safe_message[:197] + "..."
+
+            directory = os.path.dirname(self.status_path) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="status_", dir=directory
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+                    f.write(f"{status_type}|{safe_message}\r\n")
+                os.replace(tmp_path, self.status_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+            return True
+        except Exception as e:
+            print(f"[Bridge] Error writing status: {e}")
+            return False
 
     def write_exit_signal(self, ticket: str, action: str,
                           lot_pct: float = 1.0, new_sl: float = 0.0,

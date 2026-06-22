@@ -253,6 +253,11 @@ class PythonMLBridge:
                     )
                     result["error"] = f"News filter active: {event_info}"
                     result["news_filtered"] = True
+                    # Write status for MT5 dashboard display
+                    self.bridge.write_status(
+                        "NEWS",
+                        f"High impact event: {event_info} - No trades during NFP/FOMC/CPI"
+                    )
                     return result
 
             # 1. Fetch market data
@@ -448,6 +453,9 @@ class PythonMLBridge:
             # 11. Write heartbeat
             self.bridge.write_heartbeat()
 
+            # Write OK status for MT5 dashboard display
+            self.bridge.write_status("OK", "Running - scanning for signals")
+
             # 12. Check confirmations from MT5
             confirmations = self.bridge.read_confirmations()
             if confirmations:
@@ -537,6 +545,8 @@ class PythonMLBridge:
         except Exception as e:
             result["error"] = str(e)
             self.logger.error(f"Cycle error: {e}", exc_info=True)
+            # Write warning status for MT5 dashboard display
+            self.bridge.write_status("WARNING", f"Cycle error: {str(e)[:150]}")
 
         cycle_time = time.time() - cycle_start
         self.logger.debug(f"Cycle completed in {cycle_time:.2f}s")
