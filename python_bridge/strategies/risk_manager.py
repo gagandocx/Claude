@@ -146,9 +146,8 @@ class RiskManager:
                 return False
 
         # Check daily loss limit (absolute dollar amount)
-        if hasattr(self.config, 'max_daily_loss_dollars'):
-            if abs(self._daily_pnl) >= self.config.max_daily_loss_dollars and self._daily_pnl < 0:
-                return False
+        if self._daily_pnl < 0 and abs(self._daily_pnl) >= self.config.max_daily_loss_dollars:
+            return False
 
         # Check max open positions
         if len(self._open_positions) >= self.config.max_open_positions:

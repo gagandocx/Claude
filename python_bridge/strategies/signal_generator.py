@@ -101,20 +101,20 @@ class SignalGenerator:
         self._last_signal_time = 0.0
         self._signal_count = 0
 
-    def _compute_momentum_direction(self, prices, lookback: int = 5) -> str:
+    def _compute_momentum_direction(self, prices) -> str:
         """
         Compute short-term momentum direction from the last few M1 candles.
 
-        Uses the price difference over the last 3 candles (close[-1] vs close[-4])
-        to determine the direction of short-term momentum.
+        Uses a 3-bar comparison (close[-1] vs close[-4]) to determine the
+        direction of short-term momentum. Requires at least 5 bars of data
+        to ensure the reference price is meaningful.
 
         Args:
             prices: DataFrame with 'Close' column or array-like of close prices
-            lookback: Number of bars to look back (default 5)
 
         Returns:
-            "BUY" if price rose over last 3 candles
-            "SELL" if price fell over last 3 candles
+            "BUY" if price rose over last 3 bars (close[-1] > close[-4] by > $0.50)
+            "SELL" if price fell over last 3 bars (close[-1] < close[-4] by > $0.50)
             "FLAT" if movement is below threshold ($0.50 for gold)
         """
         import pandas as pd
@@ -129,12 +129,12 @@ class SignalGenerator:
         else:
             return "FLAT"
 
-        if len(close) < lookback:
+        if len(close) < 5:
             return "FLAT"
 
-        # Compare current close to close 3 bars ago
+        # Compare current close to close 3 bars ago (fixed 3-bar momentum)
         current_close = close[-1]
-        reference_close = close[-4] if len(close) >= 4 else close[0]
+        reference_close = close[-4]
 
         diff = current_close - reference_close
         threshold = 0.5  # $0.50 minimum move for gold (5 pips)

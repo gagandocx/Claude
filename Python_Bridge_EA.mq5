@@ -54,6 +54,9 @@ int            g_signalsRead    = 0;
 int            g_tradesExecuted = 0;
 string         g_status         = "Initializing...";
 
+// Emergency close-all cooldown (5 seconds between triggers)
+datetime       g_lastEmergencyClose = 0;
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
@@ -556,6 +559,10 @@ void ModifyPositionSL(long ticket, double newSL)
 //+------------------------------------------------------------------+
 void CheckEmergencyCloseAll()
 {
+    // Cooldown: skip if emergency close fired within the last 5 seconds
+    if(TimeCurrent() - g_lastEmergencyClose < 5)
+        return;
+
     double totalFloatingLoss = 0.0;
 
     // Calculate total floating P&L for this EA's positions
@@ -577,6 +584,7 @@ void CheckEmergencyCloseAll()
         Print("[PythonBridge] EMERGENCY: Floating loss $", DoubleToString(MathAbs(totalFloatingLoss), 2),
               " exceeds $50 limit. Closing ALL positions!");
         g_status = "EMERGENCY CLOSE: Loss > $50";
+        g_lastEmergencyClose = TimeCurrent();
 
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
