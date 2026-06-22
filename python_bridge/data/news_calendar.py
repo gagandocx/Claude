@@ -307,6 +307,9 @@ class NewsCalendarFilter:
 
         Used for dashboard display and pre-session planning.
 
+        NOTE: This method may trigger a blocking fetch via _ensure_calendar_loaded().
+        For the hot signal loop, prefer get_upcoming_events_cached().
+
         Args:
             hours_ahead: How many hours ahead to look
             check_time: Reference time (defaults to now UTC)
@@ -315,6 +318,34 @@ class NewsCalendarFilter:
             List of upcoming high-impact events with parsed times
         """
         self._ensure_calendar_loaded()
+        return self._get_upcoming_events_internal(hours_ahead, check_time)
+
+    def get_upcoming_events_cached(self, hours_ahead: int = 24,
+                                   check_time: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """
+        Non-blocking variant of get_upcoming_events().
+
+        Only reads from already-loaded calendar data in memory. If no data is
+        loaded, attempts to read from the local file cache (no network call).
+        Use this in the main signal loop to avoid blocking on HTTP requests.
+
+        Args:
+            hours_ahead: How many hours ahead to look
+            check_time: Reference time (defaults to now UTC)
+
+        Returns:
+            List of upcoming high-impact events with parsed times
+        """
+        # If no calendar data in memory, try local cache file only (no network)
+        if not self._calendar:
+            cached = self._load_cache()
+            if cached:
+                self._calendar = cached
+        return self._get_upcoming_events_internal(hours_ahead, check_time)
+
+    def _get_upcoming_events_internal(self, hours_ahead: int = 24,
+                                      check_time: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Internal implementation for upcoming events lookup."""
 
         if check_time is None:
             check_time = datetime.now(timezone.utc)

@@ -243,7 +243,9 @@ class PythonMLBridge:
                         self._start_news_refresh()
 
                 if self.news_filter.is_high_impact_window_cached():
-                    upcoming = self.news_filter.get_upcoming_events(hours_ahead=2)
+                    # Use cached variant to avoid blocking HTTP fetch
+                    # (is_high_impact_window_cached just confirmed data is loaded)
+                    upcoming = self.news_filter.get_upcoming_events_cached(hours_ahead=2)
                     event_info = upcoming[0]["title"] if upcoming else "Unknown"
                     self.logger.info(
                         f"NEWS FILTER: Skipping cycle - high impact event window "
@@ -427,6 +429,19 @@ class PythonMLBridge:
                     # Write exit signals to bridge
                     if exit_signals:
                         self.bridge.write_exit_signals(exit_signals)
+                        # Fix #3: Update partial_closed_pct after writing
+                        # CLOSE_PARTIAL signals so the smart exit manager knows
+                        # how much has already been closed. Without this, repeated
+                        # partial-close signals are emitted every bar.
+                        for exit_sig in exit_signals:
+                            if exit_sig["action"] == "CLOSE_PARTIAL":
+                                ticket = exit_sig["ticket"]
+                                if ticket in open_positions:
+                                    open_positions[ticket]["partial_closed_pct"] = min(
+                                        open_positions[ticket].get("partial_closed_pct", 0.0)
+                                        + exit_sig["lot_pct"],
+                                        1.0,
+                                    )
                 except Exception as e:
                     self.logger.debug(f"Smart exit processing error: {e}")
 
@@ -461,27 +476,42 @@ class PythonMLBridge:
                             f"(dir={direction}, entry={entry_price:.2f})"
                         )
 
-                    # Fix #6: Only feed trade closures to PerformanceTracker from
-                    # MT5 confirmations (not from update_from_execution) to prevent
-                    # double-counting. The signal_generator.update_from_execution()
-                    # handles RL learning only, not performance tracking.
-                    if self.performance_tracker and conf.get("type") == "close":
+                    # Handle trade closures: clean up positions, feed RL, record performance
+                    if conf.get("type") == "close":
                         trade_id = str(conf.get("ticket", ""))
-                        trade_record = TradeRecord(
+                        pnl = float(conf.get("pnl", 0.0))
+
+                        # Fix #1: Call update_from_execution() to remove position
+                        # from _open_positions and feed the RL agent its terminal
+                        # reward. Without this, positions accumulate indefinitely
+                        # and the DQN never learns trade outcomes.
+                        self.signal_generator.update_from_execution(
                             trade_id=trade_id,
-                            entry_time=conf.get("open_time", datetime.now().isoformat()),
-                            exit_time=conf.get("close_time", datetime.now().isoformat()),
-                            direction=conf.get("direction", "BUY"),
-                            pnl=float(conf.get("pnl", 0.0)),
-                            model=conf.get("model", "ensemble"),
-                            regime=conf.get("regime", "ranging"),
-                            entry_price=float(conf.get("entry_price", 0.0)),
-                            exit_price=float(conf.get("exit_price", 0.0)),
-                            lot_size=float(conf.get("lot_size", 0.0)),
-                            confidence=float(conf.get("confidence", 0.0)),
+                            pnl=pnl,
+                            predicted_action=0,
+                            actual_outcome=0,
                         )
-                        self.performance_tracker.record_trade(trade_record)
-                        self._trades_since_render += 1
+
+                        # Fix #6: Only feed trade closures to PerformanceTracker from
+                        # MT5 confirmations (not from update_from_execution) to prevent
+                        # double-counting. The signal_generator.update_from_execution()
+                        # handles RL learning only, not performance tracking.
+                        if self.performance_tracker:
+                            trade_record = TradeRecord(
+                                trade_id=trade_id,
+                                entry_time=conf.get("open_time", datetime.now().isoformat()),
+                                exit_time=conf.get("close_time", datetime.now().isoformat()),
+                                direction=conf.get("direction", "BUY"),
+                                pnl=pnl,
+                                model=conf.get("model", "ensemble"),
+                                regime=conf.get("regime", "ranging"),
+                                entry_price=float(conf.get("entry_price", 0.0)),
+                                exit_price=float(conf.get("exit_price", 0.0)),
+                                lot_size=float(conf.get("lot_size", 0.0)),
+                                confidence=float(conf.get("confidence", 0.0)),
+                            )
+                            self.performance_tracker.record_trade(trade_record)
+                            self._trades_since_render += 1
                 self.bridge.clear_confirmations()
 
             # 13. Periodic dashboard rendering

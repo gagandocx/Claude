@@ -192,21 +192,44 @@ class AutoRetrainer:
             if train_fn:
                 train_fn()
             else:
-                # Import train_all from the correct module path.
-                # train.py is in the python_bridge package root.
+                # Import train_all from the python_bridge package.
+                # train.py lives at the python_bridge package root, which is
+                # one directory up from this file (training/auto_retrain.py).
+                train_all = None
+
+                # Try 1: Absolute package import (works if python_bridge is on sys.path)
                 try:
-                    from python_bridge.train import train_all
+                    from python_bridge.train import train_all as _ta
+                    train_all = _ta
                 except ImportError:
-                    # Fallback: try relative import for when running from python_bridge/
+                    pass
+
+                # Try 2: Direct relative import (works when running from python_bridge/)
+                if train_all is None:
+                    try:
+                        from train import train_all as _ta
+                        train_all = _ta
+                    except ImportError:
+                        pass
+
+                # Try 3: importlib fallback with explicit file path
+                if train_all is None:
                     import importlib.util
+                    # From training/auto_retrain.py, go up one level to python_bridge/
                     train_module_path = os.path.join(
                         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "train.py"
                     )
+                    if not os.path.exists(train_module_path):
+                        raise FileNotFoundError(
+                            f"train.py not found at {train_module_path}. "
+                            f"Cannot run auto-retrain without train.py."
+                        )
                     spec = importlib.util.spec_from_file_location("train", train_module_path)
                     train_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(train_module)
                     train_all = train_module.train_all
+
                 train_all()
             logger.info("[AutoRetrain] Training completed")
 
