@@ -172,13 +172,26 @@ class SignalGenerator:
         regime_name = regime_info["regime_name"]
         regime_adjustments = self.regime_detector.get_regime_adjustments(regime)
 
-        # 3. Determine action from probabilities
+        # 3. Determine action from probabilities - HOLD bias fix
+        # Instead of argmax across all 3 classes (which always picks HOLD due to
+        # imbalanced training data), only compare BUY vs SELL probabilities.
         # 0=SELL, 1=HOLD, 2=BUY
-        action_idx = int(np.argmax(probabilities))
-        action_map = {0: "SELL", 1: "HOLD", 2: "BUY"}
-        action = action_map[action_idx]
-        logger.info("[SignalGen] Predicted action: %s (idx=%d), regime=%s",
-                    action, action_idx, regime_name)
+        sell_prob = float(probabilities[0])
+        buy_prob = float(probabilities[2])
+
+        # Only HOLD if both BUY and SELL are extremely weak
+        if buy_prob < 0.10 and sell_prob < 0.10:
+            action = "HOLD"
+            confidence = 0.0
+        elif buy_prob >= sell_prob:
+            action = "BUY"
+            confidence = buy_prob
+        else:
+            action = "SELL"
+            confidence = sell_prob
+
+        logger.info("[SignalGen] Action decision: %s (buy_prob=%.4f, sell_prob=%.4f, conf=%.4f), regime=%s",
+                    action, buy_prob, sell_prob, confidence, regime_name)
 
         # 4. Apply confidence threshold (adjusted by regime)
         min_confidence = regime_adjustments.get(
@@ -194,11 +207,11 @@ class SignalGenerator:
             logger.info("[SignalGen] HOLD - model predicted HOLD action")
             return hold_signal
 
-        # 6. Check model agreement
-        if agreement < self.ensemble.config.min_agreement:
-            logger.info("[SignalGen] HOLD - agreement %.4f < threshold %.4f",
-                        agreement, self.ensemble.config.min_agreement)
-            return hold_signal
+        # 6. Model agreement check - BYPASSED for aggressive trading
+        # The user wants signals on nearly every candle, so we skip the
+        # agreement filter to maximize signal frequency.
+        logger.info("[SignalGen] Agreement=%.4f (check bypassed for aggressive mode)",
+                    agreement)
 
         # 7. Check risk manager
         if not self.risk_manager.is_trading_allowed():
