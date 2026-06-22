@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Expand training data, improve labeling, add support/resistance detection, volume-weighted momentum, RSI exhaustion filter, and longer momentum lookback to make the ML pipeline smarter and train on more data.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "1. TRAINING DATA EXPANSION in python_bridge/train.py: Modify prepare_data() to fetch multiple timeframes and combine them. Fetch 5y daily data (period='5y', interval='1d') + 2y H1 data (period='2y', interval='1h') + 60 days of M15 data (period='60d', interval='15m'). Concatenate the features from all three into one large training set, targeting 25,000-30,000+ sequences. Each timeframe's data should be fetched separately, have compute_features() applied, then prepare_model_input() applied. The resulting X/y arrays from each are concatenated (vstack for X, hstack for y).",
     "2. IMPROVED TRAINING LABELS in python_bridge/data/market_data.py: Modify prepare_model_input() to use ATR-based thresholds instead of std-based. Label BUY only if price moved at least 0.3*ATR up within the next 5 bars (check max of next 5 closes vs current). Label SELL only if price moved 0.3*ATR down within next 5 bars (check min of next 5 closes). Otherwise HOLD. This creates cleaner, higher-quality training labels.",
@@ -31,5 +31,5 @@
     "Run: cd /projects/sandbox/Claude && python -c \"from python_bridge.config.settings import DataConfig; dc = DataConfig(); print(dc.momentum_lookback, dc.rsi_overbought, dc.sr_lookback)\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 8 steps implemented successfully. Full test suite: 352 pass, 5 fail (pre-existing candle pattern tests). The auto_retrain test was sensitive to checkpoints directory state, fixed with cleanup fixture in test_training.py. The 5-bar lookback change required updating 2 existing momentum tests that used fewer than 7 bars."
 }
