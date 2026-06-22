@@ -1,0 +1,32 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the Python ML training pipeline for NAS100 that processes historical OHLCV data, engineers IPDA-based features (order blocks, FVGs, liquidity sweeps, market structure shifts, killzones), trains a lightweight neural network model, and exports weights to a CSV file that the MQL5 EA can load at runtime.",
+  "status": "in_progress",
+  "steps": [
+    "Create Python/nas100_ml_trainer.py in the repository root with the following components:",
+    "1. Data loading module: Accept NAS100 M1 OHLCV CSV data (columns: datetime,open,high,low,close,volume). Support chunked reading for large files like analyze_ticks.py does.",
+    "2. Feature engineering module implementing IPDA concepts: (a) Market Structure detection - identify swing highs/lows, BOS (break of structure), CHoCH (change of character) on M5/M15/H1 timeframes resampled from M1 data. (b) Order Block detection - last opposing candle before displacement moves. (c) Fair Value Gap detection - 3-candle imbalance patterns. (d) Liquidity sweep detection - price takes out previous highs/lows then reverses. (e) Session/Killzone features - London (08:00-11:00), NY (13:30-16:00) sessions for NAS100. (f) Premium/Discount zones - price position relative to dealing range. (g) Technical indicators: EMA(8,21,50,200), RSI(14), ATR(14), VWAP proxy, volume profile.",
+    "3. Label generation: For each M1 bar, create labels based on future price movement over next 5-15 bars. Labels: BUY (+1) if price rises more than 1.5x ATR, SELL (-1) if price falls more than 1.5x ATR, NEUTRAL (0) otherwise.",
+    "4. Neural network model: Implement a simple feedforward neural network (3 hidden layers: 128->64->32 neurons with ReLU activation) using only numpy (no tensorflow/pytorch dependency). Include forward pass, backpropagation, and training loop with batch gradient descent.",
+    "5. Training pipeline: Split data 80/20 train/test, normalize features with min-max scaling, train for configurable epochs with early stopping, output training metrics (accuracy, precision, recall for each class).",
+    "6. Model export: Save trained weights and biases as CSV files in a format the MQL5 EA can read. Export normalization parameters (min/max per feature) so the EA can normalize live data identically. Save to 'NAS100_ML_Model/' directory with files: weights_layer1.csv, weights_layer2.csv, weights_layer3.csv, weights_output.csv, biases_layer1.csv, biases_layer2.csv, biases_layer3.csv, biases_output.csv, normalization_params.csv, feature_names.csv.",
+    "7. Configuration at top of script: CSV_FILE path, model hyperparameters (learning_rate, epochs, batch_size, hidden_sizes), IPDA parameters (swing lookback, OB displacement threshold, FVG minimum size).",
+    "8. Add comprehensive docstrings and a usage section at the top explaining how to prepare data and run training."
+  ],
+  "acceptance_criteria": [
+    "Python script passes ast.parse() validation without errors",
+    "Script has all required imports (pandas, numpy, os, sys, json, datetime)",
+    "Feature engineering covers all IPDA concepts listed (market structure, OBs, FVGs, liquidity sweeps, killzones, premium/discount)",
+    "Neural network implementation includes forward pass and backpropagation using only numpy",
+    "Model export format produces CSV files readable by MQL5 FileReadString/FileReadNumber functions",
+    "Normalization parameters are exported alongside weights",
+    "Script includes clear documentation on data format requirements and usage"
+  ],
+  "verification": [
+    "Run: python3 -c \"import ast; ast.parse(open('/projects/sandbox/Claude/Python/nas100_ml_trainer.py').read()); print('PASS')\"",
+    "Run: python3 -c \"import importlib.util; spec = importlib.util.spec_from_file_location('trainer', '/projects/sandbox/Claude/Python/nas100_ml_trainer.py'); print('Module loadable: PASS')\"" 
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
