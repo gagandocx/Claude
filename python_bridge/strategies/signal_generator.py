@@ -196,8 +196,8 @@ class SignalGenerator:
 
         # --- Pattern Detection (priority order) ---
 
-        # 1. Doji: body is < 3% of range (very strict - only true dojis block)
-        if body_ratio < 0.03:
+        # 1. Doji: body is < 1% of range (extremely strict - almost zero body only)
+        if body_ratio < 0.01:
             result["pattern"] = "doji"
             result["bias"] = "neutral"
             result["block_buy"] = True
@@ -207,8 +207,10 @@ class SignalGenerator:
             return result
 
         # 2. Bullish Engulfing: previous bearish, current bullish body engulfs previous body
+        # Additional: current body must be significantly larger (>1.5x previous body)
         if (prev_is_bearish and curr_is_bullish and
-                curr_close > prev_open and curr_open < prev_close):
+                curr_close > prev_open and curr_open < prev_close and
+                curr_body > prev_body * 1.5):
             result["pattern"] = "bullish_engulfing"
             result["bias"] = "bullish"
             result["block_buy"] = False
@@ -218,8 +220,10 @@ class SignalGenerator:
             return result
 
         # 3. Bearish Engulfing: previous bullish, current bearish body engulfs previous body
+        # Additional: current body must be significantly larger (>1.5x previous body)
         if (prev_is_bullish and curr_is_bearish and
-                curr_close < prev_open and curr_open > prev_close):
+                curr_close < prev_open and curr_open > prev_close and
+                curr_body > prev_body * 1.5):
             result["pattern"] = "bearish_engulfing"
             result["bias"] = "bearish"
             result["block_buy"] = True  # Block buys during bearish engulfing
@@ -228,10 +232,11 @@ class SignalGenerator:
                         "confirms SELL, blocks BUY")
             return result
 
-        # 4. Hammer / Pin Bar: long lower wick (> 60% of range), small upper wick
-        if (curr_lower_wick > 0.6 * curr_range and
-                curr_upper_wick < 0.2 * curr_range and
-                body_ratio < 0.35):
+        # 4. Hammer / Pin Bar: long lower wick (> 80% of range), small upper wick, tiny body
+        # Very strict: only blocks on extreme hammers (80%+ wick, <15% body)
+        if (curr_lower_wick > 0.8 * curr_range and
+                curr_upper_wick < 0.1 * curr_range and
+                body_ratio < 0.15):
             result["pattern"] = "hammer"
             result["bias"] = "bullish"
             result["block_buy"] = False
@@ -240,10 +245,11 @@ class SignalGenerator:
                         "confirms BUY, blocks SELL", (curr_lower_wick / curr_range) * 100)
             return result
 
-        # 5. Shooting Star: long upper wick (> 60% of range), small lower wick
-        if (curr_upper_wick > 0.6 * curr_range and
-                curr_lower_wick < 0.2 * curr_range and
-                body_ratio < 0.35):
+        # 5. Shooting Star: long upper wick (> 80% of range), small lower wick, tiny body
+        # Very strict: only blocks on extreme shooting stars
+        if (curr_upper_wick > 0.8 * curr_range and
+                curr_lower_wick < 0.1 * curr_range and
+                body_ratio < 0.15):
             result["pattern"] = "shooting_star"
             result["bias"] = "bearish"
             result["block_buy"] = True  # Block buys - shooting star signals bearish reversal
