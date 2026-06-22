@@ -173,8 +173,11 @@ class SignalGenerator:
         prev_is_bullish = prev_close > prev_open
         prev_is_bearish = prev_close < prev_open
 
-        # Avoid division by zero
-        if curr_range < 0.01:
+        # Avoid division by zero - use relative threshold based on price level
+        # Gold: price ~4000, min range 0.01 is fine
+        # Forex: price ~1.09, min range needs to be much smaller (0.00001)
+        min_range = max(curr_close * 0.000001, 0.000001)  # 0.0001% of price or absolute minimum
+        if curr_range < min_range:
             # Essentially a zero-range candle (doji-like)
             result["pattern"] = "doji"
             result["bias"] = "neutral"
