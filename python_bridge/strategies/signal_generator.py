@@ -193,8 +193,8 @@ class SignalGenerator:
 
         # --- Pattern Detection (priority order) ---
 
-        # 1. Doji: body is < 10% of range
-        if body_ratio < 0.10:
+        # 1. Doji: body is < 3% of range (very strict - only true dojis block)
+        if body_ratio < 0.03:
             result["pattern"] = "doji"
             result["bias"] = "neutral"
             result["block_buy"] = True
