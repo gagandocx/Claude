@@ -153,6 +153,10 @@ class RegimeDetector:
         """
         Get strategy parameter adjustments for the current regime.
 
+        For the rapid HF scalper, SL/TP multipliers are fixed at 1.0
+        across all regimes to maintain consistent risk/reward ratio.
+        Only position sizing and confidence thresholds are adjusted.
+
         Args:
             regime: Current market regime
 
@@ -164,7 +168,7 @@ class RegimeDetector:
                 "position_size_mult": 1.2,
                 "sl_mult": 1.0,
                 "tp_mult": 1.0,
-                "confidence_threshold": 0.15,
+                "confidence_threshold": 0.10,
                 "prefer_trend_following": True,
             },
             MarketRegime.RANGING: {

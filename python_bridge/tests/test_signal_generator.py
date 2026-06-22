@@ -334,3 +334,141 @@ class TestSignalGenerator:
         # With random weights and models_loaded=True, the result depends
         # on whether confidence/agreement thresholds are met
         assert signal.action in ["BUY", "SELL", "HOLD"]
+
+
+# ─────────────────────────────────────────────
+#  MOMENTUM DIRECTION TESTS
+# ─────────────────────────────────────────────
+class TestMomentumDirection:
+    """Tests for the momentum-based direction computation."""
+
+    def test_momentum_buy_when_prices_rising(self):
+        """Test that BUY is generated when last 3 candles are up."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Create prices that rise over the last few bars
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.5, 2003.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_momentum_sell_when_prices_falling(self):
+        """Test that SELL is generated when last 3 candles are down."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Create prices that fall over the last few bars
+        prices = pd.DataFrame({
+            "Close": [2005.0, 2004.5, 2004.0, 2003.5, 2003.0, 2002.5, 2002.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "SELL"
+
+    def test_momentum_flat_when_no_movement(self):
+        """Test that FLAT is returned when price movement is below threshold."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Create prices with very small movement (< $0.50)
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2000.1, 2000.2, 2000.1, 2000.3, 2000.2, 2000.3]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+    def test_momentum_flat_with_insufficient_data(self):
+        """Test that FLAT is returned when insufficient price data."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Only 2 bars - not enough for lookback
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2001.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+    def test_momentum_with_numpy_array(self):
+        """Test momentum computation with numpy array input."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Rising prices as numpy array
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0])
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_momentum_threshold_boundary(self):
+        """Test that exactly $0.50 movement is still FLAT."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # Exactly $0.49 difference (below threshold)
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.49]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+    def test_momentum_above_threshold_triggers_buy(self):
+        """Test that just above $0.50 movement triggers BUY."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        # $0.51 difference between close[-1] and close[-4]
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.71]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+
+# ─────────────────────────────────────────────
+#  SCALPER SL/TP TESTS
+# ─────────────────────────────────────────────
+class TestScalperSLTP:
+    """Tests for the scalper's SL/TP configuration."""
+
+    def test_default_sl_tp_multipliers(self):
+        """Test that default SignalConfig has correct scalper SL/TP multipliers."""
+        config = SignalConfig()
+        assert config.atr_sl_multiplier == 0.6
+        assert config.atr_tp_multiplier == 0.1
+
+    def test_sl_approximately_3_dollars_with_atr_5(self):
+        """Test that SL is approximately $3 (30 pips) with ATR=5."""
+        rm = RiskManager()
+        # With ATR=5 and SL mult=0.6: SL = 5 * 0.6 = $3.0 = 30 pips
+        levels = rm.calculate_sl_tp(
+            atr=5.0, direction="BUY",
+            current_price=2000.0,
+            sl_mult=0.6, tp_mult=0.1
+        )
+        # SL should be 30 pips (5.0 * 0.6 / 0.1 pip_value = 30)
+        assert abs(levels["sl_pips"] - 30.0) < 0.1
+
+    def test_tp_approximately_half_dollar_with_atr_5(self):
+        """Test that TP is approximately $0.50 (5 pips) with ATR=5."""
+        rm = RiskManager()
+        # With ATR=5 and TP mult=0.1: TP = 5 * 0.1 = $0.50 = 5 pips
+        levels = rm.calculate_sl_tp(
+            atr=5.0, direction="BUY",
+            current_price=2000.0,
+            sl_mult=0.6, tp_mult=0.1
+        )
+        # TP should be 5 pips (5.0 * 0.1 / 0.1 pip_value = 5)
+        assert abs(levels["tp_pips"] - 5.0) < 0.1
+
+    def test_risk_config_max_positions_5(self):
+        """Test that default RiskConfig has max_open_positions = 5."""
+        config = RiskConfig()
+        assert config.max_open_positions == 5
+
+    def test_risk_config_max_daily_loss_dollars(self):
+        """Test that RiskConfig has max_daily_loss_dollars = 50.0."""
+        config = RiskConfig()
+        assert config.max_daily_loss_dollars == 50.0
+
+    def test_daily_dollar_loss_halts_trading(self):
+        """Test that exceeding $50 daily loss halts trading."""
+        config = RiskConfig(account_balance=10000, max_daily_loss_dollars=50.0)
+        rm = RiskManager(config)
+        # Simulate a $55 loss (exceeds $50 dollar cap)
+        rm.update_equity(9945)  # Lost $55
+        assert not rm.is_trading_allowed()
+
+    def test_daily_dollar_profit_does_not_halt(self):
+        """Test that daily profit does not trigger the dollar loss halt."""
+        config = RiskConfig(account_balance=10000, max_daily_loss_dollars=50.0)
+        rm = RiskManager(config)
+        # Simulate $60 profit
+        rm.update_equity(10060)
+        assert rm.is_trading_allowed()

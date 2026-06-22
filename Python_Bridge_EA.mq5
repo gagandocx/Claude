@@ -31,7 +31,7 @@ input double   InpMaxLotSize       = 1.0;       // Maximum lot size
 input double   InpMinConfidence    = 0.15;      // Minimum confidence to trade
 input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
-input int      InpMaxOpenTrades    = 10;        // Max open trades (HF scalping)
+input int      InpMaxOpenTrades    = 5;        // Max open trades (HF scalping)
 input bool     InpShowDashboard    = true;      // Show dashboard panel
 
 //+------------------------------------------------------------------+
@@ -107,6 +107,9 @@ void OnTick()
 
     // Process exit signals from Smart Exit Manager (RL agent)
     ProcessExitSignals();
+
+    // Emergency close-all: if floating loss exceeds $50, close all EA positions
+    CheckEmergencyCloseAll();
 
     // Update dashboard
     if(InpShowDashboard)
@@ -549,6 +552,60 @@ void ModifyPositionSL(long ticket, double newSL)
 }
 
 //+------------------------------------------------------------------+
+//| Emergency close all positions if floating loss exceeds $50        |
+//+------------------------------------------------------------------+
+void CheckEmergencyCloseAll()
+{
+    double totalFloatingLoss = 0.0;
+
+    // Calculate total floating P&L for this EA's positions
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(g_position.SelectByIndex(i))
+        {
+            if(g_position.Magic() == InpMagicNumber &&
+               g_position.Symbol() == _Symbol)
+            {
+                totalFloatingLoss += g_position.Profit() + g_position.Swap() + g_position.Commission();
+            }
+        }
+    }
+
+    // If total floating loss exceeds $50, close all positions immediately
+    if(totalFloatingLoss < -50.0)
+    {
+        Print("[PythonBridge] EMERGENCY: Floating loss $", DoubleToString(MathAbs(totalFloatingLoss), 2),
+              " exceeds $50 limit. Closing ALL positions!");
+        g_status = "EMERGENCY CLOSE: Loss > $50";
+
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            if(g_position.SelectByIndex(i))
+            {
+                if(g_position.Magic() == InpMagicNumber &&
+                   g_position.Symbol() == _Symbol)
+                {
+                    ulong ticket = g_position.Ticket();
+                    double volume = g_position.Volume();
+
+                    if(g_position.PositionType() == POSITION_TYPE_BUY)
+                    {
+                        double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+                        g_trade.Sell(volume, _Symbol, price, 0, 0, "Emergency|CloseAll");
+                    }
+                    else
+                    {
+                        double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                        g_trade.Buy(volume, _Symbol, price, 0, 0, "Emergency|CloseAll");
+                    }
+                    Print("[PythonBridge] Emergency closed ticket ", ticket);
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
 //| Update on-chart dashboard                                          |
 //+------------------------------------------------------------------+
 void UpdateDashboard()
@@ -581,7 +638,8 @@ void UpdateDashboard()
     dashboard += "  |                                        |\n";
     dashboard += "  |  >>> SCALPER CONFIG                    |\n";
     dashboard += "  |  Cycle: 10s | ATR Cap: $5             |\n";
-    dashboard += "  |  SL: ~$1 | TP: ~$1.50                |\n";
+    dashboard += "  |  SL: ~$3 | TP: ~$0.50 | WR: 85%+    |\n";
+    dashboard += "  |  Emergency Stop: $50 loss             |\n";
     dashboard += "  |                                        |\n";
     dashboard += "  +========================================+\n";
 

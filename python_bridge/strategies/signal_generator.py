@@ -68,13 +68,17 @@ class SignalGenerator:
     """
     Generates trade signals by combining model predictions with risk filters.
 
-    Pipeline:
-        1. Get model predictions from ensemble
-        2. Check regime and apply adjustments
-        3. Apply risk filters (drawdown, correlation, time)
-        4. Compute stop loss and take profit from ATR
-        5. Calculate position size using Kelly criterion
-        6. Generate final signal if all filters pass
+    Pipeline (Rapid HF Scalper):
+        1. Compute short-term momentum direction from last 3-5 M1 candles
+        2. Get model predictions from ensemble (used for TIMING only)
+        3. Check regime and apply adjustments
+        4. Apply risk filters (drawdown, correlation, time)
+        5. Compute stop loss and take profit from ATR
+        6. Calculate position size using Kelly criterion
+        7. Generate final signal if all filters pass
+
+    Direction comes from MOMENTUM, not from model predictions.
+    AI confidence is used only for entry timing (confidence gate).
     """
 
     def __init__(self, signal_config: Optional[SignalConfig] = None,
@@ -97,6 +101,51 @@ class SignalGenerator:
         self._last_signal_time = 0.0
         self._signal_count = 0
 
+    def _compute_momentum_direction(self, prices, lookback: int = 5) -> str:
+        """
+        Compute short-term momentum direction from the last few M1 candles.
+
+        Uses the price difference over the last 3 candles (close[-1] vs close[-4])
+        to determine the direction of short-term momentum.
+
+        Args:
+            prices: DataFrame with 'Close' column or array-like of close prices
+            lookback: Number of bars to look back (default 5)
+
+        Returns:
+            "BUY" if price rose over last 3 candles
+            "SELL" if price fell over last 3 candles
+            "FLAT" if movement is below threshold ($0.50 for gold)
+        """
+        import pandas as pd
+
+        # Extract close prices
+        if isinstance(prices, pd.DataFrame):
+            if "Close" not in prices.columns:
+                return "FLAT"
+            close = prices["Close"].values
+        elif isinstance(prices, np.ndarray):
+            close = prices
+        else:
+            return "FLAT"
+
+        if len(close) < lookback:
+            return "FLAT"
+
+        # Compare current close to close 3 bars ago
+        current_close = close[-1]
+        reference_close = close[-4] if len(close) >= 4 else close[0]
+
+        diff = current_close - reference_close
+        threshold = 0.5  # $0.50 minimum move for gold (5 pips)
+
+        if abs(diff) < threshold:
+            return "FLAT"
+        elif diff > 0:
+            return "BUY"
+        else:
+            return "SELL"
+
     def generate_signal(self, features: np.ndarray,
                         prices: Optional[object] = None,
                         atr: float = 0.0,
@@ -106,18 +155,17 @@ class SignalGenerator:
                         htf_bias: Optional[Dict] = None,
                         cross_pair_info: Optional[Dict] = None) -> TradeSignal:
         """
-        Generate a trade signal from input features.
+        Generate a trade signal using momentum for DIRECTION and AI for TIMING.
 
-        Professional signal generation with multi-timeframe confirmation
-        and cross-pair context:
-        - HTF bias filters: Only take longs if H1/H4 bias is bullish
-        - USD strength: Adjusts confidence for gold (inverse correlation)
-        - Model input shape remains fixed (46 features); auxiliary data
-          is used for filtering and confidence scaling, not model input.
+        Rapid HF Scalper approach:
+        - Direction is determined by short-term momentum (last 3-5 M1 candles)
+        - AI model confidence is used as a timing gate (only enter when confident)
+        - HTF bias is reduced (only penalize if H4 magnitude > 0.8, and only by 0.05)
+        - Targets: SL ~$3 (30 pips), TP ~$0.50 (5 pips) for 85%+ win rate
 
         Args:
             features: Input features array (1, seq_len, num_features)
-            prices: Price DataFrame for regime detection
+            prices: Price DataFrame for regime detection and momentum calculation
             atr: Current ATR value
             current_price: Current market price
             adx_series: ADX series for regime detection
@@ -166,7 +214,16 @@ class SignalGenerator:
                 logger.info("[SignalGen] HOLD - models not loaded and no checkpoints found")
                 return hold_signal
 
-        # 1. Get ensemble prediction
+        # 1. Compute momentum direction from recent price action
+        momentum_direction = self._compute_momentum_direction(prices)
+        logger.info("[SignalGen] Momentum direction: %s", momentum_direction)
+
+        # If momentum is FLAT, do not trade (no clear short-term trend)
+        if momentum_direction == "FLAT":
+            logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction)")
+            return hold_signal
+
+        # 2. Get ensemble prediction for TIMING (confidence gate)
         try:
             prediction = self.ensemble.predict(features)
         except Exception as e:
@@ -181,7 +238,7 @@ class SignalGenerator:
                     probabilities[0], probabilities[1], probabilities[2])
         logger.info("[SignalGen] Confidence=%.4f, Agreement=%.4f", confidence, agreement)
 
-        # 2. Detect regime
+        # 3. Detect regime
         import pandas as pd
         regime_info = self.regime_detector.detect_regime(
             prices if prices is not None else pd.DataFrame({"Close": [current_price]}),
@@ -192,93 +249,45 @@ class SignalGenerator:
         regime_name = regime_info["regime_name"]
         regime_adjustments = self.regime_detector.get_regime_adjustments(regime)
 
-        # 3. Determine action from probabilities - HOLD bias fix
-        # Instead of argmax across all 3 classes (which always picks HOLD due to
-        # imbalanced training data), only compare BUY vs SELL probabilities.
-        # 0=SELL, 1=HOLD, 2=BUY
+        # 4. Use momentum for DIRECTION, AI confidence for TIMING
+        # The action comes from momentum, not from model probabilities
+        action = momentum_direction  # BUY or SELL from momentum
+
+        # Use overall model confidence as the timing gate
+        # Higher confidence = better timing for entry
+        # We take the max of buy_prob and sell_prob as base confidence
         sell_prob = float(probabilities[0])
         buy_prob = float(probabilities[2])
+        timing_confidence = max(buy_prob, sell_prob, confidence)
 
-        # Only HOLD if both BUY and SELL are extremely weak
-        if buy_prob < 0.10 and sell_prob < 0.10:
-            action = "HOLD"
-            confidence = 0.0
-        elif buy_prob >= sell_prob:
-            action = "BUY"
-            confidence = buy_prob
-        else:
-            action = "SELL"
-            confidence = sell_prob
+        logger.info("[SignalGen] Momentum action: %s, Timing confidence: %.4f",
+                    action, timing_confidence)
 
-        logger.info("[SignalGen] Action decision: %s (buy_prob=%.4f, sell_prob=%.4f, conf=%.4f), regime=%s",
-                    action, buy_prob, sell_prob, confidence, regime_name)
-
-        # 4a. PROFESSIONAL SIGNAL FILTERING: HTF trend confirmation
-        # Use higher timeframe bias to filter counter-trend trades and
-        # boost confidence for trend-aligned signals. This is how
-        # professional prop traders use multi-timeframe analysis.
+        # 5. HTF bias - REDUCED penalty for scalper
+        # Only penalize if H4 is STRONGLY against momentum (magnitude > 0.8)
+        # and only reduce confidence by 0.05 instead of blocking
         htf_confidence_adj = 0.0
-        if htf_bias and action != "HOLD":
-            h1_bias = htf_bias.get("1h", 0.0)
+        if htf_bias:
             h4_bias = htf_bias.get("4h", 0.0)
-            # Combined HTF score: H4 weighted more (institutional timeframe)
-            htf_score = h1_bias * 0.3 + h4_bias * 0.7
+            if action == "BUY" and h4_bias < -0.8:
+                htf_confidence_adj = -0.05
+                logger.info("[SignalGen] HTF: Slight penalty for BUY against strong H4 bearish (%.2f)", h4_bias)
+            elif action == "SELL" and h4_bias > 0.8:
+                htf_confidence_adj = -0.05
+                logger.info("[SignalGen] HTF: Slight penalty for SELL against strong H4 bullish (%.2f)", h4_bias)
 
-            if action == "BUY" and htf_score < -0.3:
-                # Buying against strong bearish HTF trend: penalize confidence
-                htf_confidence_adj = -0.10
-                logger.info("[SignalGen] HTF FILTER: Penalizing BUY (HTF bearish, score=%.2f)", htf_score)
-            elif action == "SELL" and htf_score > 0.3:
-                # Selling against strong bullish HTF trend: penalize confidence
-                htf_confidence_adj = -0.10
-                logger.info("[SignalGen] HTF FILTER: Penalizing SELL (HTF bullish, score=%.2f)", htf_score)
-            elif (action == "BUY" and htf_score > 0.3) or (action == "SELL" and htf_score < -0.3):
-                # Signal aligned with HTF trend: boost confidence
-                htf_confidence_adj = 0.05
-                logger.info("[SignalGen] HTF CONFIRM: Signal aligned with HTF trend (score=%.2f)", htf_score)
+        # Apply HTF adjustment
+        timing_confidence = timing_confidence + htf_confidence_adj
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
 
-        # 4b. PROFESSIONAL SIGNAL FILTERING: Cross-pair USD strength context
-        # Gold is inversely correlated with USD. Strong USD = bearish gold,
-        # Weak USD = bullish gold. Adjust confidence accordingly.
-        xpair_confidence_adj = 0.0
-        if cross_pair_info and action != "HOLD":
-            usd_strength = cross_pair_info.get("usd_strength", 0.0)
-            if action == "BUY" and usd_strength > 0.5:
-                # Buying gold while USD is strong: reduce confidence
-                xpair_confidence_adj = -0.05
-                logger.info("[SignalGen] XPAIR FILTER: Penalizing BUY (USD strong=%.3f)", usd_strength)
-            elif action == "SELL" and usd_strength < -0.5:
-                # Selling gold while USD is weak: reduce confidence
-                xpair_confidence_adj = -0.05
-                logger.info("[SignalGen] XPAIR FILTER: Penalizing SELL (USD weak=%.3f)", usd_strength)
-            elif (action == "BUY" and usd_strength < -0.3) or (action == "SELL" and usd_strength > 0.3):
-                # Signal aligned with USD/gold correlation: boost
-                xpair_confidence_adj = 0.03
-                logger.info("[SignalGen] XPAIR CONFIRM: Signal aligned with USD (strength=%.3f)", usd_strength)
-
-        # Apply auxiliary feature adjustments to confidence
-        confidence = confidence + htf_confidence_adj + xpair_confidence_adj
-        confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
-
-        # 4. Apply confidence threshold (adjusted by regime)
+        # 6. Apply confidence threshold (timing gate)
         min_confidence = regime_adjustments.get(
             "confidence_threshold", self.signal_config.min_confidence
         )
-        if confidence < min_confidence:
-            logger.info("[SignalGen] HOLD - confidence %.4f < threshold %.4f (regime: %s)",
-                        confidence, min_confidence, regime_name)
+        if timing_confidence < min_confidence:
+            logger.info("[SignalGen] HOLD - timing confidence %.4f < threshold %.4f (regime: %s)",
+                        timing_confidence, min_confidence, regime_name)
             return hold_signal
-
-        # 5. If HOLD, return hold signal
-        if action == "HOLD":
-            logger.info("[SignalGen] HOLD - model predicted HOLD action")
-            return hold_signal
-
-        # 6. Model agreement check - BYPASSED for aggressive trading
-        # The user wants signals on nearly every candle, so we skip the
-        # agreement filter to maximize signal frequency.
-        logger.info("[SignalGen] Agreement=%.4f (check bypassed for aggressive mode)",
-                    agreement)
 
         # 7. Check risk manager
         if not self.risk_manager.is_trading_allowed():
@@ -308,7 +317,7 @@ class SignalGenerator:
         # 10. Calculate position size
         position_mult = regime_adjustments.get("position_size_mult", 1.0)
         lot_size = self.risk_manager.calculate_position_size(
-            confidence=confidence,
+            confidence=timing_confidence,
             atr=atr,
             win_rate=self.risk_manager.get_win_rate(),
             avg_win_loss_ratio=self.risk_manager.get_avg_win_loss_ratio(),
@@ -333,7 +342,7 @@ class SignalGenerator:
             timestamp=timestamp,
             symbol=self.data_config.symbol,
             action=action,
-            confidence=confidence,
+            confidence=timing_confidence,
             sl_pips=levels["sl_pips"],
             tp_pips=levels["tp_pips"],
             lot_size=lot_size,

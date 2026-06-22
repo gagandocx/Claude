@@ -142,8 +142,8 @@ class SignalConfig:
     """Signal generation thresholds."""
     min_confidence: float = 0.15            # Very low threshold for aggressive trading
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 0.2          # SL = ATR * multiplier (tight for M1 scalping)
-    atr_tp_multiplier: float = 0.3          # TP = ATR * multiplier (quick profit booking)
+    atr_sl_multiplier: float = 0.6          # SL = ATR * multiplier (ATR~5 -> $3 SL = 30 pips)
+    atr_tp_multiplier: float = 0.1          # TP = ATR * multiplier (ATR~5 -> $0.50 TP = 5 pips)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
     cooldown_seconds: int = 2               # Ultra-fast cooldown for HF scalping
 
@@ -155,10 +155,11 @@ class SignalConfig:
 class RiskConfig:
     """Risk management parameters."""
     max_risk_per_trade: float = 0.02        # 2% risk per trade
-    max_daily_loss: float = 0.05            # 5% max daily loss
+    max_daily_loss: float = 0.05            # 5% max daily loss (percentage)
+    max_daily_loss_dollars: float = 50.0    # Absolute dollar drawdown cap per day
     max_drawdown: float = 0.10              # 10% max drawdown before halt
     max_correlation: float = 0.7            # Max correlation between open positions
-    max_open_positions: int = 10            # High-frequency scalping: many concurrent positions
+    max_open_positions: int = 5             # HF scalping: limited concurrent positions
     kelly_fraction: float = 0.25            # Quarter-Kelly for safety
     account_balance: float = 10000.0        # Default account balance
     min_lot_size: float = 0.01              # Minimum lot size

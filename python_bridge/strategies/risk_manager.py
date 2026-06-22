@@ -136,13 +136,18 @@ class RiskManager:
             if current_drawdown >= self.config.max_drawdown:
                 return False
 
-        # Check daily loss limit
+        # Check daily loss limit (percentage-based)
         if self._daily_start_equity > 0:
             daily_loss = (
                 (self._daily_start_equity - self._current_equity) /
                 self._daily_start_equity
             )
             if daily_loss >= self.config.max_daily_loss:
+                return False
+
+        # Check daily loss limit (absolute dollar amount)
+        if hasattr(self.config, 'max_daily_loss_dollars'):
+            if abs(self._daily_pnl) >= self.config.max_daily_loss_dollars and self._daily_pnl < 0:
                 return False
 
         # Check max open positions
