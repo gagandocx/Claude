@@ -674,6 +674,10 @@ void ManageOpenPositions()
             // This ensures a breakeven trade does not lose money to spread.
             // SL is placed a few pips in profit beyond entry so if it triggers,
             // the trader still nets a small gain after spread costs.
+            // NOTE: SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) fetches the REAL-TIME
+            // spread from the broker at the moment of execution, ensuring the
+            // breakeven calculation accounts for current market conditions
+            // (not a fixed/historical spread value).
             double spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
             double beBuffer = spreadPoints + InpBEProfitBuffer;
             if(posType == POSITION_TYPE_BUY)

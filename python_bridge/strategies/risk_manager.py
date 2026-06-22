@@ -14,7 +14,7 @@ from collections import deque
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import RiskConfig
+from config.settings import RiskConfig, StreakConfig
 
 
 class RiskManager:
@@ -33,6 +33,9 @@ class RiskManager:
     def __init__(self, config: Optional[RiskConfig] = None):
         self.config = config or RiskConfig()
 
+        # Streak detection config
+        self.streak_config = StreakConfig()
+
         # State tracking
         self._equity_high = self.config.account_balance
         self._current_equity = self.config.account_balance
@@ -41,6 +44,10 @@ class RiskManager:
         self._open_positions: List[Dict] = []
         self._trade_history: deque = deque(maxlen=200)
         self._last_reset_day = datetime.now().date()
+
+        # Streak tracking
+        self._consecutive_results: deque = deque(maxlen=50)
+        self._streak_multiplier: float = 1.0
 
     def calculate_position_size(self, confidence: float,
                                 atr: float,
@@ -106,6 +113,13 @@ class RiskManager:
         lot_size = risk_amount / (sl_distance * point_value)
 
         # Clamp to allowed range
+        lot_size = max(self.config.min_lot_size,
+                       min(lot_size, self.config.max_lot_size))
+
+        # Apply streak multiplier
+        lot_size *= self._streak_multiplier
+
+        # Re-clamp after streak adjustment
         lot_size = max(self.config.min_lot_size,
                        min(lot_size, self.config.max_lot_size))
 
@@ -200,6 +214,86 @@ class RiskManager:
         ]
         self._trade_history.append({"id": trade_id, "pnl": pnl})
         self.update_equity(self._current_equity + pnl)
+
+        # Register streak result automatically on trade close
+        self.register_result(pnl > 0)
+
+    def register_result(self, won: bool):
+        """
+        Register a trade result for streak tracking.
+
+        Updates the consecutive results deque and recalculates
+        the streak multiplier based on current win/loss streak.
+
+        Args:
+            won: True if the trade was a winner, False if loser
+        """
+        self._consecutive_results.append('W' if won else 'L')
+        self._update_streak_multiplier()
+
+    def _update_streak_multiplier(self):
+        """Recalculate streak multiplier based on consecutive results."""
+        if not self._consecutive_results:
+            self._streak_multiplier = 1.0
+            return
+
+        # Count consecutive results from the end
+        last_result = self._consecutive_results[-1]
+        streak_count = 0
+        for result in reversed(self._consecutive_results):
+            if result == last_result:
+                streak_count += 1
+            else:
+                break
+
+        cfg = self.streak_config
+
+        if last_result == 'L':
+            # Losing streak
+            if streak_count >= cfg.severe_threshold:
+                self._streak_multiplier = cfg.severe_reduce_pct
+            elif streak_count >= cfg.lose_streak_reduce_threshold:
+                self._streak_multiplier = cfg.reduce_pct
+            else:
+                self._streak_multiplier = 1.0
+        else:
+            # Winning streak
+            if streak_count >= cfg.win_severe_threshold:
+                self._streak_multiplier = cfg.win_severe_boost_pct
+            elif streak_count >= cfg.win_boost_threshold:
+                self._streak_multiplier = cfg.win_boost_pct
+            elif streak_count >= cfg.win_restore_threshold:
+                self._streak_multiplier = 1.0
+            else:
+                self._streak_multiplier = 1.0
+
+    def get_streak_status(self) -> Dict:
+        """
+        Get current streak status for logging and monitoring.
+
+        Returns:
+            Dict with streak type, count, and current multiplier.
+        """
+        if not self._consecutive_results:
+            return {
+                "streak_type": "none",
+                "streak_count": 0,
+                "multiplier": 1.0,
+            }
+
+        last_result = self._consecutive_results[-1]
+        streak_count = 0
+        for result in reversed(self._consecutive_results):
+            if result == last_result:
+                streak_count += 1
+            else:
+                break
+
+        return {
+            "streak_type": "win" if last_result == 'W' else "lose",
+            "streak_count": streak_count,
+            "multiplier": self._streak_multiplier,
+        }
 
     def get_win_rate(self) -> float:
         """Calculate win rate from recent trade history."""

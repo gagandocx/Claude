@@ -18,7 +18,9 @@ import ta
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR
+from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR,
+                             SessionConfig, SpreadFilterConfig, AdaptiveMomentumConfig,
+                             PriceStructureConfig, FVGConfig, LiquiditySweepConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -87,6 +89,14 @@ class SignalGenerator:
                  data_config: Optional[DataConfig] = None):
         self.signal_config = signal_config or SignalConfig()
         self.data_config = data_config or DataConfig()
+
+        # Smart upgrade configs
+        self.session_config = SessionConfig()
+        self.spread_filter_config = SpreadFilterConfig()
+        self.adaptive_momentum_config = AdaptiveMomentumConfig()
+        self.price_structure_config = PriceStructureConfig()
+        self.fvg_config = FVGConfig()
+        self.liquidity_sweep_config = LiquiditySweepConfig()
 
         self.ensemble = EnsembleManager()
         self.risk_manager = RiskManager()
@@ -303,28 +313,418 @@ class SignalGenerator:
                     body_ratio * 100)
         return result
 
-    def _compute_momentum_direction(self, prices) -> str:
+    def _detect_session(self) -> str:
+        """
+        Detect current trading session based on UTC hour.
+
+        Returns:
+            Session name: "asian", "london", "newyork", or "overlap" (London/NY overlap)
+        """
+        current_hour = datetime.utcnow().hour
+        cfg = self.session_config
+
+        in_london = cfg.london_start <= current_hour < cfg.london_end
+        in_ny = cfg.ny_start <= current_hour < cfg.ny_end
+
+        # Check overlap first (London + NY both active)
+        if in_london and in_ny:
+            return "overlap"
+        elif in_london:
+            return "london"
+        elif in_ny:
+            return "newyork"
+        elif cfg.asian_start <= current_hour < cfg.asian_end:
+            return "asian"
+        else:
+            # Outside main sessions (e.g., 21:00-00:00 UTC)
+            return "asian"
+
+    def _get_session_multiplier(self, session: str) -> float:
+        """
+        Get position sizing multiplier for the current session.
+
+        Args:
+            session: Session name from _detect_session()
+
+        Returns:
+            Position sizing multiplier
+        """
+        cfg = self.session_config
+        multipliers = {
+            "asian": cfg.asian_multiplier,
+            "london": cfg.london_multiplier,
+            "newyork": cfg.ny_multiplier,
+            "overlap": cfg.overlap_multiplier,
+        }
+        return multipliers.get(session, 1.0)
+
+    def _check_spread_filter(self, prices) -> bool:
+        """
+        Check if current spread (High-Low range) is too wide relative to average.
+
+        Uses High-Low of the last bar vs average High-Low of the last N bars
+        as a spread proxy. Wide spreads indicate illiquid conditions.
+
+        Args:
+            prices: DataFrame with 'High' and 'Low' columns
+
+        Returns:
+            True if spread is too wide (should block), False if OK
+        """
+        import pandas as pd
+
+        if not isinstance(prices, pd.DataFrame):
+            return False
+
+        if "High" not in prices.columns or "Low" not in prices.columns:
+            return False
+
+        window = self.spread_filter_config.avg_spread_window
+        if len(prices) < window + 1:
+            return False
+
+        # Current bar range
+        current_range = float(prices["High"].iloc[-1] - prices["Low"].iloc[-1])
+
+        # Average range of last N bars (excluding current)
+        recent_ranges = (prices["High"].iloc[-(window + 1):-1] -
+                         prices["Low"].iloc[-(window + 1):-1])
+        avg_range = float(recent_ranges.mean())
+
+        if avg_range <= 0:
+            return False
+
+        # Block if current range > multiplier * average
+        if current_range > self.spread_filter_config.max_spread_multiplier * avg_range:
+            logger.warning("[SignalGen] Spread filter: current range $%.2f > %.1fx avg $%.2f - BLOCKING",
+                           current_range, self.spread_filter_config.max_spread_multiplier, avg_range)
+            return True
+
+        return False
+
+    def _detect_price_structure(self, prices, lookback: int = None) -> str:
+        """
+        Detect price action structure (trend) from swing highs and lows.
+
+        Analyzes the last N bars for higher highs + higher lows (uptrend)
+        or lower highs + lower lows (downtrend).
+
+        Args:
+            prices: DataFrame with 'High' and 'Low' columns
+            lookback: Number of bars to analyze (default from config)
+
+        Returns:
+            "uptrend", "downtrend", or "no_structure"
+        """
+        import pandas as pd
+
+        if lookback is None:
+            lookback = self.price_structure_config.swing_lookback
+
+        if not isinstance(prices, pd.DataFrame):
+            return "no_structure"
+
+        if "High" not in prices.columns or "Low" not in prices.columns:
+            return "no_structure"
+
+        if len(prices) < lookback:
+            return "no_structure"
+
+        highs = prices["High"].values[-lookback:]
+        lows = prices["Low"].values[-lookback:]
+
+        # Find swing highs (local maxima over 3-bar window)
+        swing_highs = []
+        swing_lows = []
+        for i in range(1, len(highs) - 1):
+            if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
+                swing_highs.append(highs[i])
+            if lows[i] < lows[i - 1] and lows[i] < lows[i + 1]:
+                swing_lows.append(lows[i])
+
+        # Need at least 2 swing points to determine structure
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return "no_structure"
+
+        # Check for higher highs and higher lows (uptrend)
+        higher_highs = swing_highs[-1] > swing_highs[-2]
+        higher_lows = swing_lows[-1] > swing_lows[-2]
+
+        # Check for lower highs and lower lows (downtrend)
+        lower_highs = swing_highs[-1] < swing_highs[-2]
+        lower_lows = swing_lows[-1] < swing_lows[-2]
+
+        if higher_highs and higher_lows:
+            return "uptrend"
+        elif lower_highs and lower_lows:
+            return "downtrend"
+        else:
+            return "no_structure"
+
+    def _check_dxy_correlation(self, prices, cross_pair_info: Optional[Dict] = None) -> Dict:
+        """
+        Check DXY (US Dollar Index) correlation impact on XAUUSD.
+
+        Gold is inversely correlated with USD strength. If DXY is rising,
+        penalize BUY and favor SELL. If DXY is falling, favor BUY and penalize SELL.
+
+        Args:
+            prices: Main price DataFrame (not used directly, kept for interface consistency)
+            cross_pair_info: Dict that may contain DXY data or 'dxy_direction'
+
+        Returns:
+            Dict with 'buy_adjustment' and 'sell_adjustment' (confidence deltas)
+        """
+        result = {"buy_adjustment": 0.0, "sell_adjustment": 0.0}
+
+        if not cross_pair_info:
+            return result
+
+        # Check for direct DXY direction info
+        dxy_direction = cross_pair_info.get("dxy_direction", None)
+
+        # If not directly provided, check for DXY price data
+        if dxy_direction is None:
+            dxy_prices = cross_pair_info.get("dxy_prices", None)
+            if dxy_prices is not None and len(dxy_prices) >= 3:
+                # Determine direction from last 3 bars
+                if dxy_prices[-1] > dxy_prices[-3]:
+                    dxy_direction = "rising"
+                elif dxy_prices[-1] < dxy_prices[-3]:
+                    dxy_direction = "falling"
+                else:
+                    dxy_direction = "flat"
+
+        # Also check usd_strength field
+        if dxy_direction is None:
+            usd_strength = cross_pair_info.get("usd_strength", None)
+            if usd_strength is not None:
+                if usd_strength > 0.5:
+                    dxy_direction = "rising"
+                elif usd_strength < -0.5:
+                    dxy_direction = "falling"
+                else:
+                    dxy_direction = "flat"
+
+        if dxy_direction is None or dxy_direction == "flat":
+            return result
+
+        if dxy_direction == "rising":
+            # Strong dollar -> bearish for gold
+            result["buy_adjustment"] = -0.10
+            result["sell_adjustment"] = 0.05
+            logger.info("[SignalGen] DXY rising (strong dollar): BUY -0.10, SELL +0.05")
+        elif dxy_direction == "falling":
+            # Weak dollar -> bullish for gold
+            result["buy_adjustment"] = 0.05
+            result["sell_adjustment"] = -0.10
+            logger.info("[SignalGen] DXY falling (weak dollar): BUY +0.05, SELL -0.10")
+
+        return result
+
+    def _detect_fvg(self, prices) -> Dict:
+        """
+        Detect Fair Value Gaps (FVGs) / Imbalance Zones in price action.
+
+        A gap up occurs when candle N's low > candle N-2's high (bullish FVG).
+        A gap down occurs when candle N's high < candle N-2's low (bearish FVG).
+
+        If price is approaching an unfilled FVG in the direction of momentum,
+        it provides confluence for the trade.
+
+        Args:
+            prices: DataFrame with 'Open', 'High', 'Low', 'Close' columns
+
+        Returns:
+            Dict with 'bullish_fvg' (bool), 'bearish_fvg' (bool),
+            'fvg_aligns_buy' (bool), 'fvg_aligns_sell' (bool)
+        """
+        import pandas as pd
+
+        result = {
+            "bullish_fvg": False,
+            "bearish_fvg": False,
+            "fvg_aligns_buy": False,
+            "fvg_aligns_sell": False,
+        }
+
+        if not self.fvg_config.enabled:
+            return result
+
+        if not isinstance(prices, pd.DataFrame):
+            return result
+
+        required_cols = {"High", "Low", "Close"}
+        if not required_cols.issubset(prices.columns):
+            return result
+
+        if len(prices) < 5:
+            return result
+
+        current_price = float(prices["Close"].iloc[-1])
+
+        # Scan last 10 bars for unfilled FVGs
+        scan_range = min(10, len(prices) - 2)
+        bullish_fvgs = []  # List of (gap_low, gap_high) for bullish FVGs
+        bearish_fvgs = []  # List of (gap_low, gap_high) for bearish FVGs
+
+        for i in range(2, scan_range + 2):
+            idx = len(prices) - i
+            if idx < 2:
+                break
+
+            candle_n_low = float(prices["Low"].iloc[idx])
+            candle_n_high = float(prices["High"].iloc[idx])
+            candle_n2_high = float(prices["High"].iloc[idx - 2])
+            candle_n2_low = float(prices["Low"].iloc[idx - 2])
+
+            # Bullish FVG: gap up (candle N low > candle N-2 high)
+            if candle_n_low > candle_n2_high:
+                # Check if unfilled (current price hasn't come back to fill it)
+                if current_price > candle_n2_high:
+                    bullish_fvgs.append((candle_n2_high, candle_n_low))
+
+            # Bearish FVG: gap down (candle N high < candle N-2 low)
+            if candle_n_high < candle_n2_low:
+                # Check if unfilled (current price hasn't come back to fill it)
+                if current_price < candle_n2_low:
+                    bearish_fvgs.append((candle_n_high, candle_n2_low))
+
+        if bullish_fvgs:
+            result["bullish_fvg"] = True
+            # If price is near an unfilled bullish FVG, it aligns with BUY
+            # (price may bounce off the FVG zone)
+            for gap_low, gap_high in bullish_fvgs:
+                gap_size = gap_high - gap_low
+                if abs(current_price - gap_high) < gap_size * 2:
+                    result["fvg_aligns_buy"] = True
+                    break
+
+        if bearish_fvgs:
+            result["bearish_fvg"] = True
+            # If price is near an unfilled bearish FVG, it aligns with SELL
+            for gap_low, gap_high in bearish_fvgs:
+                gap_size = gap_high - gap_low
+                if abs(current_price - gap_low) < gap_size * 2:
+                    result["fvg_aligns_sell"] = True
+                    break
+
+        return result
+
+    def _detect_liquidity_sweep(self, prices, lookback: int = None) -> Dict:
+        """
+        Detect liquidity sweep (stop hunt) patterns.
+
+        A bullish sweep: price breaks below a recent swing low then recovers
+        above it in the same or next bar (stops hunted, then reversal).
+
+        A bearish sweep: price breaks above a recent swing high then falls
+        back below it (stops hunted, then reversal).
+
+        Args:
+            prices: DataFrame with 'High', 'Low', 'Close' columns
+            lookback: Number of bars to look back for swing levels
+
+        Returns:
+            Dict with 'bullish_sweep' (bool), 'bearish_sweep' (bool)
+        """
+        import pandas as pd
+
+        if lookback is None:
+            lookback = self.liquidity_sweep_config.lookback
+
+        result = {"bullish_sweep": False, "bearish_sweep": False}
+
+        if not isinstance(prices, pd.DataFrame):
+            return result
+
+        required_cols = {"High", "Low", "Close"}
+        if not required_cols.issubset(prices.columns):
+            return result
+
+        if len(prices) < lookback + 2:
+            return result
+
+        # Get recent swing low and swing high from the lookback period
+        # (excluding the last 2 bars which are the sweep candidates)
+        lookback_lows = prices["Low"].iloc[-(lookback + 2):-2]
+        lookback_highs = prices["High"].iloc[-(lookback + 2):-2]
+
+        recent_low = float(lookback_lows.min())
+        recent_high = float(lookback_highs.max())
+
+        # Last two bars (the potential sweep bars)
+        prev_bar_low = float(prices["Low"].iloc[-2])
+        prev_bar_high = float(prices["High"].iloc[-2])
+        curr_close = float(prices["Close"].iloc[-1])
+        curr_low = float(prices["Low"].iloc[-1])
+        curr_high = float(prices["High"].iloc[-1])
+
+        min_recovery = self.liquidity_sweep_config.min_recovery_pct
+
+        # Bullish sweep: price broke below recent low then recovered
+        if prev_bar_low < recent_low or curr_low < recent_low:
+            # Check recovery: close is back above the recent low
+            sweep_depth = recent_low - min(prev_bar_low, curr_low)
+            if curr_close > recent_low and sweep_depth > 0:
+                recovery = (curr_close - min(prev_bar_low, curr_low)) / (sweep_depth + abs(recent_low - curr_close) + 1e-10)
+                if recovery >= min_recovery:
+                    result["bullish_sweep"] = True
+                    logger.info("[SignalGen] Bullish liquidity sweep detected: broke below %.2f, recovered to %.2f",
+                                recent_low, curr_close)
+
+        # Bearish sweep: price broke above recent high then fell back
+        if prev_bar_high > recent_high or curr_high > recent_high:
+            # Check recovery: close is back below the recent high
+            sweep_depth = max(prev_bar_high, curr_high) - recent_high
+            if curr_close < recent_high and sweep_depth > 0:
+                recovery = (max(prev_bar_high, curr_high) - curr_close) / (sweep_depth + abs(curr_close - recent_high) + 1e-10)
+                if recovery >= min_recovery:
+                    result["bearish_sweep"] = True
+                    logger.info("[SignalGen] Bearish liquidity sweep detected: broke above %.2f, fell back to %.2f",
+                                recent_high, curr_close)
+
+        return result
+
+    def _compute_momentum_direction(self, prices, adaptive_atr: float = None,
+                                     avg_atr: float = None) -> str:
         """
         Compute short-term momentum direction from the last few M1 candles.
 
-        Uses a 5-bar comparison (close[-1] vs close[-6]) to determine the
-        direction of short-term momentum. Requires at least 7 bars of data
-        to ensure the reference price is meaningful.
+        Uses adaptive lookback: if ATR is high (>1.5x average), uses shorter
+        lookback (3 bars) for faster reaction. If ATR is normal/low, uses
+        longer lookback (7 bars) for smoother signals.
 
         If prices is a DataFrame with a 'Volume' column, momentum is
         volume-weighted: sum((close[i] - close[i-1]) * volume[i]) / sum(volume[i])
-        for the last 5 bars. This gives more weight to moves on high volume.
+        for the last N bars. This gives more weight to moves on high volume.
 
         Args:
             prices: DataFrame with 'Close' column (and optionally 'Volume')
                     or array-like of close prices
+            adaptive_atr: Current ATR value for adaptive lookback selection
+            avg_atr: Average ATR (14-period) for comparison
 
         Returns:
-            "BUY" if price rose over last 5 bars by more than threshold
-            "SELL" if price fell over last 5 bars by more than threshold
+            "BUY" if price rose over last N bars by more than threshold
+            "SELL" if price fell over last N bars by more than threshold
             "FLAT" if movement is below threshold ($0.50 for gold)
         """
         import pandas as pd
+
+        # Adaptive momentum: select lookback based on ATR
+        if adaptive_atr is not None and avg_atr is not None and avg_atr > 0:
+            atr_cfg = self.adaptive_momentum_config
+            if adaptive_atr > atr_cfg.atr_threshold_mult * avg_atr:
+                lookback = atr_cfg.high_atr_lookback
+                logger.info("[SignalGen] Adaptive momentum: HIGH ATR (%.2f > %.1fx avg %.2f) - using %d-bar lookback",
+                            adaptive_atr, atr_cfg.atr_threshold_mult, avg_atr, lookback)
+            else:
+                lookback = atr_cfg.low_atr_lookback
+                logger.info("[SignalGen] Adaptive momentum: normal ATR (%.2f) - using %d-bar lookback",
+                            adaptive_atr, lookback)
+        else:
+            lookback = self.data_config.momentum_lookback  # default 5
 
         # Extract close prices
         if isinstance(prices, pd.DataFrame):
@@ -333,10 +733,9 @@ class SignalGenerator:
             close = prices["Close"].values
 
             # Volume-weighted momentum if Volume column is present
-            if "Volume" in prices.columns and len(close) >= 7:
+            if "Volume" in prices.columns and len(close) >= lookback + 2:
                 volume = prices["Volume"].values
-                # Use last 5 bars of price changes weighted by volume
-                lookback = self.data_config.momentum_lookback  # default 5
+                # Use last N bars of price changes weighted by volume
                 recent_close = close[-(lookback + 1):]
                 recent_volume = volume[-(lookback + 1):]
 
@@ -347,8 +746,7 @@ class SignalGenerator:
                 total_volume = np.sum(volumes)
                 if total_volume > 0:
                     vw_momentum = np.sum(price_changes * volumes) / total_volume
-                    # Configurable threshold (default $0.50 for gold / 5 pips;
-                    # should be scaled for other instruments, e.g. by ATR)
+                    # Configurable threshold (default $0.50 for gold/5 pips)
                     threshold = self.data_config.momentum_threshold
 
                     if abs(vw_momentum) < threshold:
@@ -363,16 +761,15 @@ class SignalGenerator:
         else:
             return "FLAT"
 
-        if len(close) < 7:
+        if len(close) < lookback + 2:
             return "FLAT"
 
-        # Compare current close to close 5 bars ago (fixed 5-bar momentum)
+        # Compare current close to close N bars ago
         current_close = close[-1]
-        reference_close = close[-6]
+        reference_close = close[-(lookback + 1)]
 
         diff = current_close - reference_close
-        # Configurable threshold (default $0.50 for gold / 5 pips;
-        # should be scaled for other instruments, e.g. by ATR)
+        # Configurable threshold (default $0.50 for gold/5 pips)
         threshold = self.data_config.momentum_threshold
 
         if abs(diff) < threshold:
@@ -517,8 +914,29 @@ class SignalGenerator:
                 logger.info("[SignalGen] HOLD - models not loaded and no checkpoints found")
                 return hold_signal
 
-        # 1. Compute momentum direction from recent price action
-        momentum_direction = self._compute_momentum_direction(prices)
+        # 1. Session awareness - detect and log current session
+        session = self._detect_session()
+        session_multiplier = self._get_session_multiplier(session)
+        logger.info("[SignalGen] Session: %s (position multiplier: %.2f)", session, session_multiplier)
+
+        # 1b. Spread filter - block if spread is abnormally wide
+        if self._check_spread_filter(prices):
+            logger.info("[SignalGen] HOLD - spread filter blocked (abnormally wide range)")
+            return hold_signal
+
+        # 1c. Compute average ATR for adaptive momentum
+        import pandas as pd
+        adaptive_atr_val = None
+        avg_atr_val = None
+        if isinstance(prices, pd.DataFrame) and "High" in prices.columns and "Low" in prices.columns:
+            atr_period = self.adaptive_momentum_config.atr_avg_period
+            if len(prices) >= atr_period + 1:
+                recent_ranges = (prices["High"].iloc[-atr_period:] - prices["Low"].iloc[-atr_period:]).values
+                avg_atr_val = float(np.mean(recent_ranges))
+                adaptive_atr_val = float(prices["High"].iloc[-1] - prices["Low"].iloc[-1])
+
+        # 1d. Compute momentum direction from recent price action (adaptive)
+        momentum_direction = self._compute_momentum_direction(prices, adaptive_atr=adaptive_atr_val, avg_atr=avg_atr_val)
         logger.info("[SignalGen] Momentum direction: %s", momentum_direction)
 
         # If momentum is FLAT, do not trade (no clear short-term trend)
@@ -651,6 +1069,52 @@ class SignalGenerator:
                 logger.warning("[SignalGen] RSI filter error (filter disabled for this bar): %s", e)
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
+        # 5d. Price structure check - penalize if momentum opposes structure
+        structure = self._detect_price_structure(prices)
+        if structure != "no_structure":
+            logger.info("[SignalGen] Price structure: %s", structure)
+            if action == "BUY" and structure == "downtrend":
+                timing_confidence -= self.price_structure_config.confidence_penalty
+                logger.info("[SignalGen] Price structure penalty: BUY against downtrend, confidence -%.2f",
+                            self.price_structure_config.confidence_penalty)
+            elif action == "SELL" and structure == "uptrend":
+                timing_confidence -= self.price_structure_config.confidence_penalty
+                logger.info("[SignalGen] Price structure penalty: SELL against uptrend, confidence -%.2f",
+                            self.price_structure_config.confidence_penalty)
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
+        # 5e. DXY correlation check
+        dxy_adj = self._check_dxy_correlation(prices, cross_pair_info)
+        if action == "BUY":
+            timing_confidence += dxy_adj["buy_adjustment"]
+        elif action == "SELL":
+            timing_confidence += dxy_adj["sell_adjustment"]
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
+        # 5f. FVG (Fair Value Gap) detection
+        fvg_info = self._detect_fvg(prices)
+        if action == "BUY" and fvg_info["fvg_aligns_buy"]:
+            timing_confidence += self.fvg_config.confidence_boost
+            logger.info("[SignalGen] FVG confluence: bullish FVG aligns with BUY, confidence +%.2f",
+                        self.fvg_config.confidence_boost)
+        elif action == "SELL" and fvg_info["fvg_aligns_sell"]:
+            timing_confidence += self.fvg_config.confidence_boost
+            logger.info("[SignalGen] FVG confluence: bearish FVG aligns with SELL, confidence +%.2f",
+                        self.fvg_config.confidence_boost)
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
+        # 5g. Liquidity sweep detection
+        sweep_info = self._detect_liquidity_sweep(prices)
+        if action == "BUY" and sweep_info["bullish_sweep"]:
+            timing_confidence += self.liquidity_sweep_config.confidence_boost
+            logger.info("[SignalGen] Liquidity sweep: bullish sweep aligns with BUY, confidence +%.2f",
+                        self.liquidity_sweep_config.confidence_boost)
+        elif action == "SELL" and sweep_info["bearish_sweep"]:
+            timing_confidence += self.liquidity_sweep_config.confidence_boost
+            logger.info("[SignalGen] Liquidity sweep: bearish sweep aligns with SELL, confidence +%.2f",
+                        self.liquidity_sweep_config.confidence_boost)
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
         # 6. Apply confidence threshold (timing gate)
         min_confidence = regime_adjustments.get(
             "confidence_threshold", self.signal_config.min_confidence
@@ -692,6 +1156,8 @@ class SignalGenerator:
 
         # 10. Calculate position size
         position_mult = regime_adjustments.get("position_size_mult", 1.0)
+        # Apply session multiplier to position sizing
+        position_mult *= session_multiplier
         lot_size = self.risk_manager.calculate_position_size(
             confidence=timing_confidence,
             atr=atr,

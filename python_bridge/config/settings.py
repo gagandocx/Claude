@@ -444,6 +444,95 @@ class DashboardConfig:
 
 
 # ─────────────────────────────────────────────
+#  SESSION AWARENESS
+# ─────────────────────────────────────────────
+@dataclass
+class SessionConfig:
+    """Session awareness configuration for position sizing by trading session."""
+    asian_start: int = 0                     # UTC hour Asian session starts
+    asian_end: int = 8                       # UTC hour Asian session ends
+    london_start: int = 8                    # UTC hour London session starts
+    london_end: int = 16                     # UTC hour London session ends
+    ny_start: int = 13                       # UTC hour New York session starts
+    ny_end: int = 21                         # UTC hour New York session ends
+    # Position sizing multipliers per session
+    asian_multiplier: float = 0.5            # Lower volatility, smaller size
+    london_multiplier: float = 1.2           # Peak liquidity, full size
+    ny_multiplier: float = 1.0              # Standard size
+    overlap_multiplier: float = 1.2          # London/NY overlap, peak volatility
+
+
+# ─────────────────────────────────────────────
+#  SPREAD FILTER
+# ─────────────────────────────────────────────
+@dataclass
+class SpreadFilterConfig:
+    """Spread filter configuration to avoid trading in wide-spread conditions."""
+    max_spread_multiplier: float = 2.0       # Block if spread > 2x average
+    avg_spread_window: int = 20              # Number of bars for average spread
+
+
+# ─────────────────────────────────────────────
+#  WIN/LOSE STREAK DETECTION
+# ─────────────────────────────────────────────
+@dataclass
+class StreakConfig:
+    """Streak-based position sizing adjustment configuration."""
+    lose_streak_reduce_threshold: int = 3    # 3 consecutive losses -> reduce
+    severe_threshold: int = 5                # 5 consecutive losses -> severe reduce
+    reduce_pct: float = 0.5                  # Reduce lot to 50% after 3 losses
+    severe_reduce_pct: float = 0.25          # Reduce lot to 25% after 5 losses
+    win_restore_threshold: int = 2           # 2 consecutive wins -> restore to 1.0x
+    win_boost_threshold: int = 3             # 3 consecutive wins -> boost
+    win_severe_threshold: int = 5            # 5 consecutive wins -> severe boost
+    win_boost_pct: float = 1.25             # 1.25x lot after 3 wins
+    win_severe_boost_pct: float = 1.5       # 1.5x lot after 5 wins
+
+
+# ─────────────────────────────────────────────
+#  ADAPTIVE MOMENTUM
+# ─────────────────────────────────────────────
+@dataclass
+class AdaptiveMomentumConfig:
+    """Adaptive momentum lookback configuration based on ATR."""
+    high_atr_lookback: int = 3               # Short lookback when ATR is high
+    low_atr_lookback: int = 7                # Long lookback when ATR is low
+    atr_threshold_mult: float = 1.5          # ATR > 1.5x avg = high volatility
+    atr_avg_period: int = 14                 # Period for average ATR calculation
+
+
+# ─────────────────────────────────────────────
+#  PRICE ACTION STRUCTURE
+# ─────────────────────────────────────────────
+@dataclass
+class PriceStructureConfig:
+    """Price action structure detection configuration."""
+    swing_lookback: int = 20                 # Bars to analyze for structure
+    confidence_penalty: float = 0.15         # Penalty when momentum opposes structure
+
+
+# ─────────────────────────────────────────────
+#  FVG (FAIR VALUE GAP) DETECTION
+# ─────────────────────────────────────────────
+@dataclass
+class FVGConfig:
+    """Fair Value Gap detection configuration."""
+    enabled: bool = True                     # Enable FVG detection
+    confidence_boost: float = 0.05           # Confidence boost when FVG aligns
+
+
+# ─────────────────────────────────────────────
+#  LIQUIDITY SWEEP DETECTION
+# ─────────────────────────────────────────────
+@dataclass
+class LiquiditySweepConfig:
+    """Liquidity sweep (stop hunt) detection configuration."""
+    lookback: int = 20                       # Bars to look back for swing levels
+    min_recovery_pct: float = 0.5            # Min % recovery to confirm sweep
+    confidence_boost: float = 0.10           # Confidence boost when sweep aligns
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
