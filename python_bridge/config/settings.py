@@ -533,6 +533,36 @@ class LiquiditySweepConfig:
 
 
 # ─────────────────────────────────────────────
+#  AUTO-OPTIMIZER
+# ─────────────────────────────────────────────
+@dataclass
+class AutoOptimizerConfig:
+    """Auto-optimizer configuration for self-tuning parameter optimization.
+
+    The auto-optimizer analyzes live trade results and gradually shifts
+    trading parameters toward optimal values. It records every trade with
+    full context, groups by parameter value, and shifts 10-20% toward
+    the best-performing value each cycle.
+    """
+    enabled: bool = True
+    optimize_frequency: int = 50            # Trades between optimization cycles
+    min_trades_before_tuning: int = 50      # Min trades before first optimization
+    shift_rate: float = 0.15                # 15% shift toward optimal per cycle
+    rollback_threshold: float = 0.20        # Rollback if 20% worse after optimization
+    state_file: str = "auto_optimizer_state.json"
+
+    # Parameter ranges
+    sl_range: tuple = (1.0, 5.0)            # SL distance in dollars
+    session_mult_range: tuple = (0.3, 1.5)  # Session multiplier range
+    confidence_range: tuple = (0.10, 0.50)  # Min confidence threshold range
+    momentum_range: tuple = (3, 7)          # Momentum lookback bars
+    rsi_ob_range: tuple = (65, 85)          # RSI overbought level range
+    rsi_os_range: tuple = (15, 35)          # RSI oversold level range
+    cooldown_range: tuple = (2, 30)         # Cooldown seconds range
+    max_positions_range: tuple = (2, 10)    # Max concurrent positions range
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -549,4 +579,5 @@ class MainConfig:
     enable_smart_exits: bool = True         # AI-driven exit management (RL agent)
     enable_auto_retrain: bool = True        # Weekend auto-retraining scheduler
     enable_dashboard: bool = True           # Live performance dashboard
+    enable_auto_optimizer: bool = True      # Self-tuning parameter optimizer
     paper_trading: bool = True              # Paper trading mode by default

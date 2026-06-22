@@ -20,7 +20,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR,
                              SessionConfig, SpreadFilterConfig, AdaptiveMomentumConfig,
-                             PriceStructureConfig, FVGConfig, LiquiditySweepConfig)
+                             PriceStructureConfig, FVGConfig, LiquiditySweepConfig,
+                             AutoOptimizerConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -109,6 +110,9 @@ class SignalGenerator:
 
         # Optional performance tracker reference (set from main.py)
         self._performance_tracker = None
+
+        # Optional auto-optimizer reference (set from main.py)
+        self._auto_optimizer = None
 
         self._last_signal_time = 0.0
         self._signal_count = 0
@@ -906,6 +910,40 @@ class SignalGenerator:
                         self.signal_config.cooldown_seconds - elapsed)
             return hold_signal
 
+        # AUTO-OPTIMIZER: Override parameters with optimized values if available
+        if self._auto_optimizer and self._auto_optimizer.is_enabled:
+            opt_params = self._auto_optimizer.get_current_params()
+            # Override min_confidence
+            self.signal_config.min_confidence = opt_params.get(
+                "min_confidence", self.signal_config.min_confidence)
+            # Override momentum lookback
+            self.data_config.momentum_lookback = opt_params.get(
+                "momentum_lookback", self.data_config.momentum_lookback)
+            # Override session multipliers
+            opt_sessions = opt_params.get("session_multipliers", {})
+            if opt_sessions:
+                self.session_config.asian_multiplier = opt_sessions.get(
+                    "asian", self.session_config.asian_multiplier)
+                self.session_config.london_multiplier = opt_sessions.get(
+                    "london", self.session_config.london_multiplier)
+                self.session_config.ny_multiplier = opt_sessions.get(
+                    "newyork", self.session_config.ny_multiplier)
+                self.session_config.overlap_multiplier = opt_sessions.get(
+                    "overlap", self.session_config.overlap_multiplier)
+            # Override RSI levels
+            self.data_config.rsi_overbought = opt_params.get(
+                "rsi_overbought", self.data_config.rsi_overbought)
+            self.data_config.rsi_oversold = opt_params.get(
+                "rsi_oversold", self.data_config.rsi_oversold)
+            # Override cooldown
+            self.signal_config.cooldown_seconds = opt_params.get(
+                "cooldown_seconds", self.signal_config.cooldown_seconds)
+            logger.debug("[SignalGen] Auto-optimizer params applied: confidence=%.3f, "
+                         "momentum_lb=%d, cooldown=%ds",
+                         self.signal_config.min_confidence,
+                         self.data_config.momentum_lookback,
+                         self.signal_config.cooldown_seconds)
+
         # Guard: refuse to generate non-HOLD signals if models are not loaded
         # Fallback: if checkpoint files exist on disk, allow signal generation
         if not self.ensemble.models_loaded:
@@ -1215,6 +1253,13 @@ class SignalGenerator:
         Called from main.py during initialization.
         """
         self._performance_tracker = tracker
+
+    def set_auto_optimizer(self, optimizer) -> None:
+        """
+        Set a reference to the AutoOptimizer for self-tuning parameters.
+        Called from main.py during initialization.
+        """
+        self._auto_optimizer = optimizer
 
     def update_from_execution(self, trade_id: str, pnl: float,
                               predicted_action: int, actual_outcome: int):

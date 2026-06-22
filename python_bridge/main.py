@@ -29,6 +29,7 @@ from config.settings import (
     TransformerConfig, LSTMConfig, EnsembleConfig,
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
     SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
+    AutoOptimizerConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -41,6 +42,7 @@ from strategies.signal_generator import SignalGenerator
 from strategies.regime_detector import RegimeDetector
 from strategies.risk_manager import RiskManager
 from strategies.smart_exits import SmartExitManager, ExitDecision
+from strategies.auto_optimizer import AutoOptimizer
 from signals.bridge import MT5Bridge
 from training.auto_retrain import AutoRetrainer
 from dashboard.performance_tracker import PerformanceTracker, TradeRecord
@@ -134,6 +136,12 @@ class PythonMLBridge:
             if self.config.enable_auto_retrain else None
         )
 
+        # Self-tuning parameter optimizer
+        self.auto_optimizer = (
+            AutoOptimizer(AutoOptimizerConfig())
+            if self.config.enable_auto_optimizer else None
+        )
+
         # Live performance dashboard (prop desk style analytics)
         self.dashboard_config = DashboardConfig()
         self.performance_tracker = (
@@ -167,6 +175,10 @@ class PythonMLBridge:
         if self.performance_tracker:
             self.signal_generator.set_performance_tracker(self.performance_tracker)
 
+        # Connect auto-optimizer to signal generator for parameter self-tuning
+        if self.auto_optimizer:
+            self.signal_generator.set_auto_optimizer(self.auto_optimizer)
+
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
@@ -178,6 +190,7 @@ class PythonMLBridge:
         self.logger.info(f"  Smart exits (RL): {self.config.enable_smart_exits}")
         self.logger.info(f"  Auto-retrain: {self.config.enable_auto_retrain}")
         self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
+        self.logger.info(f"  Auto-optimizer: {self.config.enable_auto_optimizer}")
 
     def _load_models(self):
         """Load model checkpoints if available."""
@@ -576,6 +589,24 @@ class PythonMLBridge:
                             )
                             self.performance_tracker.record_trade(trade_record)
                             self._trades_since_render += 1
+
+                        # Feed trade to auto-optimizer for self-tuning
+                        if self.auto_optimizer:
+                            trade_context = {
+                                "session": conf.get("session", "unknown"),
+                                "confidence": float(conf.get("confidence", 0.0)),
+                                "momentum_lookback": conf.get("momentum_lookback", 5),
+                                "sl_distance": float(conf.get("sl_distance", 3.0)),
+                                "result_pnl": pnl,
+                                "direction": conf.get("direction", "BUY"),
+                                "rsi_at_entry": float(conf.get("rsi_at_entry", 50.0)),
+                                "trail_tier": conf.get("trail_tier", "medium"),
+                                "cooldown_used": float(conf.get("cooldown_used", 2.0)),
+                                "max_positions_at_entry": int(conf.get("max_positions_at_entry", 5)),
+                                "entry_time": conf.get("open_time", datetime.now().isoformat()),
+                                "exit_time": conf.get("close_time", datetime.now().isoformat()),
+                            }
+                            self.auto_optimizer.record_trade(trade_context)
                 self.bridge.clear_confirmations()
 
             # 13. Periodic dashboard rendering
