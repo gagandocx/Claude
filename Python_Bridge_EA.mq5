@@ -27,7 +27,7 @@ input string   InpHeartbeatFile    = "python_bridge_heartbeat.txt"; // Heartbeat
 input int      InpMaxSignalAge     = 300;       // Max signal age (seconds)
 input int      InpMaxHeartbeatAge  = 60;        // Max heartbeat age (seconds)
 input double   InpMaxLotSize       = 1.0;       // Maximum lot size
-input double   InpMinConfidence    = 0.65;      // Minimum confidence to trade
+input double   InpMinConfidence    = 0.15;      // Minimum confidence to trade
 input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
 input bool     InpShowDashboard    = true;      // Show dashboard panel
@@ -122,16 +122,25 @@ bool ReadSignalFile()
         return false;
     }
 
-    // Skip header row
+    // Skip header row - In FILE_CSV mode, FileReadString() reads ONE FIELD at a time
+    // Header has 9 fields: timestamp,symbol,action,confidence,sl_pips,tp_pips,lot_size,model_name,regime
+    // We must read all 9 fields to fully skip the header row
     if(!FileIsEnding(fileHandle))
     {
-        string header = FileReadString(fileHandle);
-        // Move past header line
-        while(!FileIsEnding(fileHandle) && !FileIsLineEnding(fileHandle))
-            FileReadString(fileHandle);
+        string h1 = FileReadString(fileHandle);  // timestamp
+        string h2 = FileReadString(fileHandle);  // symbol
+        string h3 = FileReadString(fileHandle);  // action
+        string h4 = FileReadString(fileHandle);  // confidence
+        string h5 = FileReadString(fileHandle);  // sl_pips
+        string h6 = FileReadString(fileHandle);  // tp_pips
+        string h7 = FileReadString(fileHandle);  // lot_size
+        string h8 = FileReadString(fileHandle);  // model_name
+        string h9 = FileReadString(fileHandle);  // regime
+        Print("[PythonBridge] CSV header: ", h1, ",", h2, ",", h3, ",", h4, ",",
+              h5, ",", h6, ",", h7, ",", h8, ",", h9);
     }
 
-    // Read data row
+    // Read data row - each FileReadString() call reads one comma-separated field
     if(!FileIsEnding(fileHandle))
     {
         string timestamp   = FileReadString(fileHandle);
@@ -144,6 +153,13 @@ bool ReadSignalFile()
         string modelName   = FileReadString(fileHandle);
         string regime      = FileReadString(fileHandle);
 
+        // Debug: Print all raw field values read from CSV
+        Print("[PythonBridge] CSV raw fields - timestamp=", timestamp,
+              " symbol=", symbol, " action=", action,
+              " confidence=", confidence, " slPips=", slPips,
+              " tpPips=", tpPips, " lotSize=", lotSize,
+              " model=", modelName, " regime=", regime);
+
         // Parse values
         g_lastAction     = action;
         g_lastConfidence = StringToDouble(confidence);
@@ -153,6 +169,22 @@ bool ReadSignalFile()
         g_lastModel      = modelName;
         g_lastRegime     = regime;
         g_lastSignalTime = StringToTime(timestamp);
+
+        // Debug: Print parsed values
+        Print("[PythonBridge] Parsed signal - Action=", g_lastAction,
+              " Confidence=", DoubleToString(g_lastConfidence, 4),
+              " SL=", DoubleToString(g_lastSLPips, 1),
+              " TP=", DoubleToString(g_lastTPPips, 1),
+              " Lots=", DoubleToString(g_lastLotSize, 2),
+              " Model=", g_lastModel,
+              " Regime=", g_lastRegime,
+              " Time=", TimeToString(g_lastSignalTime, TIME_DATE | TIME_SECONDS));
+    }
+    else
+    {
+        Print("[PythonBridge] WARNING: CSV file has no data row after header");
+        FileClose(fileHandle);
+        return false;
     }
 
     FileClose(fileHandle);
