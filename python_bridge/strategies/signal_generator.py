@@ -428,18 +428,17 @@ class SignalGenerator:
         candle_pattern = candle_info["pattern"]
         candle_bias = candle_info["bias"]
 
-        # Block trades that go against the candle structure
+        # Log candle patterns for info but DO NOT block on M1 scalping
+        # On M1 timeframe, candle patterns are noise — momentum is king
         if momentum_direction == "BUY" and candle_info["block_buy"]:
-            logger.info("[SignalGen] HOLD - momentum BUY blocked by candle pattern '%s' "
-                        "(bias=%s). Pullback/reversal detected!",
+            logger.info("[SignalGen] Candle pattern '%s' (bias=%s) conflicts with BUY - "
+                        "logging only, NOT blocking (M1 scalper mode)",
                         candle_pattern, candle_bias)
-            return hold_signal
 
         if momentum_direction == "SELL" and candle_info["block_sell"]:
-            logger.info("[SignalGen] HOLD - momentum SELL blocked by candle pattern '%s' "
-                        "(bias=%s). Pullback/reversal detected!",
+            logger.info("[SignalGen] Candle pattern '%s' (bias=%s) conflicts with SELL - "
+                        "logging only, NOT blocking (M1 scalper mode)",
                         candle_pattern, candle_bias)
-            return hold_signal
 
         logger.info("[SignalGen] Candle pattern: '%s' (bias=%s) - %s",
                     candle_pattern, candle_bias,
