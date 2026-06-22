@@ -31,5 +31,5 @@
     "Run: cd /projects/sandbox/Claude && python -c \"from python_bridge.config.settings import DataConfig; dc = DataConfig(); print(dc.momentum_lookback, dc.rsi_overbought, dc.sr_lookback)\""
   ],
   "blocked_reason": null,
-  "findings": "All 8 steps implemented successfully. Full test suite: 352 pass, 5 fail (pre-existing candle pattern tests). The auto_retrain test was sensitive to checkpoints directory state, fixed with cleanup fixture in test_training.py. The 5-bar lookback change required updating 2 existing momentum tests that used fewer than 7 bars."
+  "findings": "All 8 steps implemented successfully. Full test suite: 352 pass, 5 fail (pre-existing candle pattern tests). The auto_retrain test was sensitive to checkpoints directory state, fixed with cleanup fixture in test_training.py. The 5-bar lookback change required updating 2 existing momentum tests that used fewer than 7 bars. Post-review fixes applied: (1) combined normalization stats saved after concatenation in train.py, (2) momentum threshold made configurable via DataConfig.momentum_threshold, (3) RSI filter errors now log at warning level. Known limitations documented in code comments for label lookahead, S/R short-frame degradation, and penalty stacking."
 }
