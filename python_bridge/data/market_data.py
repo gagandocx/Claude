@@ -212,6 +212,11 @@ class MarketDataFetcher:
         """
         Prepare sequences for model input with labels.
 
+        Uses ATR-based thresholds for labeling: BUY if price moves up by at
+        least 0.3*ATR within the next 5 bars, SELL if it moves down by 0.3*ATR,
+        otherwise HOLD. This produces cleaner, higher-quality training labels
+        that account for the instrument's volatility.
+
         Args:
             features: DataFrame of computed features
             seq_length: Sequence length for time series input
@@ -237,20 +242,35 @@ class MarketDataFetcher:
         # Save normalization stats for use during inference
         self._save_normalization_stats(feature_cols, means, stds)
 
-        # Generate labels based on future returns
+        # Generate labels based on ATR-scaled future price moves
         close_prices = features["close"].values
-        future_returns = np.zeros(len(close_prices))
         lookahead = 5  # 5-bar lookahead for label generation
-        for i in range(len(close_prices) - lookahead):
-            future_returns[i] = (
-                (close_prices[i + lookahead] - close_prices[i]) / close_prices[i]
-            )
 
-        # Classify: BUY if return > threshold, SELL if < -threshold, else HOLD
-        threshold = np.std(future_returns[future_returns != 0]) * 0.5
-        labels = np.ones(len(future_returns), dtype=np.int64)  # HOLD = 1
-        labels[future_returns > threshold] = 2   # BUY = 2
-        labels[future_returns < -threshold] = 0  # SELL = 0
+        # Get ATR values for dynamic thresholds
+        atr_threshold_mult = self.config.atr_label_threshold  # default 0.3
+        if "atr" in features.columns:
+            atr_values = features["atr"].values
+        else:
+            # Fallback: compute ATR from close prices (approximate)
+            price_changes = np.abs(np.diff(close_prices, prepend=close_prices[0]))
+            atr_values = pd.Series(price_changes).rolling(14, min_periods=1).mean().values
+
+        labels = np.ones(len(close_prices), dtype=np.int64)  # HOLD = 1
+
+        for i in range(len(close_prices) - lookahead):
+            current_price = close_prices[i]
+            future_prices = close_prices[i + 1:i + 1 + lookahead]
+            atr_at_bar = atr_values[i]
+            threshold = atr_threshold_mult * atr_at_bar
+
+            max_up = np.max(future_prices) - current_price
+            max_down = current_price - np.min(future_prices)
+
+            if max_up >= threshold and max_up >= max_down:
+                labels[i] = 2   # BUY
+            elif max_down >= threshold and max_down > max_up:
+                labels[i] = 0   # SELL
+            # else: remains HOLD = 1
 
         # Create sequences
         X, y = [], []

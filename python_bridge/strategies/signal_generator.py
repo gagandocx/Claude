@@ -13,6 +13,8 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional
 
+import ta
+
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,7 +71,7 @@ class SignalGenerator:
     Generates trade signals by combining model predictions with risk filters.
 
     Pipeline (Rapid HF Scalper):
-        1. Compute short-term momentum direction from last 3-5 M1 candles
+        1. Compute short-term momentum direction from last 5 M1 candles
         2. Get model predictions from ensemble (used for TIMING only)
         3. Check regime and apply adjustments
         4. Apply risk filters (drawdown, correlation, time)
@@ -305,16 +307,21 @@ class SignalGenerator:
         """
         Compute short-term momentum direction from the last few M1 candles.
 
-        Uses a 3-bar comparison (close[-1] vs close[-4]) to determine the
-        direction of short-term momentum. Requires at least 5 bars of data
+        Uses a 5-bar comparison (close[-1] vs close[-6]) to determine the
+        direction of short-term momentum. Requires at least 7 bars of data
         to ensure the reference price is meaningful.
 
+        If prices is a DataFrame with a 'Volume' column, momentum is
+        volume-weighted: sum((close[i] - close[i-1]) * volume[i]) / sum(volume[i])
+        for the last 5 bars. This gives more weight to moves on high volume.
+
         Args:
-            prices: DataFrame with 'Close' column or array-like of close prices
+            prices: DataFrame with 'Close' column (and optionally 'Volume')
+                    or array-like of close prices
 
         Returns:
-            "BUY" if price rose over last 3 bars (close[-1] > close[-4] by > $0.50)
-            "SELL" if price fell over last 3 bars (close[-1] < close[-4] by > $0.50)
+            "BUY" if price rose over last 5 bars by more than threshold
+            "SELL" if price fell over last 5 bars by more than threshold
             "FLAT" if movement is below threshold ($0.50 for gold)
         """
         import pandas as pd
@@ -324,17 +331,42 @@ class SignalGenerator:
             if "Close" not in prices.columns:
                 return "FLAT"
             close = prices["Close"].values
+
+            # Volume-weighted momentum if Volume column is present
+            if "Volume" in prices.columns and len(close) >= 7:
+                volume = prices["Volume"].values
+                # Use last 5 bars of price changes weighted by volume
+                lookback = self.data_config.momentum_lookback  # default 5
+                recent_close = close[-(lookback + 1):]
+                recent_volume = volume[-(lookback + 1):]
+
+                # Compute volume-weighted price change
+                price_changes = np.diff(recent_close)
+                volumes = recent_volume[1:]  # volumes corresponding to changes
+
+                total_volume = np.sum(volumes)
+                if total_volume > 0:
+                    vw_momentum = np.sum(price_changes * volumes) / total_volume
+                    threshold = 0.5  # $0.50 minimum move for gold
+
+                    if abs(vw_momentum) < threshold:
+                        return "FLAT"
+                    elif vw_momentum > 0:
+                        return "BUY"
+                    else:
+                        return "SELL"
+
         elif isinstance(prices, np.ndarray):
             close = prices
         else:
             return "FLAT"
 
-        if len(close) < 5:
+        if len(close) < 7:
             return "FLAT"
 
-        # Compare current close to close 3 bars ago (fixed 3-bar momentum)
+        # Compare current close to close 5 bars ago (fixed 5-bar momentum)
         current_close = close[-1]
-        reference_close = close[-4]
+        reference_close = close[-6]
 
         diff = current_close - reference_close
         threshold = 0.5  # $0.50 minimum move for gold (5 pips)
@@ -345,6 +377,71 @@ class SignalGenerator:
             return "BUY"
         else:
             return "SELL"
+
+    def _detect_support_resistance(self, prices, lookback: int = 100) -> Dict:
+        """
+        Detect nearest support and resistance levels from recent price action.
+
+        Finds swing highs (local maxima over a 5-bar window) and swing lows
+        (local minima over a 5-bar window) from the last `lookback` bars.
+
+        Args:
+            prices: DataFrame with 'High', 'Low', 'Close' columns,
+                    or array-like of close prices
+            lookback: Number of bars to analyze (default 100)
+
+        Returns:
+            Dict with keys:
+                "nearest_resistance": float or None - nearest resistance above current price
+                "nearest_support": float or None - nearest support below current price
+        """
+        import pandas as pd
+
+        result = {"nearest_resistance": None, "nearest_support": None}
+
+        if isinstance(prices, pd.DataFrame):
+            if "High" not in prices.columns or "Low" not in prices.columns:
+                return result
+            highs = prices["High"].values[-lookback:]
+            lows = prices["Low"].values[-lookback:]
+            current_price = prices["Close"].values[-1] if "Close" in prices.columns else highs[-1]
+        elif isinstance(prices, np.ndarray):
+            if len(prices) < 5:
+                return result
+            highs = prices[-lookback:]
+            lows = prices[-lookback:]
+            current_price = prices[-1]
+        else:
+            return result
+
+        if len(highs) < 5:
+            return result
+
+        # Find swing highs (local maxima over 5-bar window)
+        swing_highs = []
+        for i in range(2, len(highs) - 2):
+            if (highs[i] > highs[i - 1] and highs[i] > highs[i - 2] and
+                    highs[i] > highs[i + 1] and highs[i] > highs[i + 2]):
+                swing_highs.append(highs[i])
+
+        # Find swing lows (local minima over 5-bar window)
+        swing_lows = []
+        for i in range(2, len(lows) - 2):
+            if (lows[i] < lows[i - 1] and lows[i] < lows[i - 2] and
+                    lows[i] < lows[i + 1] and lows[i] < lows[i + 2]):
+                swing_lows.append(lows[i])
+
+        # Find nearest resistance (swing highs above current price)
+        resistances = [h for h in swing_highs if h > current_price]
+        if resistances:
+            result["nearest_resistance"] = min(resistances)
+
+        # Find nearest support (swing lows below current price)
+        supports = [l for l in swing_lows if l < current_price]
+        if supports:
+            result["nearest_support"] = max(supports)
+
+        return result
 
     def generate_signal(self, features: np.ndarray,
                         prices: Optional[object] = None,
@@ -358,9 +455,11 @@ class SignalGenerator:
         Generate a trade signal using momentum for DIRECTION and AI for TIMING.
 
         Rapid HF Scalper approach:
-        - Direction is determined by short-term momentum (last 3-5 M1 candles)
+        - Direction is determined by short-term momentum (last 5 M1 candles)
         - AI model confidence is used as a timing gate (only enter when confident)
         - HTF bias is reduced (only penalize if H4 magnitude > 0.8, and only by 0.05)
+        - Support/resistance proximity reduces confidence to avoid traps
+        - RSI exhaustion filter penalizes buying overbought / selling oversold
         - Targets: SL ~$3 (30 pips), TP ~$0.50 (5 pips) for 85%+ win rate
 
         Args:
@@ -499,6 +598,44 @@ class SignalGenerator:
 
         # Apply HTF adjustment
         timing_confidence = timing_confidence + htf_confidence_adj
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
+        # 5b. Support/Resistance proximity penalty
+        sr_levels = self._detect_support_resistance(
+            prices, lookback=self.data_config.sr_lookback
+        )
+        if sr_levels["nearest_resistance"] is not None and atr > 0:
+            if (action == "BUY" and
+                    abs(current_price - sr_levels["nearest_resistance"]) < 0.3 * atr):
+                timing_confidence -= 0.10
+                logger.info("[SignalGen] S/R penalty: BUY near resistance (%.2f), "
+                            "confidence -0.10", sr_levels["nearest_resistance"])
+        if sr_levels["nearest_support"] is not None and atr > 0:
+            if (action == "SELL" and
+                    abs(current_price - sr_levels["nearest_support"]) < 0.3 * atr):
+                timing_confidence -= 0.10
+                logger.info("[SignalGen] S/R penalty: SELL near support (%.2f), "
+                            "confidence -0.10", sr_levels["nearest_support"])
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
+        # 5c. RSI exhaustion filter
+        import pandas as pd
+        if isinstance(prices, pd.DataFrame) and "Close" in prices.columns:
+            try:
+                rsi_series = ta.momentum.rsi(prices["Close"], window=14)
+                if rsi_series is not None and len(rsi_series) > 0:
+                    current_rsi = float(rsi_series.iloc[-1])
+                    if not np.isnan(current_rsi):
+                        if current_rsi > self.data_config.rsi_overbought and action == "BUY":
+                            timing_confidence -= 0.10
+                            logger.info("[SignalGen] RSI exhaustion: overbought (RSI=%.1f), "
+                                        "BUY confidence -0.10", current_rsi)
+                        elif current_rsi < self.data_config.rsi_oversold and action == "SELL":
+                            timing_confidence -= 0.10
+                            logger.info("[SignalGen] RSI exhaustion: oversold (RSI=%.1f), "
+                                        "SELL confidence -0.10", current_rsi)
+            except Exception as e:
+                logger.debug("[SignalGen] RSI filter error: %s", e)
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         # 6. Apply confidence threshold (timing gate)

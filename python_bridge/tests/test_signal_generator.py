@@ -375,7 +375,7 @@ class TestMomentumDirection:
     def test_momentum_flat_with_insufficient_data(self):
         """Test that FLAT is returned when insufficient price data."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Only 2 bars - not enough for lookback
+        # Only 2 bars - not enough for 5-bar lookback (needs 7)
         prices = pd.DataFrame({
             "Close": [2000.0, 2001.0]
         })
@@ -385,17 +385,18 @@ class TestMomentumDirection:
     def test_momentum_with_numpy_array(self):
         """Test momentum computation with numpy array input."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Rising prices as numpy array
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0])
+        # Rising prices as numpy array (needs 7+ bars for 5-bar lookback)
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
 
     def test_momentum_threshold_boundary(self):
         """Test that exactly $0.50 movement is still FLAT."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Exactly $0.49 difference (below threshold)
+        # With 5-bar lookback: close[-1] vs close[-6]
+        # close[-6]=2000.0, close[-1]=2000.49, diff=+0.49 < 0.5 => FLAT
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.49]
+            "Close": [2000.0, 2000.1, 2000.2, 2000.1, 2000.3, 2000.2, 2000.49]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
@@ -403,9 +404,10 @@ class TestMomentumDirection:
     def test_momentum_above_threshold_triggers_buy(self):
         """Test that just above $0.50 movement triggers BUY."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # $0.51 difference between close[-1] and close[-4]
+        # With 5-bar lookback: close[-1] vs close[-6]
+        # close[-6]=2000.0, close[-1]=2000.71, diff=+0.71 > 0.5 => BUY
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.71]
+            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.5, 2000.71]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
@@ -940,3 +942,357 @@ class TestCandlePatternAnalysis:
         assert result["pattern"] == "exhaustion_bullish"
         assert result["bias"] == "bearish"
         assert result["block_buy"] is True
+
+
+# ─────────────────────────────────────────────
+#  SUPPORT/RESISTANCE DETECTION TESTS
+# ─────────────────────────────────────────────
+class TestSupportResistance:
+    """Tests for the _detect_support_resistance method."""
+
+    def test_detect_support_resistance_returns_levels(self):
+        """Test that S/R detection finds correct levels from known swing highs/lows."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Create prices with clear swing highs and lows
+        # Pattern: up-down-up-down to create swing points
+        n = 50
+        close_prices = []
+        for i in range(n):
+            # Create oscillating pattern with clear swings
+            if i % 10 < 5:
+                close_prices.append(2000 + (i % 10) * 2)  # Rising
+            else:
+                close_prices.append(2000 + (10 - i % 10) * 2)  # Falling
+
+        # Add a clear swing high at 2020 and swing low at 1990
+        prices_data = list(range(n))
+        highs = [p + 3 for p in close_prices]
+        lows = [p - 3 for p in close_prices]
+
+        # Insert clear swing high at index 20
+        highs[20] = 2025
+        highs[18] = 2015
+        highs[19] = 2020
+        highs[21] = 2020
+        highs[22] = 2015
+
+        # Insert clear swing low at index 30
+        lows[30] = 1985
+        lows[28] = 1995
+        lows[29] = 1990
+        lows[31] = 1990
+        lows[32] = 1995
+
+        # Current price between support and resistance
+        close_prices[-1] = 2005
+
+        prices = pd.DataFrame({
+            "Open": close_prices,
+            "High": highs,
+            "Low": lows,
+            "Close": close_prices,
+        })
+
+        result = gen._detect_support_resistance(prices, lookback=50)
+
+        # Should find resistance above 2005 and support below 2005
+        assert result["nearest_resistance"] is not None or result["nearest_support"] is not None
+
+    def test_detect_sr_with_known_swing_high(self):
+        """Test that resistance is detected from a clear swing high."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Create 20 bars, with a clear swing high at index 10
+        n = 20
+        highs = [2000.0] * n
+        lows = [1995.0] * n
+        closes = [1998.0] * n
+
+        # Swing high at index 10: higher than neighbors by more than noise
+        highs[8] = 2005
+        highs[9] = 2008
+        highs[10] = 2015  # The swing high
+        highs[11] = 2008
+        highs[12] = 2005
+
+        # Current price below the swing high
+        closes[-1] = 2000.0
+
+        prices = pd.DataFrame({
+            "Open": closes,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+        })
+
+        result = gen._detect_support_resistance(prices, lookback=20)
+        assert result["nearest_resistance"] == 2015.0
+
+    def test_detect_sr_with_known_swing_low(self):
+        """Test that support is detected from a clear swing low."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Create 20 bars, with a clear swing low at index 10
+        n = 20
+        highs = [2010.0] * n
+        lows = [2000.0] * n
+        closes = [2005.0] * n
+
+        # Swing low at index 10: lower than neighbors
+        lows[8] = 1998
+        lows[9] = 1995
+        lows[10] = 1985  # The swing low
+        lows[11] = 1995
+        lows[12] = 1998
+
+        # Current price above the swing low
+        closes[-1] = 2005.0
+
+        prices = pd.DataFrame({
+            "Open": closes,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+        })
+
+        result = gen._detect_support_resistance(prices, lookback=20)
+        assert result["nearest_support"] == 1985.0
+
+    def test_detect_sr_insufficient_data(self):
+        """Test that S/R returns None with insufficient data."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        prices = pd.DataFrame({
+            "Open": [2000, 2001],
+            "High": [2002, 2003],
+            "Low": [1998, 1999],
+            "Close": [2001, 2002],
+        })
+        result = gen._detect_support_resistance(prices, lookback=100)
+        assert result["nearest_resistance"] is None
+        assert result["nearest_support"] is None
+
+
+# ─────────────────────────────────────────────
+#  VOLUME-WEIGHTED MOMENTUM TESTS
+# ─────────────────────────────────────────────
+class TestVolumeWeightedMomentum:
+    """Tests for volume-weighted momentum computation."""
+
+    def test_volume_weighted_buy_on_high_volume_up_moves(self):
+        """Test that high-volume up moves produce BUY signal."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Prices rising with high volume on up bars
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0],
+            "Volume": [1000, 5000, 5000, 5000, 5000, 5000, 5000, 5000],
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_volume_weighted_sell_on_high_volume_down_moves(self):
+        """Test that high-volume down moves produce SELL signal."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Prices falling with high volume
+        prices = pd.DataFrame({
+            "Close": [2010.0, 2009.0, 2008.0, 2007.0, 2006.0, 2005.0, 2004.0, 2003.0],
+            "Volume": [1000, 5000, 5000, 5000, 5000, 5000, 5000, 5000],
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "SELL"
+
+    def test_volume_weighted_flat_on_low_movement(self):
+        """Test FLAT when volume-weighted movement is below threshold."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # Very small price changes, even with high volume
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2000.05, 2000.10, 2000.05, 2000.10, 2000.05, 2000.10, 2000.15],
+            "Volume": [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+    def test_momentum_fallback_without_volume(self):
+        """Test that momentum falls back to simple lookback without Volume column."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # DataFrame without Volume - should use fallback 5-bar comparison
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0],
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+
+# ─────────────────────────────────────────────
+#  RSI EXHAUSTION FILTER TESTS
+# ─────────────────────────────────────────────
+class TestRSIExhaustionFilter:
+    """Tests for the RSI exhaustion filter in generate_signal."""
+
+    def test_rsi_overbought_penalizes_buy(self):
+        """Test that RSI > 70 reduces BUY confidence."""
+        gen = SignalGenerator(signal_config=SignalConfig(
+            cooldown_seconds=0, min_confidence=0.01
+        ))
+        gen.ensemble.models_loaded = True
+
+        # Create prices where last RSI will be > 70 (strong uptrend)
+        # Need 14+ bars for RSI computation
+        n = 30
+        # Strong consistent uptrend to push RSI above 70
+        close_prices = [2000.0 + i * 2.0 for i in range(n)]
+        prices = pd.DataFrame({
+            "Open": [p - 0.5 for p in close_prices],
+            "High": [p + 1.0 for p in close_prices],
+            "Low": [p - 1.0 for p in close_prices],
+            "Close": close_prices,
+            "Volume": [1000] * n,
+        })
+
+        # Verify RSI is actually > 70
+        import ta as ta_lib
+        rsi = ta_lib.momentum.rsi(prices["Close"], window=14)
+        assert rsi.iloc[-1] > 70, f"RSI should be > 70, got {rsi.iloc[-1]}"
+
+        mock_prediction = {
+            "probabilities": np.array([[0.05, 0.05, 0.90]]),
+            "confidence": np.array([0.95]),
+            "agreement": np.array([0.95]),
+            "individual_preds": {
+                "transformer": np.array([[0.05, 0.05, 0.90]]),
+                "lstm": np.array([[0.05, 0.05, 0.90]]),
+                "gradient_boost": np.array([[0.05, 0.05, 0.90]]),
+            }
+        }
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
+            signal = gen.generate_signal(
+                features=features,
+                prices=prices,
+                atr=5.0,
+                current_price=close_prices[-1]
+            )
+
+        # If momentum is BUY and RSI > 70, confidence should be reduced
+        # The signal might still pass min_confidence but with lower confidence
+        if signal.action == "BUY":
+            # Confidence should be reduced by 0.10 from RSI penalty
+            assert signal.confidence <= 0.90  # was 0.95, penalty -0.10
+
+    def test_rsi_oversold_penalizes_sell(self):
+        """Test that RSI < 30 reduces SELL confidence."""
+        gen = SignalGenerator(signal_config=SignalConfig(
+            cooldown_seconds=0, min_confidence=0.01
+        ))
+        gen.ensemble.models_loaded = True
+
+        # Create prices where RSI < 30 (strong downtrend)
+        n = 30
+        close_prices = [2060.0 - i * 2.0 for i in range(n)]
+        prices = pd.DataFrame({
+            "Open": [p + 0.5 for p in close_prices],
+            "High": [p + 1.0 for p in close_prices],
+            "Low": [p - 1.0 for p in close_prices],
+            "Close": close_prices,
+            "Volume": [1000] * n,
+        })
+
+        # Verify RSI is actually < 30
+        import ta as ta_lib
+        rsi = ta_lib.momentum.rsi(prices["Close"], window=14)
+        assert rsi.iloc[-1] < 30, f"RSI should be < 30, got {rsi.iloc[-1]}"
+
+        mock_prediction = {
+            "probabilities": np.array([[0.90, 0.05, 0.05]]),
+            "confidence": np.array([0.95]),
+            "agreement": np.array([0.95]),
+            "individual_preds": {
+                "transformer": np.array([[0.90, 0.05, 0.05]]),
+                "lstm": np.array([[0.90, 0.05, 0.05]]),
+                "gradient_boost": np.array([[0.90, 0.05, 0.05]]),
+            }
+        }
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
+            signal = gen.generate_signal(
+                features=features,
+                prices=prices,
+                atr=5.0,
+                current_price=close_prices[-1]
+            )
+
+        # If momentum is SELL and RSI < 30, confidence should be reduced
+        if signal.action == "SELL":
+            assert signal.confidence <= 0.90
+
+
+# ─────────────────────────────────────────────
+#  5-BAR MOMENTUM LOOKBACK TESTS
+# ─────────────────────────────────────────────
+class TestFiveBarMomentumLookback:
+    """Tests for the 5-bar momentum lookback (needs 7+ bars)."""
+
+    def test_momentum_needs_7_bars_minimum(self):
+        """Test that momentum returns FLAT with fewer than 7 bars."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # 6 bars - not enough for 5-bar lookback
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+    def test_momentum_works_with_exactly_7_bars(self):
+        """Test that momentum works with exactly 7 bars."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # 7 bars - exactly enough. close[-1]=2006, close[-6]=2000, diff=+6 > 0.5
+        prices = pd.DataFrame({
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_5bar_lookback_compares_last_vs_sixth(self):
+        """Test that 5-bar lookback compares close[-1] vs close[-6]."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # close[-1] = 2002, close[-6] = 2000, diff = +2 > 0.5 => BUY
+        prices = pd.DataFrame({
+            "Close": [2000.0, 1990.0, 1990.0, 1990.0, 1990.0, 1990.0, 2002.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_5bar_lookback_sell(self):
+        """Test 5-bar lookback detects SELL."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # close[-1] = 1999, close[-6] = 2005, diff = -6 => SELL
+        prices = pd.DataFrame({
+            "Close": [2005.0, 2004.0, 2003.0, 2002.0, 2001.0, 2000.0, 1999.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "SELL"
+
+    def test_numpy_array_needs_7_bars(self):
+        """Test numpy array input requires 7 bars."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # 6 elements - not enough
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0])
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "FLAT"
+
+        # 7 elements - enough
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"

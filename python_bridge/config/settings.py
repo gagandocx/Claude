@@ -114,6 +114,26 @@ class DataConfig:
     lookback_days: int = 365
     update_interval_minutes: int = 1        # How often to fetch new data
 
+    # Multi-timeframe training parameters
+    training_periods: list = field(default_factory=lambda: [
+        {"period": "5y", "interval": "1d"},
+        {"period": "2y", "interval": "1h"},
+        {"period": "60d", "interval": "15m"},
+    ])
+
+    # Support/resistance detection
+    sr_lookback: int = 100                  # Bars for S/R level detection
+
+    # Momentum parameters
+    momentum_lookback: int = 5              # 5-bar momentum lookback
+
+    # RSI exhaustion filter thresholds
+    rsi_overbought: int = 70               # RSI above this = overbought
+    rsi_oversold: int = 30                 # RSI below this = oversold
+
+    # ATR-based labeling threshold
+    atr_label_threshold: float = 0.3       # Label BUY/SELL if move > 0.3*ATR
+
 
 # ─────────────────────────────────────────────
 #  SENTIMENT ANALYSIS

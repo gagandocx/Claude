@@ -49,7 +49,12 @@ logger = logging.getLogger("Training")
 def prepare_data(config: DataConfig = None,
                  seq_length: int = 64) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Download historical data and prepare training sequences.
+    Download historical data from multiple timeframes and prepare training sequences.
+
+    Fetches 5y daily + 2y H1 + 60d M15 data to build a large, diverse training
+    set targeting 25,000-30,000+ sequences. Each timeframe is processed independently
+    through compute_features() and prepare_model_input(), then all X/y arrays
+    are concatenated.
 
     Returns:
         Tuple of (X, y) arrays
@@ -57,25 +62,50 @@ def prepare_data(config: DataConfig = None,
     config = config or DataConfig()
     fetcher = MarketDataFetcher(config)
 
-    logger.info("Downloading historical data...")
-    df = fetcher.fetch_ohlcv(period="2y", interval="1h")
-    if df.empty:
-        logger.error("No data downloaded")
+    all_X = []
+    all_y = []
+
+    # Fetch and process each timeframe
+    for tf_spec in config.training_periods:
+        period = tf_spec["period"]
+        interval = tf_spec["interval"]
+
+        logger.info(f"Downloading {period} data at {interval} interval...")
+        df = fetcher.fetch_ohlcv(period=period, interval=interval)
+        if df.empty:
+            logger.warning(f"No data for period={period}, interval={interval}")
+            continue
+
+        logger.info(f"Downloaded {len(df)} bars for {period}/{interval}")
+
+        logger.info("Computing features...")
+        features = fetcher.compute_features(df)
+        if features.empty:
+            logger.warning(f"Feature computation failed for {period}/{interval}")
+            continue
+
+        logger.info(f"Computed {len(features.columns)} features over {len(features)} bars")
+
+        logger.info("Preparing sequences...")
+        X, y = fetcher.prepare_model_input(features, seq_length=seq_length)
+        if len(X) == 0:
+            logger.warning(f"No sequences generated for {period}/{interval}")
+            continue
+
+        logger.info(f"Created {len(X)} sequences from {period}/{interval}")
+        all_X.append(X)
+        all_y.append(y)
+
+    if not all_X:
+        logger.error("No training data available from any timeframe")
         return np.array([]), np.array([])
 
-    logger.info(f"Downloaded {len(df)} bars")
+    # Concatenate all timeframes
+    X = np.vstack(all_X)
+    y = np.hstack(all_y)
 
-    logger.info("Computing features...")
-    features = fetcher.compute_features(df)
-    if features.empty:
-        logger.error("Feature computation failed")
-        return np.array([]), np.array([])
-
-    logger.info(f"Computed {len(features.columns)} features over {len(features)} bars")
-
-    logger.info("Preparing sequences...")
-    X, y = fetcher.prepare_model_input(features, seq_length=seq_length)
-    logger.info(f"Created {len(X)} sequences of length {seq_length}")
+    logger.info(f"Total training sequences: {len(X)} (target: 25,000+)")
+    logger.info(f"Class distribution: {np.bincount(y)}")
 
     return X, y
 

@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Expand training data, improve labeling, add support/resistance detection, volume-weighted momentum, RSI exhaustion filter, and longer momentum lookback to make the ML pipeline smarter and train on more data.",
+  "status": "in_progress",
+  "steps": [
+    "1. TRAINING DATA EXPANSION in python_bridge/train.py: Modify prepare_data() to fetch multiple timeframes and combine them. Fetch 5y daily data (period='5y', interval='1d') + 2y H1 data (period='2y', interval='1h') + 60 days of M15 data (period='60d', interval='15m'). Concatenate the features from all three into one large training set, targeting 25,000-30,000+ sequences. Each timeframe's data should be fetched separately, have compute_features() applied, then prepare_model_input() applied. The resulting X/y arrays from each are concatenated (vstack for X, hstack for y).",
+    "2. IMPROVED TRAINING LABELS in python_bridge/data/market_data.py: Modify prepare_model_input() to use ATR-based thresholds instead of std-based. Label BUY only if price moved at least 0.3*ATR up within the next 5 bars (check max of next 5 closes vs current). Label SELL only if price moved 0.3*ATR down within next 5 bars (check min of next 5 closes). Otherwise HOLD. This creates cleaner, higher-quality training labels.",
+    "3. SUPPORT/RESISTANCE DETECTION in python_bridge/strategies/signal_generator.py: Add a new method _detect_support_resistance(self, prices, lookback=100) that finds swing highs (local maxima over 5-bar window) and swing lows (local minima over 5-bar window) from the last 100 bars. Returns dict with nearest_resistance and nearest_support levels. Then in generate_signal(), after computing momentum_direction, call this method and: if price is within 0.3*ATR of resistance and action is BUY, reduce timing_confidence by 0.10. If price is within 0.3*ATR of support and action is SELL, reduce timing_confidence by 0.10.",
+    "4. VOLUME-WEIGHTED MOMENTUM in python_bridge/strategies/signal_generator.py: Upgrade _compute_momentum_direction() to weight price moves by volume. If prices is a DataFrame with a 'Volume' column, compute volume-weighted price change over the lookback: sum((close[i] - close[i-1]) * volume[i]) / sum(volume[i]) for the last N bars. Use absolute threshold scaled by typical volume-weighted move. Fall back to current logic if no Volume column is present.",
+    "5. RSI EXHAUSTION FILTER in python_bridge/strategies/signal_generator.py: In generate_signal(), after the support/resistance check, add an RSI exhaustion filter. Extract RSI from the features DataFrame (or compute it from prices if available). If RSI > 70 and action is BUY, reduce timing_confidence by 0.10 (overbought penalty). If RSI < 30 and action is SELL, reduce timing_confidence by 0.10 (oversold penalty). Log the penalty when applied.",
+    "6. LONGER MOMENTUM LOOKBACK in python_bridge/strategies/signal_generator.py: Change _compute_momentum_direction() from 3-bar lookback to 5-bar lookback. Update the comparison from close[-1] vs close[-4] to close[-1] vs close[-6]. Update the minimum data requirement from 5 bars to 7 bars. Update the docstring accordingly.",
+    "7. CONFIG UPDATES in python_bridge/config/settings.py: Add new config fields to DataConfig: training_periods (list of dicts with period/interval pairs for multi-timeframe training), sr_lookback (default 100 for support/resistance), momentum_lookback (default 5), rsi_overbought (default 70), rsi_oversold (default 30), atr_label_threshold (default 0.3 for ATR-based labeling).",
+    "8. TESTS: Add tests in python_bridge/tests/test_signal_generator.py for: (a) _detect_support_resistance returns correct levels from known swing highs/lows, (b) volume-weighted momentum with high-volume up moves returns BUY, (c) RSI exhaustion filter reduces confidence when overbought/oversold, (d) 5-bar momentum lookback works correctly (needs 7+ bars). Also add tests to a new file python_bridge/tests/test_training.py for: (e) ATR-based labeling produces HOLD when price moves less than 0.3*ATR, (f) prepare_data fetches multiple timeframes (mock yfinance calls)."
+  ],
+  "acceptance_criteria": [
+    "python_bridge/train.py prepare_data() fetches 5y daily + 2y H1 + 60d M15 data and produces 25,000+ sequences when data is available",
+    "prepare_model_input() uses 0.3*ATR threshold for BUY/SELL labeling instead of std-based",
+    "_detect_support_resistance() method exists and returns nearest_resistance and nearest_support",
+    "generate_signal() penalizes confidence when price is near S/R levels",
+    "_compute_momentum_direction() weights moves by volume when Volume column is present",
+    "RSI exhaustion filter reduces confidence for overbought BUY and oversold SELL",
+    "_compute_momentum_direction() uses 5-bar lookback (close[-1] vs close[-6], needs 7 bars)",
+    "All new and existing tests pass (except the 5 pre-existing candle pattern failures)",
+    "New configuration fields exist in DataConfig for the new parameters"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude && python -m pytest python_bridge/tests/ -q",
+    "Confirm 329+ tests pass (pre-existing 5 candle pattern failures are acceptable)",
+    "Run: cd /projects/sandbox/Claude && python -c \"from python_bridge.strategies.signal_generator import SignalGenerator; sg = SignalGenerator(); print(hasattr(sg, '_detect_support_resistance'))\" and confirm True",
+    "Run: cd /projects/sandbox/Claude && python -c \"from python_bridge.config.settings import DataConfig; dc = DataConfig(); print(dc.momentum_lookback, dc.rsi_overbought, dc.sr_lookback)\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
