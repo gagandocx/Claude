@@ -97,6 +97,10 @@ int OnInit()
     g_trade.SetDeviationInPoints(InpSlippage);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
+    // Render price chart (candles, grid, indicators) BEHIND graphical objects
+    // so the dashboard panel is fully opaque and not see-through
+    ChartSetInteger(0, CHART_FOREGROUND, false);
+
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
     Print("[PythonBridge] Signal file: ", InpSignalFile);
@@ -1033,7 +1037,8 @@ void DashboardBackground(string name, int x, int y, int width, int height, color
     ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgColor);
     ObjectSetInteger(0, objName, OBJPROP_COLOR, clrDimGray);
     ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
-    // OBJPROP_BACK is not needed for RECTANGLE_LABEL (it's always in foreground as overlay)
+    // Ensure rectangle renders in foreground layer (on top of chart elements)
+    ObjectSetInteger(0, objName, OBJPROP_BACK, false);
 }
 
 //+------------------------------------------------------------------+
@@ -1043,7 +1048,7 @@ void UpdateDashboard()
 {
     int panelX      = 10;
     int panelY      = 30;
-    int panelWidth  = 300;
+    int panelWidth  = 320;
     int panelHeight = 420;
     int lineHeight  = 18;
     int leftMargin  = 20;
@@ -1060,9 +1065,9 @@ void UpdateDashboard()
     color clrBgPanel    = C'20,20,30';
     color clrBgHeader   = C'30,35,50';
 
-    // --- Background panels ---
-    DashboardBackground("bg_main", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 200);
-    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 220);
+    // --- Background panels (fully opaque, no transparency) ---
+    DashboardBackground("bg_main", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
+    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
 
     // --- Title ---
     DashboardLabel("title", panelX + leftMargin, y, "PYTHON ML BRIDGE - HF SCALPER", clrTitle, 10, "Consolas Bold");
