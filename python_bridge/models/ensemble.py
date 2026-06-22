@@ -52,7 +52,7 @@ class EnsembleManager:
 
         # Meta-learner (stacking)
         self.meta_learner = LogisticRegression(
-            max_iter=1000, random_state=42, multi_class="multinomial"
+            max_iter=1000, random_state=42
         )
 
         # Dynamic weights
