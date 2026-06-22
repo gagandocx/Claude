@@ -485,7 +485,11 @@ bool LoadNormParams(string filename)
 
    // Skip header line (feature_name,min,max)
    if(!FileIsEnding(handle))
-      FileReadString(handle); // skip header
+   {
+      FileReadString(handle); // skip "feature_name"
+      FileReadString(handle); // skip "min"
+      FileReadString(handle); // skip "max"
+   }
 
    int idx = 0;
    while(!FileIsEnding(handle) && idx < model.input_size)
@@ -514,7 +518,7 @@ bool LoadNormParams(string filename)
 //+------------------------------------------------------------------+
 //| NEURAL NETWORK FORWARD PASS                                       |
 //| Architecture: input -> 128(ReLU) -> 64(ReLU) -> 32(ReLU) -> 3   |
-//| Output: softmax probabilities [BUY, SELL, NEUTRAL]               |
+//| Output: softmax probabilities [SELL, NEUTRAL, BUY]               |
 //+------------------------------------------------------------------+
 void MLPredict(double &features[], double &output[])
 {
@@ -636,23 +640,40 @@ void BuildFeatureVector(double &features[])
    features[idx++] = atr;            // atr_14
 
    // --- Distance from EMAs normalized by ATR (features 5-8) ---
-   features[idx++] = (close - buf_ema8[1]) / atr;    // dist_from_ema_8
-   features[idx++] = (close - buf_ema21[1]) / atr;   // dist_from_ema_21
-   features[idx++] = (close - buf_ema50[1]) / atr;   // dist_from_ema_50
-   features[idx++] = (close - buf_ema200[1]) / atr;  // dist_from_ema_200
+   // Clipped to [-5, 5] to match Python trainer's np.clip(dist, -5.0, 5.0)
+   features[idx++] = MathMax(-5.0, MathMin(5.0, (close - buf_ema8[1]) / atr));    // dist_from_ema_8
+   features[idx++] = MathMax(-5.0, MathMin(5.0, (close - buf_ema21[1]) / atr));   // dist_from_ema_21
+   features[idx++] = MathMax(-5.0, MathMin(5.0, (close - buf_ema50[1]) / atr));   // dist_from_ema_50
+   features[idx++] = MathMax(-5.0, MathMin(5.0, (close - buf_ema200[1]) / atr));  // dist_from_ema_200
 
    // --- EMA slopes (features 9-12) ---
-   features[idx++] = (buf_ema8[1] - buf_ema8[6]) / (5.0 * atr);   // ema_8_slope
-   features[idx++] = (buf_ema21[1] - buf_ema21[6]) / (5.0 * atr); // ema_21_slope
-   features[idx++] = (buf_ema50[1] - buf_ema50[6]) / (5.0 * atr); // ema_50_slope
-   features[idx++] = (buf_ema200[1] - buf_ema200[6]) / (5.0 * atr);// ema_200_slope
+   // Clipped to [-2, 2] to match Python trainer's np.clip(slope, -2.0, 2.0)
+   features[idx++] = MathMax(-2.0, MathMin(2.0, (buf_ema8[1] - buf_ema8[6]) / (5.0 * atr)));   // ema_8_slope
+   features[idx++] = MathMax(-2.0, MathMin(2.0, (buf_ema21[1] - buf_ema21[6]) / (5.0 * atr))); // ema_21_slope
+   features[idx++] = MathMax(-2.0, MathMin(2.0, (buf_ema50[1] - buf_ema50[6]) / (5.0 * atr))); // ema_50_slope
+   features[idx++] = MathMax(-2.0, MathMin(2.0, (buf_ema200[1] - buf_ema200[6]) / (5.0 * atr)));// ema_200_slope
 
    // --- RSI (feature 13) ---
    features[idx++] = buf_rsi[1] / 100.0;  // rsi_14 normalized 0-1
 
    // --- VWAP distance proxy (feature 14) ---
-   double vwap_proxy = (high + low + close) / 3.0;
-   features[idx++] = (close - vwap_proxy) / atr;  // dist_from_vwap
+   // Compute cumulative VWAP proxy: sum(close*volume) / sum(volume) over last N bars
+   // This matches the Python trainer's compute_vwap_proxy() approach
+   int vwap_period = 50;
+   double cum_tp_vol = 0.0;
+   double cum_vol_vwap = 0.0;
+   for(int i = 1; i <= vwap_period; i++)
+   {
+      double c_i = iClose(_Symbol, Entry_TF, i);
+      double h_i = iHigh(_Symbol, Entry_TF, i);
+      double l_i = iLow(_Symbol, Entry_TF, i);
+      double tp_i = (h_i + l_i + c_i) / 3.0;
+      long v_i = iVolume(_Symbol, Entry_TF, i);
+      cum_tp_vol += tp_i * (double)v_i;
+      cum_vol_vwap += (double)v_i;
+   }
+   double vwap_proxy = (cum_vol_vwap > 0) ? cum_tp_vol / cum_vol_vwap : close;
+   features[idx++] = MathMax(-5.0, MathMin(5.0, (close - vwap_proxy) / atr));  // dist_from_vwap
 
    // --- Volume ratio (feature 15) ---
    long vol_cur = iVolume(_Symbol, Entry_TF, 1);
@@ -687,8 +708,8 @@ void BuildFeatureVector(double &features[])
                           has_bos_bull, has_bos_bear,
                           has_choch_bull, has_choch_bear, trend_m1);
 
-   features[idx++] = sh_price;                    // swing_high
-   features[idx++] = sl_price;                    // swing_low
+   features[idx++] = (sh_price > 0) ? 1.0 : 0.0;   // swing_high (binary detection flag)
+   features[idx++] = (sl_price > 0) ? 1.0 : 0.0;   // swing_low (binary detection flag)
    features[idx++] = has_bos_bull ? 1.0 : 0.0;   // bos_bullish
    features[idx++] = has_bos_bear ? 1.0 : 0.0;   // bos_bearish
    features[idx++] = has_choch_bull ? 1.0 : 0.0;  // choch_bullish
@@ -745,7 +766,10 @@ void BuildFeatureVector(double &features[])
    features[idx++] = IsRegularSession() ? 1.0 : 0.0;   // is_regular_session
    features[idx++] = IsPowerHour() ? 1.0 : 0.0;        // is_power_hour
    features[idx++] = (double)hour / 24.0;               // time_of_day (normalized)
-   features[idx++] = (double)dt.day_of_week / 5.0;     // day_of_week (normalized)
+   // day_of_week: MQL5 day_of_week is 0=Sun,1=Mon,...,5=Fri
+   // Python uses weekday()/4.0 where Mon=0, Fri=1.0
+   // Match Python: (day_of_week - 1) / 4.0 gives Mon=0.0, Tue=0.25, ..., Fri=1.0
+   features[idx++] = (double)(dt.day_of_week - 1) / 4.0;  // day_of_week (normalized, Mon=0 Fri=1)
 
    // --- 8. Premium/Discount (features 46-49) ---
    double pd_position = 0, eq_distance = 0;
@@ -1383,23 +1407,25 @@ ENUM_SIGNAL_TYPE GenerateSignal(double &ml_confidence)
       BuildFeatureVector(features);
       MLPredict(features, ml_output);
 
-      // output[0] = BUY prob, output[1] = SELL prob, output[2] = NEUTRAL prob
-      double buy_prob  = ml_output[0];
-      double sell_prob = ml_output[1];
+      // Python labels: SELL=0, NEUTRAL=1, BUY=2 (via labels+1)
+      // output[0] = SELL prob, output[1] = NEUTRAL prob, output[2] = BUY prob
+      double sell_prob    = ml_output[0];
+      double neutral_prob = ml_output[1];
+      double buy_prob     = ml_output[2];
 
-      if(buy_prob > sell_prob && buy_prob > ml_output[2])
+      if(buy_prob > sell_prob && buy_prob > neutral_prob)
       {
          ml_signal = SIG_BUY;
          ml_confidence = buy_prob;
       }
-      else if(sell_prob > buy_prob && sell_prob > ml_output[2])
+      else if(sell_prob > buy_prob && sell_prob > neutral_prob)
       {
          ml_signal = SIG_SELL;
          ml_confidence = sell_prob;
       }
       else
       {
-         ml_confidence = ml_output[2];
+         ml_confidence = neutral_prob;
       }
 
       panel_ml_pred = StringFormat("%s (%.1f%%)",
@@ -1767,6 +1793,12 @@ void ManageBreakEven()
 //+------------------------------------------------------------------+
 //| ADAPTIVE TRAILING STOP                                            |
 //| Trail distance tightens as profit grows (adaptive)               |
+//| NOTE: Trailing only activates after break-even is reached (1x    |
+//| ATR profit). This is intentional design - positions must reach   |
+//| break-even before trailing engages. Positions below the BE       |
+//| threshold rely on the initial SL for protection. This gap        |
+//| prevents premature trailing from closing trades during normal    |
+//| retracement before the move develops.                            |
 //+------------------------------------------------------------------+
 void ManageTrailing()
 {

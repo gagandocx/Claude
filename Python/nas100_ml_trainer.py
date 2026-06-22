@@ -45,7 +45,7 @@ OUTPUT FILES (in NAS100_ML_Model/ directory):
     - biases_layer2.csv     (64 values)
     - biases_layer3.csv     (32 values)
     - biases_output.csv     (3 values)
-    - normalization_params.csv  (min,max per feature)
+    - normalization_params.csv  (feature_name,min,max per feature)
     - feature_names.csv     (ordered list of feature names)
 
 FEATURE VECTOR ORDER (must match MQL5 EA computation):
@@ -1455,7 +1455,7 @@ def export_model(model, norm_min, norm_max, feature_names, output_dir=MODEL_DIR)
     File format is designed for MQL5 FileReadString() parsing:
     - Weights: one row per input neuron, comma-separated values for each output neuron
     - Biases: single row with comma-separated values
-    - Normalization: one row per feature with min,max values
+    - Normalization: header row, then one row per feature with name,min,max values
     - Feature names: one feature name per line
 
     Parameters:
@@ -1489,11 +1489,13 @@ def export_model(model, norm_min, norm_max, feature_names, output_dir=MODEL_DIR)
         np.savetxt(filepath, biases, delimiter=",", fmt="%.8f")
         print(f"  Saved {filename} (shape: {biases.shape})")
 
-    # Export normalization parameters
+    # Export normalization parameters (3 columns: feature_name,min,max)
+    # This matches the MQL5 LoadNormParams parser which reads: name, min, max per row
     norm_filepath = os.path.join(output_dir, "normalization_params.csv")
-    norm_data = np.column_stack([norm_min, norm_max])
-    np.savetxt(norm_filepath, norm_data, delimiter=",", fmt="%.8f",
-               header="min,max", comments="")
+    with open(norm_filepath, "w") as f:
+        f.write("feature_name,min,max\n")
+        for i, name in enumerate(feature_names):
+            f.write(f"{name},{norm_min[i]:.8f},{norm_max[i]:.8f}\n")
     print(f"  Saved normalization_params.csv ({len(norm_min)} features)")
 
     # Export feature names
