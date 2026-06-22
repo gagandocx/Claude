@@ -1,0 +1,39 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Create the MQL5 Expert Advisor (NAS100_IPDA_ML_EA.mq5) that loads trained ML model weights, computes IPDA features in real-time on NAS100 M1 chart, runs neural network inference for trade signals, executes high-frequency trades with adaptive trailing stops, and includes a full dashboard panel. This EA combines institutional order flow (IPDA) with ML predictions for autonomous trading.",
+  "status": "in_progress",
+  "steps": [
+    "Create NAS100_IPDA_ML_EA.mq5 in the repository root following the structure of ICT_EA.mq5 and GaganEA_v3.mq5. The EA must include:",
+    "1. File header with #property copyright, version, strict. Include Trade\\Trade.mqh and Trade\\PositionInfo.mqh.",
+    "2. Enumerations and structs: ENUM_MARKET_BIAS, ENUM_SIGNAL_TYPE, OrderBlock struct, FVG struct, SwingPoint struct, MLModel struct (to hold weights/biases arrays), NormParams struct.",
+    "3. Input parameter groups: (a) ML Model Settings - model file path, prediction threshold, signal confidence filter. (b) IPDA Settings - swing lookback, OB displacement points, FVG minimum size, structure timeframe. (c) Killzone Settings - London open/close hours, NY open/close hours for NAS100 (shifted vs forex). (d) Trade Settings - entry timeframe M1, HTF for structure (M15/H1), max trades, trade direction filter. (e) Risk Management - risk percent, manual lot, max lot, max spread filter. (f) Trailing Stop Settings - initial SL in ATR multiples, break-even activation (1x ATR profit), trailing start (1.5x ATR), trailing step, trailing distance (ATR-based). (g) Equity Protection - max drawdown %, daily loss limit. (h) HFT Settings - minimum bars between trades, max trades per hour, cooldown after loss. (i) Display - show panel, draw zones, magic number.",
+    "4. OnInit(): Load ML model weights from CSV files in MQL5/Files/NAS100_ML_Model/ directory using FileOpen/FileReadString. Parse weights into double arrays. Initialize indicator handles (EMA 8/21/50/200, RSI 14, ATR 14). Create dashboard. Validate model loaded correctly.",
+    "5. ML Inference function: Implement forward pass through the neural network using the loaded weights. Input: normalized feature vector. Output: probability for BUY/SELL/NEUTRAL. Use ReLU activation for hidden layers, softmax for output layer. All done in pure MQL5 with array operations.",
+    "6. Feature computation (real-time IPDA): (a) Market Structure: detect swing highs/lows on HTF (M15/H1), identify BOS and CHoCH events. Use the same logic as ICT_EA.mq5 UpdateMarketStructure(). (b) Order Blocks: detect unmitigated bullish/bearish OBs on HTF. Follow ICT_EA.mq5 DetectOrderBlocks() pattern. (c) FVGs: detect unfilled Fair Value Gaps. Follow ICT_EA.mq5 DetectFVGs() pattern. (d) Liquidity Sweeps: detect when price takes previous session high/low then reverses within 3-5 bars. (e) Premium/Discount: calculate current dealing range (highest high to lowest low over lookback) and determine if price is in premium (>50%) or discount (<50%). (f) NAS100 Killzones: Pre-market 08:00-09:30 ET, Regular session 09:30-16:00 ET, Power hour 15:00-16:00 ET. (g) Compute EMA values, RSI, ATR from indicator handles. (h) Build feature vector matching the Python training script's feature order.",
+    "7. Signal generation: Combine ML prediction with IPDA confluence. Require: ML confidence > threshold AND at least 2 IPDA confirmations (e.g., bullish bias + price in bullish OB + killzone active). Weight the ML signal higher when IPDA confluence is strong.",
+    "8. Trade execution with adaptive trailing: (a) Entry: market order with initial SL based on ATR or below/above nearest OB. TP set to next liquidity level or 3x ATR. (b) Break-even: move SL to entry + 1pt after price moves 1x ATR in favor. (c) Trailing stop: after break-even, trail SL at Trail_ATR_Mult * ATR distance. Tighten trail distance as profit grows (adaptive - closer trail at higher profit). (d) Partial close: close 40% at 1.5x ATR profit, let remainder trail. (e) Time-based exit: close if trade has been open more than 60 bars with no TP progress.",
+    "9. HFT controls: (a) Minimum bar spacing between entries. (b) Max trades per hour limiter. (c) Cooldown after consecutive losses. (d) Rapid re-entry after quick profit (momentum following). (e) Spread filter - only enter when spread is within acceptable range for NAS100.",
+    "10. Risk management: CalcLot() function using Risk_Percent and tick_value/tick_size (same pattern as existing EAs). Equity protection that closes all on max DD. Daily loss limit that stops trading for the day.",
+    "11. Dashboard panel: Create a comprehensive OBJ_LABEL-based dashboard showing: ML signal and confidence, IPDA bias, active killzone, open trades count, float P/L, daily/weekly/monthly P/L, model status, trade statistics (win rate, avg win/loss). Follow the panel pattern from GaganEA_v3.mq5.",
+    "12. Logging: Print detailed trade reasoning on each signal and entry/exit for strategy optimization."
+  ],
+  "acceptance_criteria": [
+    "MQL5 file follows the exact structure and conventions of existing EAs in the repository",
+    "All input parameters are properly grouped with 'input group' syntax",
+    "ML model loading reads CSV files and populates weight arrays correctly",
+    "Neural network forward pass implementation matches the Python training script's architecture (128->64->32->3 with ReLU/softmax)",
+    "IPDA features (market structure, OBs, FVGs, liquidity sweeps, killzones) are implemented following ICT_EA.mq5 patterns",
+    "Trailing stop implementation includes break-even, adaptive trailing, and partial close",
+    "HFT controls prevent overtrading while allowing rapid entries during momentum",
+    "Dashboard panel is comprehensive and follows existing panel patterns",
+    "File compiles logically (no obviously broken syntax, proper bracket matching, correct MQL5 idioms)"
+  ],
+  "verification": [
+    "Run a basic MQL5 syntax validation: check bracket matching, function definitions, and include statements",
+    "Verify the feature vector size in the EA matches what the Python trainer exports",
+    "Confirm all file paths referenced for model loading are consistent between Python export and MQL5 loading code"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
