@@ -98,9 +98,8 @@ int OnInit()
     g_trade.SetDeviationInPoints(InpSlippage);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-    // Render price chart (candles, grid, indicators) BEHIND graphical objects
-    // so the dashboard panel is fully opaque and not see-through
-    ChartSetInteger(0, CHART_FOREGROUND, false);
+    // Dashboard panel uses OBJ_RECTANGLE_LABEL which renders on top by default
+    // No CHART_FOREGROUND manipulation needed - trades display normally on chart
 
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
@@ -118,8 +117,7 @@ void OnDeinit(const int reason)
     // Remove all dashboard graphical objects
     ObjectsDeleteAll(0, "PB_");
     Comment("");
-    // Restore default chart rendering when EA is removed
-    ChartSetInteger(0, CHART_FOREGROUND, true);
+
     ChartRedraw(0);
     Print("[PythonBridge] EA removed. Trades executed: ", g_tradesExecuted);
 }
