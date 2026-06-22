@@ -289,7 +289,7 @@ class EnsembleManager:
         if os.path.exists(transformer_path):
             self.transformer.load_state_dict(
                 torch.load(transformer_path, map_location=self.device,
-                           weights_only=False),
+                           weights_only=True),
                 strict=False
             )
             nn_loaded = True
@@ -298,12 +298,16 @@ class EnsembleManager:
         if os.path.exists(lstm_path):
             self.lstm.load_state_dict(
                 torch.load(lstm_path, map_location=self.device,
-                           weights_only=False),
+                           weights_only=True),
                 strict=False
             )
             nn_loaded = True
 
         import joblib
+        # NOTE: joblib.load uses pickle internally and can execute arbitrary
+        # code. Only load checkpoint files from trusted sources (local training
+        # output). If checkpoints are ever sourced from external/shared storage,
+        # add integrity verification before loading.
         gb_path = os.path.join(path, "gradient_boost.joblib")
         if os.path.exists(gb_path):
             self.gradient_boost = joblib.load(gb_path)

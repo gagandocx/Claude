@@ -173,7 +173,9 @@ class AutoRetrainer:
 
         try:
             # Step 1: Backup current model
-            backup_dir = os.path.join(MODEL_DIR, "backup_pre_retrain")
+            # Place backup as a sibling of MODEL_DIR (not inside it) so that
+            # rmtree(MODEL_DIR) during rollback does not destroy the backup.
+            backup_dir = os.path.join(os.path.dirname(MODEL_DIR), "checkpoints_backup")
             if os.path.exists(MODEL_DIR):
                 if os.path.exists(backup_dir):
                     shutil.rmtree(backup_dir)
@@ -288,7 +290,7 @@ class AutoRetrainer:
             logger.error(f"[AutoRetrain] Retraining failed: {e}", exc_info=True)
 
             # Rollback on failure
-            backup_dir = os.path.join(MODEL_DIR, "backup_pre_retrain")
+            backup_dir = os.path.join(os.path.dirname(MODEL_DIR), "checkpoints_backup")
             if os.path.exists(backup_dir):
                 if os.path.exists(MODEL_DIR):
                     shutil.rmtree(MODEL_DIR)
@@ -300,7 +302,7 @@ class AutoRetrainer:
         self._save_history()
 
         # Clean up backup
-        backup_dir = os.path.join(MODEL_DIR, "backup_pre_retrain")
+        backup_dir = os.path.join(os.path.dirname(MODEL_DIR), "checkpoints_backup")
         if os.path.exists(backup_dir):
             try:
                 shutil.rmtree(backup_dir)

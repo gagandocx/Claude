@@ -87,7 +87,12 @@ def prepare_data(config: DataConfig = None,
         logger.info(f"Computed {len(features.columns)} features over {len(features)} bars")
 
         logger.info("Preparing sequences...")
-        X, y = fetcher.prepare_model_input(features, seq_length=seq_length)
+        # Pass normalize=False so we get raw (unnormalized) feature sequences.
+        # Normalization is applied once after all timeframes are concatenated,
+        # ensuring the saved stats reflect the true raw feature distributions
+        # and match what inference will see.
+        X, y = fetcher.prepare_model_input(features, seq_length=seq_length,
+                                           normalize=False)
         if len(X) == 0:
             logger.warning(f"No sequences generated for {period}/{interval}")
             continue
@@ -104,12 +109,17 @@ def prepare_data(config: DataConfig = None,
     X = np.vstack(all_X)
     y = np.hstack(all_y)
 
-    # Re-compute and save normalization stats from the COMBINED dataset so that
-    # inference normalization matches training. Each timeframe's call to
-    # prepare_model_input() saved stats from only that timeframe; here we
-    # overwrite with the combined statistics that the model actually trained on.
+    # Compute combined normalization stats from the RAW concatenated data.
+    # Since prepare_model_input was called with normalize=False, X contains
+    # unnormalized features. We compute means/stds across all samples and
+    # time steps, normalize X in-place, and save the stats so that inference
+    # applies the same transform to raw features.
     combined_means = np.mean(X, axis=(0, 1))  # mean across samples and time steps
     combined_stds = np.std(X, axis=(0, 1)) + 1e-10
+
+    # Normalize X in-place using the combined stats
+    X = (X - combined_means) / combined_stds
+
     fetcher._save_normalization_stats(
         feature_cols=[f"feat_{i}" for i in range(X.shape[2])],
         means=combined_means,

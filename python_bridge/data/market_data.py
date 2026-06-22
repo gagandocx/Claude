@@ -208,7 +208,8 @@ class MarketDataFetcher:
         return features
 
     def prepare_model_input(self, features: pd.DataFrame,
-                            seq_length: int = 64) -> Tuple[np.ndarray, np.ndarray]:
+                            seq_length: int = 64,
+                            normalize: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare sequences for model input with labels.
 
@@ -220,6 +221,9 @@ class MarketDataFetcher:
         Args:
             features: DataFrame of computed features
             seq_length: Sequence length for time series input
+            normalize: If True (default), z-score normalize features and save
+                stats. Set to False when calling from multi-timeframe training
+                so that combined normalization can be applied after concatenation.
 
         Returns:
             Tuple of (X, y) where X is (num_samples, seq_length, num_features)
@@ -228,19 +232,20 @@ class MarketDataFetcher:
         if features.empty or len(features) < seq_length + 10:
             return np.array([]), np.array([])
 
-        # Normalize features
+        # Extract feature columns
         feature_cols = [c for c in features.columns
                         if c not in ["close", "volume", "obv",
                                      "ichimoku_a", "ichimoku_b", "ichimoku_base"]]
         data = features[feature_cols].values.astype(np.float32)
 
-        # Normalize each feature to zero mean, unit variance
-        means = np.nanmean(data, axis=0)
-        stds = np.nanstd(data, axis=0) + 1e-10
-        data = (data - means) / stds
+        if normalize:
+            # Normalize each feature to zero mean, unit variance
+            means = np.nanmean(data, axis=0)
+            stds = np.nanstd(data, axis=0) + 1e-10
+            data = (data - means) / stds
 
-        # Save normalization stats for use during inference
-        self._save_normalization_stats(feature_cols, means, stds)
+            # Save normalization stats for use during inference
+            self._save_normalization_stats(feature_cols, means, stds)
 
         # Generate labels based on ATR-scaled future price moves
         close_prices = features["close"].values
