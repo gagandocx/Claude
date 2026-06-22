@@ -292,7 +292,10 @@ class SignalGenerator:
 
         # 9. Calculate SL/TP based on ATR
         if atr <= 0:
-            atr = 2.0  # Default ATR for gold
+            atr = 3.0  # Default ATR for gold M1 scalping
+
+        # Cap ATR to prevent H1 ATR values inflating M1 scalp SL/TP
+        atr = min(atr, 5.0)
 
         sl_mult = self.signal_config.atr_sl_multiplier * regime_adjustments.get("sl_mult", 1.0)
         tp_mult = self.signal_config.atr_tp_multiplier * regime_adjustments.get("tp_mult", 1.0)

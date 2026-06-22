@@ -435,7 +435,7 @@ class TestDashboardRenderer:
     def test_console_render_no_trades(self, tracker):
         renderer = DashboardRenderer(tracker, use_colors=False)
         output = renderer.render_console()
-        assert "LIVE PERFORMANCE" in output
+        assert "HF SCALPER DASHBOARD" in output
         assert "Net Profit" in output
         assert "Win Rate" in output
 
@@ -443,9 +443,9 @@ class TestDashboardRenderer:
         renderer = DashboardRenderer(populated_tracker, use_colors=False)
         output = renderer.render_console()
         assert "PROFIT & LOSS" in output
-        assert "RISK METRICS" in output
-        assert "MODEL PERFORMANCE" in output
-        assert "REGIME PERFORMANCE" in output
+        assert "RISK ANALYTICS" in output
+        assert "MODEL ALPHA" in output
+        assert "REGIME BREAKDOWN" in output
         assert "Sharpe Ratio" in output
         assert "Sortino Ratio" in output
         assert "Profit Factor" in output
@@ -474,10 +474,10 @@ class TestDashboardRenderer:
             with open(output_path, 'r') as f:
                 html = f.read()
             assert "<!DOCTYPE html>" in html
-            assert "PERFORMANCE REPORT" in html
+            assert "HF Scalper" in html
             assert "Sharpe Ratio" in html
-            assert "MODEL PERFORMANCE" in html
-            assert "REGIME PERFORMANCE" in html
+            assert "Model Performance" in html
+            assert "Regime Performance" in html
         finally:
             os.unlink(output_path)
 
@@ -497,7 +497,7 @@ class TestDashboardRenderer:
             with open(output_path, 'r') as f:
                 html = f.read()
             # Equity curve should be JSON embedded in the HTML
-            assert "EQUITY CURVE DATA" in html
+            assert "Equity Curve Data" in html
             # First point is always 0.0
             assert "0.0" in html
         finally:

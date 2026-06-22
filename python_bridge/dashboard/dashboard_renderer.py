@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # ANSI color codes for terminal output
 class Colors:
-    """Terminal color codes for professional display."""
+    """Terminal color codes for futuristic neon display."""
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -37,6 +37,13 @@ class Colors:
     BLUE = "\033[94m"
     MAGENTA = "\033[95m"
     BG_DARK = "\033[40m"
+    # Extended neon palette
+    NEON_GREEN = "\033[38;5;46m"
+    NEON_CYAN = "\033[38;5;51m"
+    NEON_PINK = "\033[38;5;198m"
+    NEON_ORANGE = "\033[38;5;208m"
+    NEON_PURPLE = "\033[38;5;141m"
+    BG_NAVY = "\033[48;5;17m"
 
 
 class DashboardRenderer:
@@ -50,7 +57,7 @@ class DashboardRenderer:
     """
 
     # Dashboard width in characters
-    CONSOLE_WIDTH = 72
+    CONSOLE_WIDTH = 76
 
     def __init__(self, tracker: PerformanceTracker, use_colors: bool = True):
         """
@@ -100,20 +107,20 @@ class DashboardRenderer:
             return self._color(formatted, Colors.RED)
 
     def _header_line(self, title: str) -> str:
-        """Create a formatted header line."""
+        """Create a futuristic formatted header line with neon border."""
         w = self.CONSOLE_WIDTH
-        line = "=" * w
-        padding = (w - len(title) - 4) // 2
-        header = f"{'=' * padding}[ {title} ]{'=' * (w - padding - len(title) - 4)}"
-        return self._color(header, Colors.CYAN)
+        top_border = self._color("+" + "=" * (w - 2) + "+", Colors.NEON_CYAN)
+        padding = (w - len(title) - 6) // 2
+        header = f"|{'>' * padding} {title} {'<' * (w - padding - len(title) - 6)}|"
+        return top_border + "\n" + self._color(header, Colors.NEON_CYAN)
 
     def _section_line(self, title: str) -> str:
-        """Create a section separator."""
+        """Create a futuristic section separator with arrows."""
         w = self.CONSOLE_WIDTH
-        padding = (w - len(title) - 4) // 2
+        padding = (w - len(title) - 8) // 2
         return self._color(
-            f"{'-' * padding}[ {title} ]{'-' * (w - padding - len(title) - 4)}",
-            Colors.DIM
+            f"  {'>' * 3} [ {title} ] {'<' * 3}{' ' * (w - padding - len(title) - 12)}",
+            Colors.NEON_PURPLE
         )
 
     def _metric_line(self, label: str, value: str, width: int = 30) -> str:
@@ -123,34 +130,45 @@ class DashboardRenderer:
 
     def render_console(self) -> str:
         """
-        Render the full performance dashboard as ASCII art.
+        Render the full performance dashboard as futuristic ASCII art.
         
         Returns a multi-line string formatted for terminal display,
-        similar to a Bloomberg terminal or prop desk monitor.
+        styled like a next-gen prop trading desk HUD with neon accents.
         """
         summary = self._tracker.get_full_summary()
         lines = []
         w = self.CONSOLE_WIDTH
 
-        # Top border
+        # Top border with futuristic design
         lines.append("")
-        lines.append(self._header_line("PYTHON ML BRIDGE - LIVE PERFORMANCE"))
-        lines.append(
-            self._color(f"  Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}", Colors.DIM)
-        )
+        lines.append(self._color("+" + "=" * (w - 2) + "+", Colors.NEON_CYAN))
+        lines.append(self._color("|" + " " * (w - 2) + "|", Colors.NEON_CYAN))
+        title = "PYTHON ML BRIDGE // HF SCALPER DASHBOARD"
+        pad = (w - len(title) - 4) // 2
+        lines.append(self._color(
+            f"|{' ' * pad}{title}{' ' * (w - pad - len(title) - 2)}|", Colors.NEON_CYAN
+        ))
+        subtitle = f"[LIVE] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | M1 XAUUSD"
+        pad2 = (w - len(subtitle) - 4) // 2
+        lines.append(self._color(
+            f"|{' ' * pad2}{subtitle}{' ' * (w - pad2 - len(subtitle) - 2)}|", Colors.DIM
+        ))
+        lines.append(self._color("|" + " " * (w - 2) + "|", Colors.NEON_CYAN))
+        lines.append(self._color("+" + "=" * (w - 2) + "+", Colors.NEON_CYAN))
         lines.append("")
 
-        # ── Core P&L ──
+        # Core P&L section
         lines.append(self._section_line("PROFIT & LOSS"))
         lines.append(self._metric_line(
             "Net Profit", self._pnl_color(summary["net_profit"])
         ))
         lines.append(self._metric_line(
-            "Total Trades", str(summary["total_trades"])
+            "Total Trades", self._color(str(summary["total_trades"]), Colors.NEON_CYAN)
         ))
         lines.append(self._metric_line(
             "Winners / Losers",
-            f"{summary['total_wins']} / {summary['total_losses']}"
+            self._color(str(summary['total_wins']), Colors.GREEN) + " / " +
+            self._color(str(summary['total_losses']), Colors.RED)
         ))
         lines.append(self._metric_line(
             "Win Rate", self._pct_color(summary["win_rate"] * 100)
@@ -160,8 +178,8 @@ class DashboardRenderer:
         ))
         lines.append("")
 
-        # ── Risk Metrics ──
-        lines.append(self._section_line("RISK METRICS"))
+        # Risk Metrics
+        lines.append(self._section_line("RISK ANALYTICS"))
         lines.append(self._metric_line(
             "Sharpe Ratio", self._ratio_color(summary["sharpe_ratio"], 1.0)
         ))
@@ -182,8 +200,8 @@ class DashboardRenderer:
         ))
         lines.append("")
 
-        # ── Trade Statistics ──
-        lines.append(self._section_line("TRADE STATISTICS"))
+        # Trade Statistics
+        lines.append(self._section_line("TRADE STATS"))
         lines.append(self._metric_line(
             "Avg Win", self._color(f"${summary['avg_win']:.2f}", Colors.GREEN)
         ))
@@ -197,22 +215,22 @@ class DashboardRenderer:
             "Worst Trade", self._pnl_color(summary["worst_trade"])
         ))
         lines.append(self._metric_line(
-            "Max Consec Wins", self._color(str(summary["consecutive_wins"]), Colors.GREEN)
+            "Max Consec Wins", self._color(str(summary["consecutive_wins"]), Colors.NEON_GREEN)
         ))
         lines.append(self._metric_line(
             "Max Consec Losses", self._color(str(summary["consecutive_losses"]), Colors.RED)
         ))
         lines.append(self._metric_line(
-            "Avg Hold Time", f"{summary['avg_hold_time_hours']:.1f}h"
+            "Avg Hold Time", self._color(f"{summary['avg_hold_time_hours']:.1f}h", Colors.NEON_ORANGE)
         ))
         lines.append("")
 
-        # ── Per-Model Breakdown ──
-        lines.append(self._section_line("MODEL PERFORMANCE"))
+        # Per-Model Breakdown
+        lines.append(self._section_line("MODEL ALPHA"))
         model_stats = summary["per_model"]
         model_header = f"  {'Model':<16} {'Trades':>7} {'Win%':>7} {'PF':>7} {'PnL':>10}"
         lines.append(self._color(model_header, Colors.BOLD))
-        lines.append(f"  {'-' * 50}")
+        lines.append(self._color(f"  {'.' * 52}", Colors.DIM))
         for model_name, stats in model_stats.items():
             if stats["trade_count"] > 0:
                 wr_str = f"{stats['win_rate']*100:.1f}%"
@@ -222,12 +240,12 @@ class DashboardRenderer:
                 lines.append(line)
         lines.append("")
 
-        # ── Per-Regime Breakdown ──
-        lines.append(self._section_line("REGIME PERFORMANCE"))
+        # Per-Regime Breakdown
+        lines.append(self._section_line("REGIME BREAKDOWN"))
         regime_stats = summary["per_regime"]
         regime_header = f"  {'Regime':<16} {'Trades':>7} {'Win%':>7} {'PF':>7} {'PnL':>10}"
         lines.append(self._color(regime_header, Colors.BOLD))
-        lines.append(f"  {'-' * 50}")
+        lines.append(self._color(f"  {'.' * 52}", Colors.DIM))
         for regime_name, stats in regime_stats.items():
             if stats["trade_count"] > 0:
                 wr_str = f"{stats['win_rate']*100:.1f}%"
@@ -238,7 +256,9 @@ class DashboardRenderer:
         lines.append("")
 
         # Bottom border
-        lines.append(self._color("=" * w, Colors.CYAN))
+        lines.append(self._color("+" + "=" * (w - 2) + "+", Colors.NEON_CYAN))
+        status_line = "  [HF SCALPER] ATR Cap: $5 | SL: ~$1 | TP: ~$1.50 | Cycle: 10s"
+        lines.append(self._color(status_line, Colors.DIM))
         lines.append("")
 
         return "\n".join(lines)
@@ -304,73 +324,151 @@ class DashboardRenderer:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Python ML Bridge - Performance Report</title>
+    <title>Python ML Bridge // HF Scalper Dashboard</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap');
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            background: #0a0e17;
-            color: #e0e6ed;
-            padding: 20px;
-            line-height: 1.6;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            background: #050a15;
+            color: #c8d6e5;
+            padding: 24px;
+            line-height: 1.7;
+            min-height: 100vh;
+            background-image:
+                radial-gradient(ellipse at 20% 50%, rgba(0, 255, 200, 0.03) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(100, 80, 255, 0.03) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 80%, rgba(255, 50, 100, 0.02) 0%, transparent 50%);
         }}
-        .container {{ max-width: 1200px; margin: 0 auto; }}
+        .container {{ max-width: 1400px; margin: 0 auto; }}
         .header {{
             text-align: center;
-            padding: 30px 0;
-            border-bottom: 2px solid #1e3a5f;
-            margin-bottom: 30px;
+            padding: 40px 0 30px;
+            position: relative;
+        }}
+        .header::before {{
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 10%;
+            right: 10%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #00ffc8, #6450ff, #00ffc8, transparent);
         }}
         .header h1 {{
-            font-size: 1.8rem;
-            color: #4ecdc4;
-            letter-spacing: 2px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #00ffc8 0%, #6450ff 50%, #ff3264 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }}
+        .header .subtitle {{
+            font-family: 'Orbitron', sans-serif;
+            color: #4a5568;
+            font-size: 0.7rem;
+            margin-top: 8px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
         }}
         .header .timestamp {{
-            color: #6b7b8d;
-            font-size: 0.85rem;
-            margin-top: 8px;
+            color: #00ffc8;
+            font-size: 0.75rem;
+            margin-top: 12px;
+            opacity: 0.7;
+        }}
+        .header .mode-badge {{
+            display: inline-block;
+            margin-top: 12px;
+            padding: 4px 14px;
+            border: 1px solid #00ffc8;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            color: #00ffc8;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            animation: pulse-glow 2s ease-in-out infinite;
+        }}
+        @keyframes pulse-glow {{
+            0%, 100% {{ box-shadow: 0 0 5px rgba(0,255,200,0.3); }}
+            50% {{ box-shadow: 0 0 15px rgba(0,255,200,0.6); }}
         }}
         .metrics-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin: 30px 0;
         }}
         .metric-card {{
-            background: #141b2d;
-            border: 1px solid #1e3a5f;
-            border-radius: 8px;
-            padding: 15px;
+            background: linear-gradient(145deg, #0d1526 0%, #0a1020 100%);
+            border: 1px solid rgba(100, 80, 255, 0.2);
+            border-radius: 12px;
+            padding: 18px 14px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }}
+        .metric-card:hover {{
+            border-color: rgba(0, 255, 200, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 255, 200, 0.1);
+        }}
+        .metric-card::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #6450ff, transparent);
         }}
         .metric-card .label {{
-            font-size: 0.75rem;
-            color: #6b7b8d;
+            font-size: 0.65rem;
+            color: #5a6a7a;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 1.5px;
+            font-weight: 500;
         }}
         .metric-card .value {{
-            font-size: 1.5rem;
-            font-weight: bold;
-            margin-top: 5px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-top: 8px;
         }}
-        .positive {{ color: #4ecdc4; }}
-        .negative {{ color: #ff6b6b; }}
-        .neutral {{ color: #ffa726; }}
+        .positive {{ color: #00ffc8; }}
+        .negative {{ color: #ff3264; }}
+        .neutral {{ color: #ffaa00; }}
         .section {{
-            background: #141b2d;
-            border: 1px solid #1e3a5f;
-            border-radius: 8px;
-            padding: 20px;
+            background: linear-gradient(145deg, #0d1526 0%, #080e1c 100%);
+            border: 1px solid rgba(100, 80, 255, 0.15);
+            border-radius: 12px;
+            padding: 24px;
             margin-bottom: 20px;
+            position: relative;
+        }}
+        .section::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 20px;
+            right: 20px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(100, 80, 255, 0.4), transparent);
         }}
         .section h2 {{
-            color: #4ecdc4;
-            font-size: 1.1rem;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #1e3a5f;
+            font-family: 'Orbitron', sans-serif;
+            color: #6450ff;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-bottom: 18px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(100, 80, 255, 0.1);
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }}
         table {{
             width: 100%;
@@ -378,36 +476,49 @@ class DashboardRenderer:
         }}
         th {{
             text-align: left;
-            padding: 10px;
-            color: #6b7b8d;
-            font-size: 0.8rem;
+            padding: 12px 10px;
+            color: #5a6a7a;
+            font-size: 0.7rem;
             text-transform: uppercase;
-            border-bottom: 1px solid #1e3a5f;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(100, 80, 255, 0.15);
         }}
         td {{
-            padding: 10px;
-            border-bottom: 1px solid #0d1421;
-            font-size: 0.9rem;
+            padding: 12px 10px;
+            border-bottom: 1px solid rgba(100, 80, 255, 0.05);
+            font-size: 0.85rem;
         }}
-        tr:hover {{ background: #1a2235; }}
-        .equity-section {{
-            margin-top: 20px;
-        }}
+        tr:hover {{ background: rgba(0, 255, 200, 0.03); }}
+        .equity-section {{ margin-top: 20px; }}
         .footer {{
             text-align: center;
-            color: #6b7b8d;
-            font-size: 0.75rem;
-            margin-top: 30px;
+            color: #3a4a5a;
+            font-size: 0.65rem;
+            margin-top: 40px;
             padding-top: 20px;
-            border-top: 1px solid #1e3a5f;
+            border-top: 1px solid rgba(100, 80, 255, 0.1);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }}
+        pre {{
+            background: #050a12;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 0.75rem;
+            color: #00ffc8;
+            margin-top: 12px;
+            border: 1px solid rgba(0, 255, 200, 0.1);
         }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>PYTHON ML BRIDGE - PERFORMANCE REPORT</h1>
+            <h1>Python ML Bridge</h1>
+            <div class="subtitle">High-Frequency Scalper // Performance Analytics</div>
             <div class="timestamp">Generated: {timestamp}</div>
+            <div class="mode-badge">Live M1 XAUUSD</div>
         </div>
 
         <div class="metrics-grid">
@@ -417,7 +528,7 @@ class DashboardRenderer:
             </div>
             <div class="metric-card">
                 <div class="label">Total Trades</div>
-                <div class="value">{summary['total_trades']}</div>
+                <div class="value" style="color: #6450ff;">{summary['total_trades']}</div>
             </div>
             <div class="metric-card">
                 <div class="label">Win Rate</div>
@@ -457,12 +568,12 @@ class DashboardRenderer:
             </div>
             <div class="metric-card">
                 <div class="label">Payoff Ratio</div>
-                <div class="value">{summary['payoff_ratio']:.2f}</div>
+                <div class="value" style="color: #ffaa00;">{summary['payoff_ratio']:.2f}</div>
             </div>
         </div>
 
         <div class="section">
-            <h2>MODEL PERFORMANCE BREAKDOWN</h2>
+            <h2>Model Performance Breakdown</h2>
             <table>
                 <thead>
                     <tr>
@@ -481,7 +592,7 @@ class DashboardRenderer:
         </div>
 
         <div class="section">
-            <h2>REGIME PERFORMANCE BREAKDOWN</h2>
+            <h2>Regime Performance Breakdown</h2>
             <table>
                 <thead>
                     <tr>
@@ -499,7 +610,7 @@ class DashboardRenderer:
         </div>
 
         <div class="section">
-            <h2>TRADE STATISTICS</h2>
+            <h2>Trade Statistics</h2>
             <table>
                 <thead><tr><th>Metric</th><th>Value</th></tr></thead>
                 <tbody>
@@ -513,17 +624,15 @@ class DashboardRenderer:
         </div>
 
         <div class="section equity-section">
-            <h2>EQUITY CURVE DATA</h2>
-            <p style="color: #6b7b8d; font-size: 0.85rem;">
-                Equity curve data embedded as JSON for charting libraries (D3.js, Chart.js, etc.)
+            <h2>Equity Curve Data</h2>
+            <p style="color: #5a6a7a; font-size: 0.75rem; letter-spacing: 0.5px;">
+                Equity curve data embedded as JSON for charting libraries (D3.js, Chart.js, Lightweight Charts)
             </p>
-            <pre style="background: #0d1421; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.8rem; color: #4ecdc4; margin-top: 10px;">
-{json.dumps(summary['equity_curve'], indent=2)}
-            </pre>
+            <pre>{json.dumps(summary['equity_curve'], indent=2)}</pre>
         </div>
 
         <div class="footer">
-            Python ML Bridge Performance Dashboard | Prop Trading Analytics Engine
+            Python ML Bridge // Prop Trading Analytics Engine // HF Scalper v2.0
         </div>
     </div>
 </body>

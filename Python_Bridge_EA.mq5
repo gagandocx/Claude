@@ -31,6 +31,7 @@ input double   InpMaxLotSize       = 1.0;       // Maximum lot size
 input double   InpMinConfidence    = 0.15;      // Minimum confidence to trade
 input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
+input int      InpMaxOpenTrades    = 10;        // Max open trades (HF scalping)
 input bool     InpShowDashboard    = true;      // Show dashboard panel
 
 //+------------------------------------------------------------------+
@@ -287,7 +288,7 @@ bool ValidateSignal()
             }
         }
     }
-    if(posCount >= 3)  // Max 3 positions
+    if(posCount >= InpMaxOpenTrades)  // Max positions configurable for HF scalping
     {
         g_status = "Max positions reached (" + IntegerToString(posCount) + ")";
         return false;
@@ -553,24 +554,36 @@ void ModifyPositionSL(long ticket, double newSL)
 void UpdateDashboard()
 {
     string dashboard = "";
-    dashboard += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-    dashboard += "       PYTHON ML BRIDGE - Signal Executor\n";
-    dashboard += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
     dashboard += "\n";
-    dashboard += "  Status     : " + g_status + "\n";
-    dashboard += "  Last Signal: " + g_lastAction + "\n";
-    dashboard += "  Confidence : " + DoubleToString(g_lastConfidence, 4) + "\n";
-    dashboard += "  Model      : " + g_lastModel + "\n";
-    dashboard += "  Regime     : " + g_lastRegime + "\n";
-    dashboard += "  Lot Size   : " + DoubleToString(g_lastLotSize, 2) + "\n";
-    dashboard += "  SL (pips)  : " + DoubleToString(g_lastSLPips, 1) + "\n";
-    dashboard += "  TP (pips)  : " + DoubleToString(g_lastTPPips, 1) + "\n";
-    dashboard += "\n";
-    dashboard += "  Signals Read    : " + IntegerToString(g_signalsRead) + "\n";
-    dashboard += "  Trades Executed : " + IntegerToString(g_tradesExecuted) + "\n";
-    dashboard += "  Signal Time     : " + TimeToString(g_lastSignalTime) + "\n";
-    dashboard += "\n";
-    dashboard += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    dashboard += "  +========================================+\n";
+    dashboard += "  |  PYTHON ML BRIDGE // HF SCALPER v2.0   |\n";
+    dashboard += "  +========================================+\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  |  >>> STATUS                            |\n";
+    dashboard += "  |  " + g_status + "\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  |  >>> LAST SIGNAL                       |\n";
+    dashboard += "  |  Action ...... " + g_lastAction + "\n";
+    dashboard += "  |  Confidence .. " + DoubleToString(g_lastConfidence, 4) + "\n";
+    dashboard += "  |  Model ....... " + g_lastModel + "\n";
+    dashboard += "  |  Regime ...... " + g_lastRegime + "\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  |  >>> EXECUTION                         |\n";
+    dashboard += "  |  Lot Size .... " + DoubleToString(g_lastLotSize, 2) + "\n";
+    dashboard += "  |  SL (pips) ... " + DoubleToString(g_lastSLPips, 1) + "\n";
+    dashboard += "  |  TP (pips) ... " + DoubleToString(g_lastTPPips, 1) + "\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  |  >>> STATISTICS                        |\n";
+    dashboard += "  |  Signals ...... " + IntegerToString(g_signalsRead) + "\n";
+    dashboard += "  |  Trades ....... " + IntegerToString(g_tradesExecuted) + "\n";
+    dashboard += "  |  Max Positions. " + IntegerToString(InpMaxOpenTrades) + "\n";
+    dashboard += "  |  Signal Time .. " + TimeToString(g_lastSignalTime) + "\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  |  >>> SCALPER CONFIG                    |\n";
+    dashboard += "  |  Cycle: 10s | ATR Cap: $5             |\n";
+    dashboard += "  |  SL: ~$1 | TP: ~$1.50                |\n";
+    dashboard += "  |                                        |\n";
+    dashboard += "  +========================================+\n";
 
     Comment(dashboard);
 }

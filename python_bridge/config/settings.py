@@ -142,10 +142,10 @@ class SignalConfig:
     """Signal generation thresholds."""
     min_confidence: float = 0.15            # Very low threshold for aggressive trading
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 1.5          # SL = ATR * multiplier
-    atr_tp_multiplier: float = 2.5          # TP = ATR * multiplier (1:1.67 R:R)
+    atr_sl_multiplier: float = 0.2          # SL = ATR * multiplier (tight for M1 scalping)
+    atr_tp_multiplier: float = 0.3          # TP = ATR * multiplier (quick profit booking)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 5               # Minimal cooldown for aggressive trading
+    cooldown_seconds: int = 2               # Ultra-fast cooldown for HF scalping
 
 
 # ─────────────────────────────────────────────
@@ -158,7 +158,7 @@ class RiskConfig:
     max_daily_loss: float = 0.05            # 5% max daily loss
     max_drawdown: float = 0.10              # 10% max drawdown before halt
     max_correlation: float = 0.7            # Max correlation between open positions
-    max_open_positions: int = 3             # Maximum simultaneous positions
+    max_open_positions: int = 10            # High-frequency scalping: many concurrent positions
     kelly_fraction: float = 0.25            # Quarter-Kelly for safety
     account_balance: float = 10000.0        # Default account balance
     min_lot_size: float = 0.01              # Minimum lot size
@@ -419,7 +419,7 @@ class DashboardConfig:
 @dataclass
 class MainConfig:
     """Main loop configuration."""
-    interval_seconds: int = 15              # Fast 15-second cycle for aggressive trading
+    interval_seconds: int = 10              # Ultra-fast 10-second cycle for HF scalping
     log_level: str = "INFO"
     enable_sentiment: bool = True
     enable_alternative_data: bool = True
