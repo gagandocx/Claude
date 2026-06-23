@@ -98,6 +98,11 @@ int OnInit()
     g_trade.SetDeviationInPoints(InpSlippage);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
+    // Set up a 10-second timer for mid-bar signal pickup.
+    // This reduces the window where file contention causes stale signals
+    // by reading the signal file more frequently than once per new bar.
+    EventSetTimer(10);
+
     // Dashboard panel uses OBJ_RECTANGLE_LABEL which renders on top by default
     // No CHART_FOREGROUND manipulation needed - trades display normally on chart
 
@@ -105,6 +110,7 @@ int OnInit()
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
     Print("[PythonBridge] Signal file: ", InpSignalFile);
     Print("[PythonBridge] Min confidence: ", InpMinConfidence);
+    Print("[PythonBridge] Timer: 10s interval for mid-bar signal reading");
 
     return INIT_SUCCEEDED;
 }
@@ -114,12 +120,44 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+    // Kill the 10-second timer
+    EventKillTimer();
+
     // Remove all dashboard graphical objects
     ObjectsDeleteAll(0, "PB_");
     Comment("");
 
     ChartRedraw(0);
     Print("[PythonBridge] EA removed. Trades executed: ", g_tradesExecuted);
+}
+
+//+------------------------------------------------------------------+
+//| Timer function - mid-bar signal reading every 10 seconds           |
+//| Provides faster signal pickup to reduce stale signal window        |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+    // Read signal from Python bridge (mid-bar check)
+    if(ReadSignalFile())
+    {
+        g_signalsRead++;
+
+        // Validate and execute signal
+        if(ValidateSignal())
+        {
+            ExecuteSignal();
+        }
+    }
+
+    // Process exit signals from Smart Exit Manager (RL agent)
+    ProcessExitSignals();
+
+    // Read Python bridge status for dashboard news/warning display
+    ReadStatusFile();
+
+    // Update dashboard
+    if(InpShowDashboard)
+        UpdateDashboard();
 }
 
 //+------------------------------------------------------------------+

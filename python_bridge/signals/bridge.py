@@ -11,6 +11,7 @@
 import os
 import csv
 import time
+import logging
 import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -90,6 +91,9 @@ class MT5Bridge:
         Uses atomic write (write to temp file, then rename) to prevent
         race conditions where MT5 reads a partially-written file.
 
+        Includes retry logic for os.replace() to handle Windows file
+        locking when MT5 has the signal file open for reading.
+
         Plain ASCII text with CRLF line endings - no BOM, no UTF-8.
         This ensures MQL5's FileOpen with FILE_ANSI reads it cleanly.
 
@@ -99,6 +103,7 @@ class MT5Bridge:
         Returns:
             True if written successfully
         """
+        logger = logging.getLogger("PythonBridge")
         try:
             directory = os.path.dirname(self.signal_path) or "."
             # Write to a temporary file in the same directory
@@ -124,15 +129,87 @@ class MT5Bridge:
                         f"{signal.regime}\r\n"
                     )
                     f.write(data)
-                # Atomic rename (on POSIX this is atomic; on Windows it
-                # replaces if the target exists on Python 3.3+)
-                os.replace(tmp_path, self.signal_path)
+
+                # Atomic rename with retry logic for Windows file locking.
+                # On Windows, os.replace() can throw PermissionError if MT5
+                # has the target file open (FileOpen with FILE_READ).
+                max_retries = 3
+                replace_succeeded = False
+                for attempt in range(max_retries):
+                    try:
+                        os.replace(tmp_path, self.signal_path)
+                        replace_succeeded = True
+                        break
+                    except (PermissionError, OSError) as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"[Bridge] os.replace() attempt {attempt + 1}/{max_retries} "
+                                f"failed: {e}. Retrying in 0.05s..."
+                            )
+                            time.sleep(0.05)
+                        else:
+                            logger.warning(
+                                f"[Bridge] os.replace() failed after {max_retries} "
+                                f"attempts: {e}. Falling back to direct write."
+                            )
+
+                # Fallback: if atomic replace failed after all retries,
+                # try delete-then-rename, or direct write as last resort
+                if not replace_succeeded:
+                    try:
+                        # Fallback 1: delete target then rename temp
+                        if os.path.exists(self.signal_path):
+                            os.unlink(self.signal_path)
+                        os.rename(tmp_path, self.signal_path)
+                        replace_succeeded = True
+                        logger.warning(
+                            "[Bridge] Fallback (unlink+rename) succeeded."
+                        )
+                    except (PermissionError, OSError) as e2:
+                        logger.warning(
+                            f"[Bridge] Fallback unlink+rename failed: {e2}. "
+                            f"Using direct write."
+                        )
+                        # Fallback 2: direct write to target path
+                        try:
+                            with open(self.signal_path, "w", encoding="ascii",
+                                      newline="") as f:
+                                header = ",".join(SIGNAL_HEADERS) + "\r\n"
+                                f.write(header)
+                                data = (
+                                    f"{signal.timestamp},"
+                                    f"{signal.symbol},"
+                                    f"{signal.action},"
+                                    f"{signal.confidence:.4f},"
+                                    f"{signal.sl_pips:.1f},"
+                                    f"{signal.tp_pips:.1f},"
+                                    f"{signal.lot_size:.2f},"
+                                    f"{signal.model_name},"
+                                    f"{signal.regime}\r\n"
+                                )
+                                f.write(data)
+                            replace_succeeded = True
+                            logger.warning(
+                                "[Bridge] Direct write fallback succeeded."
+                            )
+                        except Exception as e3:
+                            logger.error(
+                                f"[Bridge] All write methods failed: {e3}"
+                            )
+                        finally:
+                            # Clean up temp file if it still exists
+                            if os.path.exists(tmp_path):
+                                try:
+                                    os.unlink(tmp_path)
+                                except OSError:
+                                    pass
+
             except Exception:
                 # Clean up temp file on error
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                 raise
-            return True
+            return replace_succeeded
         except Exception as e:
             print(f"[Bridge] Error writing signal: {e}")
             return False

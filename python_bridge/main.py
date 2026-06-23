@@ -417,7 +417,17 @@ class PythonMLBridge:
 
             # 10. Write signal to bridge
             if signal.action != "HOLD":
-                self.bridge.write_signal(signal)
+                write_ok = self.bridge.write_signal(signal)
+                if not write_ok:
+                    self.logger.warning(
+                        "Signal write failed, retrying once..."
+                    )
+                    time.sleep(0.05)
+                    write_ok = self.bridge.write_signal(signal)
+                    if not write_ok:
+                        self.logger.warning(
+                            "Signal write retry also failed. Signal may be stale on disk."
+                        )
                 self.logger.info(
                     f"Signal: {signal.action} | Conf: {signal.confidence:.2f} | "
                     f"Lot: {signal.lot_size} | Regime: {signal.regime}"

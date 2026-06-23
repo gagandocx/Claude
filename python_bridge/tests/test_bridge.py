@@ -10,6 +10,7 @@ import pytest
 import os
 import tempfile
 import time
+from unittest.mock import patch, MagicMock
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -278,3 +279,152 @@ class TestCSVFormat:
         assert result["sl_pips"] == "120.0"
         assert result["tp_pips"] == "200.0"
         assert result["lot_size"] == "0.05"
+
+
+# ─────────────────────────────────────────────
+#  RETRY LOGIC TESTS
+# ─────────────────────────────────────────────
+class TestWriteSignalRetry:
+    """Tests for write_signal() retry logic on PermissionError/OSError."""
+
+    def test_retry_succeeds_on_second_attempt(self, bridge, sample_signal):
+        """Test that write_signal retries and succeeds when os.replace fails once."""
+        call_count = [0]
+        original_replace = os.replace
+
+        def mock_replace(src, dst):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise PermissionError("File in use by another process")
+            return original_replace(src, dst)
+
+        with patch("os.replace", side_effect=mock_replace):
+            result = bridge.write_signal(sample_signal)
+
+        assert result is True
+        assert call_count[0] == 2
+        # Verify signal was actually written
+        signal = bridge.read_signal()
+        assert signal is not None
+        assert signal["action"] == "BUY"
+        assert signal["symbol"] == "XAUUSD"
+
+    def test_retry_succeeds_on_third_attempt(self, bridge, sample_signal):
+        """Test that write_signal retries up to 3 times and succeeds on third."""
+        call_count = [0]
+        original_replace = os.replace
+
+        def mock_replace(src, dst):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                raise PermissionError("File in use by another process")
+            return original_replace(src, dst)
+
+        with patch("os.replace", side_effect=mock_replace):
+            result = bridge.write_signal(sample_signal)
+
+        assert result is True
+        assert call_count[0] == 3
+        # Verify signal was actually written
+        signal = bridge.read_signal()
+        assert signal is not None
+        assert signal["action"] == "BUY"
+
+    def test_fallback_after_all_retries_fail(self, bridge, sample_signal):
+        """Test fallback to direct write when all os.replace retries fail."""
+        def mock_replace(src, dst):
+            raise PermissionError("File permanently locked")
+
+        with patch("os.replace", side_effect=mock_replace):
+            result = bridge.write_signal(sample_signal)
+
+        # Should succeed via fallback (unlink+rename or direct write)
+        assert result is True
+        # Verify signal was actually written via fallback
+        signal = bridge.read_signal()
+        assert signal is not None
+        assert signal["action"] == "BUY"
+        assert signal["symbol"] == "XAUUSD"
+        assert signal["confidence"] == "0.8532"
+
+    def test_retry_handles_oserror(self, bridge, sample_signal):
+        """Test that retry logic also catches OSError (not just PermissionError)."""
+        call_count = [0]
+        original_replace = os.replace
+
+        def mock_replace(src, dst):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise OSError("Filesystem busy")
+            return original_replace(src, dst)
+
+        with patch("os.replace", side_effect=mock_replace):
+            result = bridge.write_signal(sample_signal)
+
+        assert result is True
+        assert call_count[0] == 2
+
+    def test_retry_logs_warnings(self, bridge, sample_signal, caplog):
+        """Test that retry attempts are logged as warnings."""
+        import logging
+        call_count = [0]
+        original_replace = os.replace
+
+        def mock_replace(src, dst):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise PermissionError("File in use")
+            return original_replace(src, dst)
+
+        with caplog.at_level(logging.WARNING, logger="PythonBridge"):
+            with patch("os.replace", side_effect=mock_replace):
+                result = bridge.write_signal(sample_signal)
+
+        assert result is True
+        # Check that a warning was logged about the retry
+        assert any("os.replace()" in record.message and "attempt" in record.message
+                   for record in caplog.records)
+
+    def test_no_retry_on_success(self, bridge, sample_signal):
+        """Test that no retry happens when os.replace succeeds immediately."""
+        call_count = [0]
+        original_replace = os.replace
+
+        def mock_replace(src, dst):
+            call_count[0] += 1
+            return original_replace(src, dst)
+
+        with patch("os.replace", side_effect=mock_replace):
+            result = bridge.write_signal(sample_signal)
+
+        assert result is True
+        assert call_count[0] == 1
+
+    def test_fallback_direct_write_when_unlink_also_fails(self, bridge, sample_signal):
+        """Test that direct write fallback is used when unlink+rename also fails."""
+        replace_calls = [0]
+        unlink_calls = [0]
+        original_unlink = os.unlink
+
+        def mock_replace(src, dst):
+            raise PermissionError("File permanently locked")
+
+        def mock_unlink(path):
+            unlink_calls[0] += 1
+            # Only raise for the signal file (the fallback unlink), not temp cleanup
+            if "signal_" not in os.path.basename(path):
+                raise PermissionError("Cannot delete locked file")
+            return original_unlink(path)
+
+        # First write a signal so the file exists (for fallback unlink to target)
+        bridge.write_signal(sample_signal)
+
+        with patch("os.replace", side_effect=mock_replace):
+            with patch("os.unlink", side_effect=mock_unlink):
+                result = bridge.write_signal(sample_signal)
+
+        # Should still succeed via direct write fallback
+        assert result is True
+        signal = bridge.read_signal()
+        assert signal is not None
+        assert signal["action"] == "BUY"
