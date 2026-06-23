@@ -125,8 +125,8 @@ class DataConfig:
     sr_lookback: int = 100                  # Bars for S/R level detection
 
     # Momentum parameters
-    momentum_lookback: int = 8              # 8-bar momentum lookback (smoother, less noise)
-    momentum_threshold: float = 2.0         # Min price move for momentum ($2.00 for gold - catch more moves)
+    momentum_lookback: int = 6              # 6-bar momentum lookback (faster reaction)
+    momentum_threshold: float = 1.50        # Min price move for momentum ($1.50 for gold - aggressive)
 
     # RSI exhaustion filter thresholds
     rsi_overbought: int = 65               # RSI above this = overbought
@@ -166,7 +166,7 @@ class SignalConfig:
     atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 20              # 20-second cooldown between signals (more active trading)
+    cooldown_seconds: int = 10              # 10-second cooldown between signals (maximum trade frequency)
 
 
 # ─────────────────────────────────────────────
@@ -180,7 +180,7 @@ class RiskConfig:
     max_daily_loss_dollars: float = 50.0    # Absolute dollar drawdown cap per day
     max_drawdown: float = 0.10              # 10% max drawdown before halt
     max_correlation: float = 0.7            # Max correlation between open positions
-    max_open_positions: int = 3             # Allow 3 concurrent positions for more opportunities
+    max_open_positions: int = 4             # Allow 4 concurrent positions for maximum opportunities
     kelly_fraction: float = 0.25            # Quarter-Kelly for safety
     account_balance: float = 10000.0        # Default account balance
     min_lot_size: float = 0.01              # Minimum lot size
@@ -508,7 +508,7 @@ class AdaptiveMomentumConfig:
 class PriceStructureConfig:
     """Price action structure detection configuration."""
     swing_lookback: int = 20                 # Bars to analyze for structure
-    confidence_penalty: float = 0.15         # Penalty when momentum opposes structure
+    confidence_penalty: float = 0.05         # Small penalty when momentum opposes structure
 
 
 # ─────────────────────────────────────────────

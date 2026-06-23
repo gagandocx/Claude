@@ -1036,14 +1036,17 @@ class SignalGenerator:
                             "no range extremes)")
                 return hold_signal
 
-        # 1a. SESSION FILTER: Only trade during London, NY, or overlap sessions
-        # Block Asian and off-session entries (low liquidity, choppy price action)
-        if session not in ("london", "newyork", "overlap"):
-            logger.info("[SignalGen] HOLD - session '%s' blocked (only London/NY/overlap allowed)",
-                        session)
-            return hold_signal
+        # 1a. SESSION FILTER: Allow ALL sessions with reduced confidence for low-liquidity
+        # Asian and off-session trade with reduced confidence multiplier
+        session_confidence_mult = 1.0
+        if session == "asian":
+            session_confidence_mult = 0.6  # Asian session: 0.6x multiplier
+            logger.info("[SignalGen] Asian session detected - trading with 0.6x confidence multiplier")
+        elif session == "off_session":
+            session_confidence_mult = 0.5  # Off-session: 0.5x multiplier
+            logger.info("[SignalGen] Off-session detected - trading with 0.5x confidence multiplier")
 
-        # 1a2. DAILY TRADE LIMIT: Max 15 trades per day to enforce quality
+        # 1a2. DAILY TRADE LIMIT: Max 30 trades per day for aggressive trading
         current_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if not hasattr(self, '_trade_day'):
             self._trade_day = current_day
@@ -1051,14 +1054,14 @@ class SignalGenerator:
         if self._trade_day != current_day:
             self._trade_day = current_day
             self._trades_today = 0
-        if self._trades_today >= 15:
+        if self._trades_today >= 30:
             logger.info("[SignalGen] HOLD - daily trade limit reached (%d trades today)",
                         self._trades_today)
             return hold_signal
 
         # 1a3. RSI ZONE FILTER: Require RSI in favorable zone
-        # BUY: RSI must be 28-65 (wider zone, catch more moves)
-        # SELL: RSI must be 35-72 (wider zone, catch more moves)
+        # BUY: RSI must be 25-70 (ultra-wide zone for max trades)
+        # SELL: RSI must be 30-75 (ultra-wide zone for max trades)
         import pandas as pd
         rsi_zone_ok = True
         current_rsi_for_zone = None
@@ -1068,13 +1071,13 @@ class SignalGenerator:
                 if rsi_zone_series is not None and len(rsi_zone_series) > 0:
                     current_rsi_for_zone = float(rsi_zone_series.iloc[-1])
                     if not np.isnan(current_rsi_for_zone):
-                        if momentum_direction == "BUY" and not (28 <= current_rsi_for_zone <= 65):
+                        if momentum_direction == "BUY" and not (25 <= current_rsi_for_zone <= 70):
                             rsi_zone_ok = False
-                            logger.info("[SignalGen] HOLD - RSI zone filter: BUY requires RSI 28-65, "
+                            logger.info("[SignalGen] HOLD - RSI zone filter: BUY requires RSI 25-70, "
                                         "got RSI=%.1f", current_rsi_for_zone)
-                        elif momentum_direction == "SELL" and not (35 <= current_rsi_for_zone <= 72):
+                        elif momentum_direction == "SELL" and not (30 <= current_rsi_for_zone <= 75):
                             rsi_zone_ok = False
-                            logger.info("[SignalGen] HOLD - RSI zone filter: SELL requires RSI 35-72, "
+                            logger.info("[SignalGen] HOLD - RSI zone filter: SELL requires RSI 30-75, "
                                         "got RSI=%.1f", current_rsi_for_zone)
             except Exception as e:
                 logger.warning("[SignalGen] RSI zone filter error: %s", e)
@@ -1265,7 +1268,11 @@ class SignalGenerator:
                         self.liquidity_sweep_config.confidence_boost)
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
-        # 6. Apply confidence threshold (timing gate)
+        # 6. Apply session confidence multiplier and confidence threshold (timing gate)
+        # Asian/off-session trades get reduced confidence to filter out marginal signals
+        timing_confidence *= session_confidence_mult
+        timing_confidence = max(0.0, min(1.0, timing_confidence))
+
         min_confidence = regime_adjustments.get(
             "confidence_threshold", self.signal_config.min_confidence
         )

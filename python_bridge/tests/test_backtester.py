@@ -78,9 +78,10 @@ class TestMomentumDirection:
 
     def test_flat_at_exact_threshold(self):
         """FLAT when price move equals exactly MOMENTUM_THRESHOLD (not strictly greater)."""
-        closes = pd.Series([2000.0, 2000.2, 2000.4, 2000.6, 2000.8, 2001.0, 2001.3, 2001.6, 2002.0])
-        # index=8: close[8]-close[0] = 2.0, not > 2.00 -> FLAT
-        result = compute_momentum_direction(closes, 8)
+        # With MOMENTUM_THRESHOLD = 1.50, a move of exactly $1.50 should be FLAT (not > 1.50)
+        closes = pd.Series([2000.0, 2000.2, 2000.3, 2000.5, 2000.7, 2001.0, 2001.5])
+        # index=6: close[6]-close[0] = 1.5, not > 1.50 -> FLAT
+        result = compute_momentum_direction(closes, 6)
         assert result == "FLAT"
 
     def test_flat_when_insufficient_bars(self):
@@ -335,7 +336,7 @@ class TestMaxPositionLimit:
         backtester = Backtester(verbose=False)
         results = backtester.run(df)
 
-        assert MAX_POSITIONS == 2  # Confirm the limit constant (2 concurrent positions)
+        assert MAX_POSITIONS == 3  # Confirm the limit constant (3 concurrent positions)
         # The backtest should complete without errors - the limit is enforced
         assert results["summary"]["total_trades"] >= 0
 
@@ -485,8 +486,8 @@ class TestEntryCooldown:
     """Tests for entry cooldown (min_bars_between_entries)."""
 
     def test_default_cooldown_is_15_bars(self):
-        """Default MIN_BARS_BETWEEN_ENTRIES is 20 (~20 minute cooldown)."""
-        assert MIN_BARS_BETWEEN_ENTRIES == 20
+        """Default MIN_BARS_BETWEEN_ENTRIES is 10 (~10 minute cooldown)."""
+        assert MIN_BARS_BETWEEN_ENTRIES == 10
 
     def test_cooldown_prevents_consecutive_entries(self):
         """Entries should not occur on consecutive bars due to cooldown."""

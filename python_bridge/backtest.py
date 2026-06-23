@@ -36,14 +36,14 @@ from data.market_data import MarketDataFetcher
 # ─────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────
-DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (balanced for gold M1)
-MAX_POSITIONS = 2               # Allow 2 concurrent positions for more opportunity
+DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (unchanged - trailing stops manage risk)
+MAX_POSITIONS = 3               # Allow 3 concurrent positions for maximum opportunity
 MAX_HOLD_BARS = 90              # Max bars to hold a trade (1.5 hours on M1)
-MOMENTUM_LOOKBACK = 8           # 8 bars for momentum detection
-MOMENTUM_THRESHOLD = 2.00       # $2.00 for momentum direction (catch more moves)
+MOMENTUM_LOOKBACK = 6           # 6 bars for faster momentum reaction
+MOMENTUM_THRESHOLD = 1.50       # $1.50 for momentum direction (catch even smaller moves)
 MOMENTUM_EXIT_THRESHOLD = 2.50  # $2.50 reversal triggers exit
-MIN_BARS_BETWEEN_ENTRIES = 20   # Minimum bars between entries (~20 minute cooldown)
-MAX_TRADES_PER_DAY = 8          # Maximum trades per calendar day (more active)
+MIN_BARS_BETWEEN_ENTRIES = 10   # Minimum bars between entries (~10 minute cooldown)
+MAX_TRADES_PER_DAY = 15         # Maximum trades per calendar day (aggressive)
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 65
 RSI_OVERSOLD = 35
@@ -671,21 +671,26 @@ class Backtester:
                             elif momentum == "SELL" and rsi_value < RSI_OVERSOLD:
                                 rsi_ok = False
 
-                            # RSI zone filter: require RSI in favorable zone
-                            # BUY: RSI 30-65 (wider zone, catch more moves)
-                            # SELL: RSI 35-70 (wider zone, catch more moves)
+                            # RSI zone filter: ultra-wide zones for maximum trade frequency
+                            # BUY: RSI 25-70 (very wide, only block extreme overbought)
+                            # SELL: RSI 30-75 (very wide, only block extreme oversold)
                             if rsi_ok:
-                                if momentum == "BUY" and not (30 <= rsi_value <= 65):
+                                if momentum == "BUY" and not (25 <= rsi_value <= 70):
                                     rsi_ok = False
-                                elif momentum == "SELL" and not (35 <= rsi_value <= 70):
+                                elif momentum == "SELL" and not (30 <= rsi_value <= 75):
                                     rsi_ok = False
 
                             if rsi_ok:
                                 session = detect_session(bar_time)
 
-                                # Session filter: trade during London, NY, or overlap
-                                if session not in ("london", "overlap", "newyork"):
-                                    continue
+                                # Session filter: allow ALL sessions
+                                # Asian session trades with reduced confidence (0.6x multiplier)
+                                # London, NY, overlap trade at full confidence
+                                session_confidence_mult = 1.0
+                                if session == "asian":
+                                    session_confidence_mult = 0.6  # Reduced confidence for Asian
+                                elif session == "off_session":
+                                    session_confidence_mult = 0.5  # Even lower for off-session
 
                                 # Price structure alignment: use as confidence boost, not hard block
                                 # Structure confirmation adds confidence; opposing structure reduces it
@@ -714,27 +719,11 @@ class Backtester:
                                         elif momentum == "SELL" and current_price > ema50:
                                             ema_boost = -0.05  # Against EMA, small penalty
 
-                                    # Pullback filter: less strict - allow entry within $1 of high
-                                    # (don't chase extreme peaks/troughs but allow recent-high entries)
-                                    pullback_ok = True
-                                    if i >= 5:
-                                        recent_highs = df["High"].iloc[i - 5:i]
-                                        recent_lows = df["Low"].iloc[i - 5:i]
-                                        if momentum == "BUY":
-                                            # Allow if price is within $1 of recent high
-                                            recent_high = float(recent_highs.max())
-                                            if current_price > recent_high + 1.0:
-                                                pullback_ok = False
-                                        elif momentum == "SELL":
-                                            # Allow if price is within $1 of recent low
-                                            recent_low = float(recent_lows.min())
-                                            if current_price < recent_low - 1.0:
-                                                pullback_ok = False
+                                    # Pullback filter: REMOVED - was blocking too many trades
+                                    # Trailing stops manage risk, no need for entry filtering
 
-                                    if not pullback_ok:
-                                        continue
-
-                                    # ATR volatility filter: only trade when ATR is 1.0-6.0
+                                    # ATR volatility filter: ultra-wide range (0.5-8.0)
+                                    # Only block dead markets and extreme spikes
                                     atr_ok = True
                                     if i >= 14:
                                         highs_arr = df["High"].iloc[i - 14:i].values
@@ -749,7 +738,7 @@ class Backtester:
                                             )
                                             tr_values.append(tr)
                                         atr_val = np.mean(tr_values) if tr_values else 0.0
-                                        if atr_val < 1.0 or atr_val > 6.0:
+                                        if atr_val < 0.5 or atr_val > 8.0:
                                             atr_ok = False
 
                                     if not atr_ok:
@@ -767,10 +756,13 @@ class Backtester:
 
                                     # Apply structure and EMA boosts to confidence
                                     confidence += structure_boost + ema_boost
+
+                                    # Apply session multiplier (Asian/off-session get reduced confidence)
+                                    confidence *= session_confidence_mult
                                     confidence = max(0.0, min(0.95, confidence))
 
-                                    # Minimum confidence filter: lower threshold for more trades
-                                    if confidence < 0.50:
+                                    # Minimum confidence filter: very low threshold for max trades
+                                    if confidence < 0.35:
                                         continue
 
                                     entry_time_str = str(bar_time)
