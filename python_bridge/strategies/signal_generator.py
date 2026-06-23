@@ -863,7 +863,8 @@ class SignalGenerator:
                         adx_series: Optional[object] = None,
                         vix_level: Optional[float] = None,
                         htf_bias: Optional[Dict] = None,
-                        cross_pair_info: Optional[Dict] = None) -> TradeSignal:
+                        cross_pair_info: Optional[Dict] = None,
+                        prices_m1: Optional[object] = None) -> TradeSignal:
         """
         Generate a trade signal using momentum for DIRECTION and AI for TIMING.
 
@@ -961,6 +962,9 @@ class SignalGenerator:
                 return hold_signal
 
         # 1. Session awareness - detect and log current session
+        # Use M1 data for momentum/direction when available, fall back to H1
+        momentum_prices = prices_m1 if prices_m1 is not None else prices
+
         session = self._detect_session()
         session_multiplier = self._get_session_multiplier(session)
         logger.info("[SignalGen] Session: %s (position multiplier: %.2f)", session, session_multiplier)
@@ -974,15 +978,15 @@ class SignalGenerator:
         import pandas as pd
         adaptive_atr_val = None
         avg_atr_val = None
-        if isinstance(prices, pd.DataFrame) and "High" in prices.columns and "Low" in prices.columns:
+        if isinstance(momentum_prices, pd.DataFrame) and "High" in momentum_prices.columns and "Low" in momentum_prices.columns:
             atr_period = self.adaptive_momentum_config.atr_avg_period
-            if len(prices) >= atr_period + 1:
-                recent_ranges = (prices["High"].iloc[-atr_period:] - prices["Low"].iloc[-atr_period:]).values
+            if len(momentum_prices) >= atr_period + 1:
+                recent_ranges = (momentum_prices["High"].iloc[-atr_period:] - momentum_prices["Low"].iloc[-atr_period:]).values
                 avg_atr_val = float(np.mean(recent_ranges))
-                adaptive_atr_val = float(prices["High"].iloc[-1] - prices["Low"].iloc[-1])
+                adaptive_atr_val = float(momentum_prices["High"].iloc[-1] - momentum_prices["Low"].iloc[-1])
 
         # 1d. Compute momentum direction from recent price action (adaptive)
-        momentum_direction = self._compute_momentum_direction(prices, adaptive_atr=adaptive_atr_val, avg_atr=avg_atr_val)
+        momentum_direction = self._compute_momentum_direction(momentum_prices, adaptive_atr=adaptive_atr_val, avg_atr=avg_atr_val)
         logger.info("[SignalGen] Momentum direction: %s", momentum_direction)
 
         # Initialize range_signal (set to a value inside the FLAT block if range trading triggers)
@@ -1065,9 +1069,9 @@ class SignalGenerator:
         import pandas as pd
         rsi_zone_ok = True
         current_rsi_for_zone = None
-        if isinstance(prices, pd.DataFrame) and "Close" in prices.columns:
+        if isinstance(momentum_prices, pd.DataFrame) and "Close" in momentum_prices.columns:
             try:
-                rsi_zone_series = ta.momentum.rsi(prices["Close"], window=14)
+                rsi_zone_series = ta.momentum.rsi(momentum_prices["Close"], window=14)
                 if rsi_zone_series is not None and len(rsi_zone_series) > 0:
                     current_rsi_for_zone = float(rsi_zone_series.iloc[-1])
                     if not np.isnan(current_rsi_for_zone):
@@ -1087,7 +1091,7 @@ class SignalGenerator:
 
         # 1a4. PRICE STRUCTURE ALIGNMENT: Confidence penalty instead of hard block
         # Opposing structure reduces confidence but does not prevent trade entry
-        structure_check = self._detect_price_structure(prices)
+        structure_check = self._detect_price_structure(momentum_prices)
         if structure_check != "no_structure":
             if momentum_direction == "BUY" and structure_check == "downtrend":
                 logger.info("[SignalGen] Price structure penalty: BUY against confirmed downtrend "
@@ -1181,7 +1185,7 @@ class SignalGenerator:
         # At inference time with short live feeds, this filter silently skips. This is
         # acceptable because S/R is a supplementary confidence penalty, not a gate.
         sr_levels = self._detect_support_resistance(
-            prices, lookback=self.data_config.sr_lookback
+            momentum_prices, lookback=self.data_config.sr_lookback
         )
         if sr_levels["nearest_resistance"] is not None and atr > 0:
             if (action == "BUY" and
@@ -1204,9 +1208,9 @@ class SignalGenerator:
         # scalper where the goal is to slightly reduce position sizing rather than
         # gate entries aggressively.
         import pandas as pd
-        if isinstance(prices, pd.DataFrame) and "Close" in prices.columns:
+        if isinstance(momentum_prices, pd.DataFrame) and "Close" in momentum_prices.columns:
             try:
-                rsi_series = ta.momentum.rsi(prices["Close"], window=14)
+                rsi_series = ta.momentum.rsi(momentum_prices["Close"], window=14)
                 if rsi_series is not None and len(rsi_series) > 0:
                     current_rsi = float(rsi_series.iloc[-1])
                     if not np.isnan(current_rsi):
@@ -1223,7 +1227,7 @@ class SignalGenerator:
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         # 5d. Price structure check - penalize if momentum opposes structure
-        structure = self._detect_price_structure(prices)
+        structure = self._detect_price_structure(momentum_prices)
         if structure != "no_structure":
             logger.info("[SignalGen] Price structure: %s", structure)
             if action == "BUY" and structure == "downtrend":
@@ -1295,8 +1299,9 @@ class SignalGenerator:
         if atr <= 0:
             atr = 3.0  # Default ATR for gold M1 scalping
 
-        # Cap ATR to prevent H1 ATR values inflating M1 scalp SL/TP
-        atr = min(atr, 5.0)
+        # Cap ATR to prevent excessively large SL/TP values
+        # With M1 ATR (~$2-3), this cap rarely triggers but protects against bad data
+        atr = min(atr, 8.0)
 
         sl_mult = self.signal_config.atr_sl_multiplier * regime_adjustments.get("sl_mult", 1.0)
         tp_mult = self.signal_config.atr_tp_multiplier * regime_adjustments.get("tp_mult", 1.0)

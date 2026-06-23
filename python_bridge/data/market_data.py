@@ -359,14 +359,43 @@ class MarketDataFetcher:
 
         return data.reshape(1, seq_length, -1)
 
-    def get_current_atr(self) -> float:
-        """Get the current ATR value for position sizing (14-period default)."""
-        df = self.fetch_ohlcv()
+    def get_current_atr(self, interval: str = "1h", period: str = "3mo") -> float:
+        """Get the current ATR value for position sizing (14-period default).
+
+        Args:
+            interval: Bar interval for ATR calculation (default '1h')
+            period: Data period to fetch (default '3mo')
+
+        Returns:
+            ATR value, 0.0 on failure
+        """
+        df = self.fetch_ohlcv(interval=interval, period=period)
         if df.empty:
             return 0.0
         atr = ta.volatility.average_true_range(
             df["High"], df["Low"], df["Close"],
             window=self.config.atr_period
+        )
+        return float(atr.iloc[-1]) if not atr.empty else 0.0
+
+    def get_m1_atr(self, period: int = 14) -> float:
+        """Get the current ATR value from M1 data for scalping SL/TP sizing.
+
+        M1 ATR is much smaller than H1 ATR (~$2-3 vs $10-15 for gold),
+        giving proper scalping-sized stop losses.
+
+        Args:
+            period: ATR lookback period (default 14 bars = 14 minutes on M1)
+
+        Returns:
+            M1 ATR value (~$2-3 for gold), 0.0 on failure
+        """
+        df = self.fetch_ohlcv(interval="1m", period="5d")
+        if df.empty or len(df) < period + 1:
+            return 0.0
+        atr = ta.volatility.average_true_range(
+            df["High"], df["Low"], df["Close"],
+            window=period
         )
         return float(atr.iloc[-1]) if not atr.empty else 0.0
 

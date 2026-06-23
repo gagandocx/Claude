@@ -20,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-VERSION = "5.2"
+VERSION = "5.3"
 
 import numpy as np
 import pandas as pd
@@ -337,6 +337,18 @@ class PythonMLBridge:
                 result["error"] = "No market data available"
                 return result
 
+            # 1b. Fetch M1 data for momentum direction and M1 ATR sizing
+            # M1 gives 7-minute momentum (vs 7-hour from H1) - correct for scalping
+            df_m1 = None
+            try:
+                df_m1 = self.data_fetcher.fetch_ohlcv(interval="1m", period="5d")
+                if df_m1.empty:
+                    self.logger.warning("[M1 Data] M1 fetch returned empty - falling back to H1 for momentum")
+                    df_m1 = None
+            except Exception as e:
+                self.logger.warning(f"[M1 Data] M1 fetch error: {e} - falling back to H1 for momentum")
+                df_m1 = None
+
             # 2. Compute features
             features_df = self.data_fetcher.compute_features(df)
             if features_df.empty:
@@ -351,8 +363,17 @@ class PythonMLBridge:
                 return result
 
             # 4. Get ATR and current price
-            atr = self.data_fetcher.get_current_atr()
-            current_price = float(df["Close"].iloc[-1])
+            # Use M1 ATR for SL/TP sizing (~$2-3 for proper scalping stops)
+            # Fall back to H1 ATR if M1 unavailable
+            if df_m1 is not None and not df_m1.empty:
+                atr = self.data_fetcher.get_m1_atr()
+                if atr <= 0:
+                    atr = self.data_fetcher.get_current_atr()
+                # Use M1 close for most current price
+                current_price = float(df_m1["Close"].iloc[-1])
+            else:
+                atr = self.data_fetcher.get_current_atr()
+                current_price = float(df["Close"].iloc[-1])
 
             # 5. Get ADX for regime detection
             adx_series = None
@@ -415,6 +436,7 @@ class PythonMLBridge:
                 vix_level=vix_level,
                 htf_bias=htf_bias,
                 cross_pair_info=cross_pair_info,
+                prices_m1=df_m1,
             )
 
             # 10. Write signal to bridge

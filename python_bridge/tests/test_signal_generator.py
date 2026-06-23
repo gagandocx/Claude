@@ -343,21 +343,25 @@ class TestMomentumDirection:
     """Tests for the momentum-based direction computation."""
 
     def test_momentum_buy_when_prices_rising(self):
-        """Test that BUY is generated when last 3 candles are up."""
+        """Test that BUY is generated when prices are rising above threshold."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
         # Create prices that rise over the last few bars
+        # With momentum_lookback=6, need len >= 8 (lookback+2)
+        # close[-1] vs close[-7]: 2005.0 - 2000.0 = $5 > $1.50 threshold
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.5, 2003.0]
+            "Close": [2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2003.0, 2004.0, 2005.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
 
     def test_momentum_sell_when_prices_falling(self):
-        """Test that SELL is generated when last 3 candles are down."""
+        """Test that SELL is generated when prices are falling below threshold."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
         # Create prices that fall over the last few bars
+        # With momentum_lookback=6, need len >= 8 (lookback+2)
+        # close[-1] vs close[-7]: 2000.0 - 2005.0 = -$5 > $1.50 threshold
         prices = pd.DataFrame({
-            "Close": [2005.0, 2004.5, 2004.0, 2003.5, 2003.0, 2002.5, 2002.0]
+            "Close": [2005.0, 2004.5, 2004.0, 2003.5, 2003.0, 2002.0, 2001.0, 2000.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "SELL"
@@ -365,9 +369,10 @@ class TestMomentumDirection:
     def test_momentum_flat_when_no_movement(self):
         """Test that FLAT is returned when price movement is below threshold."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Create prices with very small movement (< $0.50)
+        # Create prices with very small movement (< $1.50 threshold)
+        # Need 8+ data points for lookback=6
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.1, 2000.2, 2000.1, 2000.3, 2000.2, 2000.3]
+            "Close": [2000.0, 2000.1, 2000.2, 2000.1, 2000.3, 2000.2, 2000.3, 2000.4]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
@@ -375,7 +380,7 @@ class TestMomentumDirection:
     def test_momentum_flat_with_insufficient_data(self):
         """Test that FLAT is returned when insufficient price data."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Only 2 bars - not enough for 5-bar lookback (needs 7)
+        # Only 2 bars - not enough for 6-bar lookback (needs 8)
         prices = pd.DataFrame({
             "Close": [2000.0, 2001.0]
         })
@@ -385,29 +390,29 @@ class TestMomentumDirection:
     def test_momentum_with_numpy_array(self):
         """Test momentum computation with numpy array input."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Rising prices as numpy array (needs 7+ bars for 5-bar lookback)
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
+        # Rising prices as numpy array (needs 8+ bars for 6-bar lookback)
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
 
     def test_momentum_threshold_boundary(self):
-        """Test that exactly $0.50 movement is still FLAT."""
+        """Test that movement below $1.50 threshold is still FLAT."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # With 5-bar lookback: close[-1] vs close[-6]
-        # close[-6]=2000.0, close[-1]=2000.49, diff=+0.49 < 0.5 => FLAT
+        # With 6-bar lookback on 8 elements: close[-7]=close[1], close[-1]=close[7]
+        # close[1]=2000.0, close[7]=2001.4, diff=+1.4 < 1.5 => FLAT
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.1, 2000.2, 2000.1, 2000.3, 2000.2, 2000.49]
+            "Close": [1999.5, 2000.0, 2000.1, 2000.2, 2000.5, 2000.8, 2001.0, 2001.4]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
 
     def test_momentum_above_threshold_triggers_buy(self):
-        """Test that just above $0.50 movement triggers BUY."""
+        """Test that just above $1.50 movement triggers BUY."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # With 5-bar lookback: close[-1] vs close[-6]
-        # close[-6]=2000.0, close[-1]=2000.71, diff=+0.71 > 0.5 => BUY
+        # With 6-bar lookback on 8 elements: close[-1] vs close[-7]
+        # close[-7]=close[1]=2000.0, close[-1]=close[7]=2001.6, diff=+1.6 > 1.5 => BUY
         prices = pd.DataFrame({
-            "Close": [2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.5, 2000.71]
+            "Close": [1999.8, 2000.0, 2000.2, 2000.4, 2000.6, 2000.8, 2001.2, 2001.6]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
@@ -422,7 +427,7 @@ class TestScalperSLTP:
     def test_default_sl_tp_multipliers(self):
         """Test that default SignalConfig has correct scalper SL/TP multipliers."""
         config = SignalConfig()
-        assert config.atr_sl_multiplier == 0.6
+        assert config.atr_sl_multiplier == 1.6
         assert config.atr_tp_multiplier == 0.0  # Dynamic trailing: no fixed TP
 
     def test_sl_approximately_3_dollars_with_atr_5(self):
@@ -450,9 +455,9 @@ class TestScalperSLTP:
         assert levels["tp_pips"] == 0.0
 
     def test_risk_config_max_positions_5(self):
-        """Test that default RiskConfig has max_open_positions = 5."""
+        """Test that default RiskConfig has max_open_positions = 4."""
         config = RiskConfig()
-        assert config.max_open_positions == 5
+        assert config.max_open_positions == 4
 
     def test_risk_config_max_daily_loss_dollars(self):
         """Test that RiskConfig has max_daily_loss_dollars = 50.0."""
@@ -494,8 +499,9 @@ class TestDynamicTrailingTP:
         gen.ensemble.models_loaded = True
 
         # Create strongly trending prices to produce non-FLAT momentum
+        # Need 8+ bars for lookback=6 and price diff > $1.50
         prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0]
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0]
         })
 
         # Mock the ensemble predict to return high-confidence prediction
@@ -615,10 +621,11 @@ class TestCandlePatternAnalysis:
     def test_hammer_blocks_sell(self):
         """Test that hammer (long lower wick) blocks SELL signals."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Hammer: long lower wick (> 60% of range), small upper wick (< 20%), body < 35%
-        # Range = 10, lower wick = 7 (70%), upper wick = 0 (0%), body = 3 (30%)
+        # Hammer: long lower wick (> 80% of range), small upper wick (< 10%), body < 15%
+        # Range = 10, lower_wick = 8.5 (85%), upper_wick = 0 (0%), body = 1.5 (15%) -> body_ratio=0.15
+        # Actually need body < 15% strictly: body = 1.0 (10%), lower_wick = 9 (90%), upper = 0
         prices = pd.DataFrame({
-            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2007.0],
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2009.0],
             "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
             "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
             "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2010.0],
@@ -632,10 +639,10 @@ class TestCandlePatternAnalysis:
     def test_shooting_star_blocks_buy(self):
         """Test that shooting star (long upper wick) blocks BUY signals."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Shooting star: long upper wick (> 60% of range), small lower wick (< 20%), body < 35%
-        # Range = 10, upper wick = 7 (70%), lower wick = 0 (0%), body = 3 (30%)
+        # Shooting star: long upper wick (> 80% of range), small lower wick (< 10%), body < 15%
+        # Range = 10, upper_wick = 9 (90%), lower_wick = 0 (0%), body = 1 (10%)
         prices = pd.DataFrame({
-            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2003.0],
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2001.0],
             "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
             "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
             "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2000.0],
@@ -649,13 +656,13 @@ class TestCandlePatternAnalysis:
     def test_doji_blocks_all(self):
         """Test that doji pattern blocks both BUY and SELL signals."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # Doji: body < 10% of range
-        # Range = 10, body = 0.5 (5%)
+        # Doji: body < 1% of range (very strict threshold)
+        # Range = 10, body = 0.05 (0.5%)
         prices = pd.DataFrame({
-            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2005.0],
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2005.00],
             "High":  [2001, 2002, 2003, 2004, 2005, 2006, 2010.0],
             "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
-            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2005.5],
+            "Close": [2000, 2001, 2002, 2003, 2004, 2005, 2005.05],
         })
         result = gen._analyze_candle_patterns(prices)
         assert result["pattern"] == "doji"
@@ -886,11 +893,12 @@ class TestCandlePatternAnalysis:
 
         # Prices that rise (momentum = BUY) and last candle is strong bullish
         # Strong bullish: body > 60% of range
+        # Need 8+ bars for lookback=6, and price diff > $1.50
         prices = pd.DataFrame({
-            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2001.0],
-            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2010.0],
-            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2000.0],
-            "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2009.0],
+            "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2001.0],
+            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2010.0],
+            "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2005, 2000.0],
+            "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009.0],
         })
 
         mock_prediction = {
@@ -1085,8 +1093,10 @@ class TestVolumeWeightedMomentum:
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
         # Prices rising with high volume on up bars
+        # Volume-weighted momentum = avg price change per bar weighted by volume
+        # Each bar moves ~$2 on high volume, vw_momentum > $1.50 threshold
         prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0],
+            "Close": [2000.0, 2002.0, 2004.0, 2006.0, 2008.0, 2010.0, 2012.0, 2014.0],
             "Volume": [1000, 5000, 5000, 5000, 5000, 5000, 5000, 5000],
         })
         direction = gen._compute_momentum_direction(prices)
@@ -1096,9 +1106,9 @@ class TestVolumeWeightedMomentum:
         """Test that high-volume down moves produce SELL signal."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # Prices falling with high volume
+        # Prices falling with high volume, ~$2/bar moves
         prices = pd.DataFrame({
-            "Close": [2010.0, 2009.0, 2008.0, 2007.0, 2006.0, 2005.0, 2004.0, 2003.0],
+            "Close": [2020.0, 2018.0, 2016.0, 2014.0, 2012.0, 2010.0, 2008.0, 2006.0],
             "Volume": [1000, 5000, 5000, 5000, 5000, 5000, 5000, 5000],
         })
         direction = gen._compute_momentum_direction(prices)
@@ -1234,65 +1244,158 @@ class TestRSIExhaustionFilter:
 
 
 # ─────────────────────────────────────────────
-#  5-BAR MOMENTUM LOOKBACK TESTS
+#  6-BAR MOMENTUM LOOKBACK TESTS
 # ─────────────────────────────────────────────
-class TestFiveBarMomentumLookback:
-    """Tests for the 5-bar momentum lookback (needs 7+ bars)."""
+class TestSixBarMomentumLookback:
+    """Tests for the 6-bar momentum lookback (needs 8+ bars)."""
 
-    def test_momentum_needs_7_bars_minimum(self):
-        """Test that momentum returns FLAT with fewer than 7 bars."""
+    def test_momentum_needs_8_bars_minimum(self):
+        """Test that momentum returns FLAT with fewer than 8 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # 6 bars - not enough for 5-bar lookback
-        prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0]
-        })
-        direction = gen._compute_momentum_direction(prices)
-        assert direction == "FLAT"
-
-    def test_momentum_works_with_exactly_7_bars(self):
-        """Test that momentum works with exactly 7 bars."""
-        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-
-        # 7 bars - exactly enough. close[-1]=2006, close[-6]=2000, diff=+6 > 0.5
+        # 7 bars - not enough for 6-bar lookback (needs lookback+2=8)
         prices = pd.DataFrame({
             "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0]
         })
         direction = gen._compute_momentum_direction(prices)
-        assert direction == "BUY"
+        assert direction == "FLAT"
 
-    def test_5bar_lookback_compares_last_vs_sixth(self):
-        """Test that 5-bar lookback compares close[-1] vs close[-6]."""
+    def test_momentum_works_with_exactly_8_bars(self):
+        """Test that momentum works with exactly 8 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # close[-1] = 2002, close[-6] = 2000, diff = +2 > 0.5 => BUY
+        # 8 bars - exactly enough. close[-1]=2007, close[-7]=2000, diff=+7 > 1.50
         prices = pd.DataFrame({
-            "Close": [2000.0, 1990.0, 1990.0, 1990.0, 1990.0, 1990.0, 2002.0]
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
 
-    def test_5bar_lookback_sell(self):
-        """Test 5-bar lookback detects SELL."""
+    def test_6bar_lookback_compares_last_vs_seventh(self):
+        """Test that 6-bar lookback compares close[-1] vs close[-7]."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # close[-1] = 1999, close[-6] = 2005, diff = -6 => SELL
+        # close[-1] = 2002, close[-7] = 2000, diff = +2 > 1.50 => BUY
         prices = pd.DataFrame({
-            "Close": [2005.0, 2004.0, 2003.0, 2002.0, 2001.0, 2000.0, 1999.0]
+            "Close": [2000.0, 1990.0, 1990.0, 1990.0, 1990.0, 1990.0, 1990.0, 2002.0]
+        })
+        direction = gen._compute_momentum_direction(prices)
+        assert direction == "BUY"
+
+    def test_6bar_lookback_sell(self):
+        """Test 6-bar lookback detects SELL."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # close[-1] = 1999, close[-7] = 2005, diff = -6 => SELL
+        prices = pd.DataFrame({
+            "Close": [2005.0, 2004.0, 2003.0, 2002.0, 2001.0, 2000.0, 1999.5, 1999.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "SELL"
 
-    def test_numpy_array_needs_7_bars(self):
-        """Test numpy array input requires 7 bars."""
+    def test_numpy_array_needs_8_bars(self):
+        """Test numpy array input requires 8 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # 6 elements - not enough
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0])
+        # 7 elements - not enough
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
 
-        # 7 elements - enough
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
+        # 8 elements - enough (diff = +7 > 1.50)
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
+
+
+# ─────────────────────────────────────────────
+#  M1 MOMENTUM INTEGRATION TESTS
+# ─────────────────────────────────────────────
+class TestM1MomentumIntegration:
+    """Tests for M1 momentum direction via prices_m1 parameter."""
+
+    def test_prices_m1_used_for_momentum_direction(self):
+        """Test that prices_m1 is used for momentum when provided."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        gen.ensemble.models_loaded = True
+
+        # H1 prices - trending UP
+        h1_prices = pd.DataFrame({
+            "Open": [2000 + i for i in range(200)],
+            "High": [2002 + i for i in range(200)],
+            "Low": [1998 + i for i in range(200)],
+            "Close": [2001 + i for i in range(200)],
+            "Volume": [5000] * 200,
+        }, index=pd.date_range("2024-01-01", periods=200, freq="h"))
+
+        # M1 prices - trending DOWN (should override H1 for momentum)
+        m1_prices = pd.DataFrame({
+            "Close": [2200.0, 2199.0, 2198.0, 2197.0, 2196.0, 2195.0, 2194.0, 2193.0, 2192.0, 2190.0]
+        })
+
+        # Compute momentum from M1 data
+        direction = gen._compute_momentum_direction(m1_prices)
+        assert direction == "SELL"
+
+    def test_prices_m1_none_falls_back_to_h1(self):
+        """Test that when prices_m1 is None, H1 prices are used for momentum."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+
+        # H1 prices trending UP
+        h1_prices = pd.DataFrame({
+            "Close": [2000.0, 2002.0, 2004.0, 2006.0, 2008.0, 2010.0, 2012.0, 2014.0]
+        })
+
+        direction = gen._compute_momentum_direction(h1_prices)
+        assert direction == "BUY"
+
+    def test_generate_signal_accepts_prices_m1(self):
+        """Test that generate_signal accepts prices_m1 parameter without error."""
+        gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
+        features = np.random.randn(1, 64, 32).astype(np.float32)
+
+        # H1 prices
+        h1_prices = pd.DataFrame({
+            "Open": [2000 + i for i in range(200)],
+            "High": [2002 + i for i in range(200)],
+            "Low": [1998 + i for i in range(200)],
+            "Close": [2001 + i for i in range(200)],
+            "Volume": [5000] * 200,
+        }, index=pd.date_range("2024-01-01", periods=200, freq="h"))
+
+        # M1 prices
+        m1_prices = pd.DataFrame({
+            "Close": [2200.0, 2199.0, 2198.0, 2197.0, 2196.0, 2195.0, 2194.0, 2193.0, 2192.0, 2190.0]
+        })
+
+        # Should not raise any errors
+        signal = gen.generate_signal(
+            features=features,
+            prices=h1_prices,
+            atr=3.0,
+            current_price=2190.0,
+            prices_m1=m1_prices,
+        )
+        assert signal.action in ["BUY", "SELL", "HOLD"]
+
+
+# ─────────────────────────────────────────────
+#  M1 ATR TESTS
+# ─────────────────────────────────────────────
+class TestM1ATR:
+    """Tests for M1 ATR computation in MarketDataFetcher."""
+
+    def test_get_m1_atr_method_exists(self):
+        """Test that get_m1_atr method exists on MarketDataFetcher."""
+        from data.market_data import MarketDataFetcher
+        fetcher = MarketDataFetcher()
+        assert hasattr(fetcher, 'get_m1_atr')
+        assert callable(fetcher.get_m1_atr)
+
+    def test_get_current_atr_accepts_interval(self):
+        """Test that get_current_atr accepts optional interval parameter."""
+        from data.market_data import MarketDataFetcher
+        import inspect
+        sig = inspect.signature(MarketDataFetcher.get_current_atr)
+        params = list(sig.parameters.keys())
+        assert 'interval' in params
