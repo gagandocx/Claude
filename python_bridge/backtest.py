@@ -2,14 +2,23 @@
 =============================================================
   Python ML Bridge - Fast-Forward Backtester
   Simulates the exact trading strategy bar-by-bar on historical
-  data downloaded from yfinance, records trades to the
-  AutoOptimizer, and outputs a detailed summary plus JSON results.
+  data downloaded from yfinance or real MT5 exported data,
+  records trades to the AutoOptimizer, and outputs a detailed
+  summary plus JSON results.
+
+  Supports:
+  - Real broker data via --data-file (CSV exported from MT5)
+  - Variable spreads per bar from broker data
+  - Fixed spread simulation via --spread
+  - Random slippage simulation via --slippage
+  - Commission per lot via --commission and --lot-size
 =============================================================
 """
 
 import argparse
 import json
 import os
+import random
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -256,6 +265,225 @@ def check_momentum_exit(position: Position, closes: pd.Series, index: int) -> bo
 
 
 # ─────────────────────────────────────────────
+#  COST MODEL
+# ─────────────────────────────────────────────
+class TradingCosts:
+    """
+    Models real broker trading costs: spread, slippage, and commission.
+
+    Spread can be variable (from broker data) or fixed.
+    Slippage is random between 0 and max_slippage.
+    Commission is per lot round-trip.
+    """
+
+    def __init__(self, fixed_spread: float = 0.0, max_slippage: float = 0.0,
+                 commission: float = 0.0, lot_size: float = 0.01):
+        self.fixed_spread = fixed_spread      # Fixed spread in dollars (used when no bar spread)
+        self.max_slippage = max_slippage      # Max random slippage in dollars
+        self.commission = commission           # Commission per lot round-trip in dollars
+        self.lot_size = lot_size              # Lot size for commission calc
+        self.total_spread_cost = 0.0
+        self.total_slippage_cost = 0.0
+        self.total_commission_cost = 0.0
+        self.trade_count = 0
+
+    def get_entry_cost(self, bar_spread_dollars: Optional[float] = None) -> float:
+        """
+        Calculate cost at entry: half spread + random slippage.
+
+        Args:
+            bar_spread_dollars: Variable spread in dollars from broker data.
+                               If None, uses fixed_spread.
+
+        Returns:
+            Total entry cost in dollars (always positive, deducted from P/L).
+        """
+        # Spread cost at entry = half the spread
+        spread = bar_spread_dollars if bar_spread_dollars is not None else self.fixed_spread
+        spread_cost = spread / 2.0
+
+        # Random slippage
+        slippage = random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0
+
+        return spread_cost + slippage
+
+    def get_exit_cost(self, bar_spread_dollars: Optional[float] = None) -> float:
+        """
+        Calculate cost at exit: half spread + random slippage.
+
+        Args:
+            bar_spread_dollars: Variable spread in dollars from broker data.
+                               If None, uses fixed_spread.
+
+        Returns:
+            Total exit cost in dollars (always positive, deducted from P/L).
+        """
+        spread = bar_spread_dollars if bar_spread_dollars is not None else self.fixed_spread
+        spread_cost = spread / 2.0
+
+        slippage = random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0
+
+        return spread_cost + slippage
+
+    def get_commission_cost(self) -> float:
+        """
+        Calculate commission cost for one round-trip trade.
+
+        Returns:
+            Commission in dollars.
+        """
+        return self.commission * self.lot_size
+
+    def get_total_trade_cost(self, entry_bar_spread: Optional[float] = None,
+                             exit_bar_spread: Optional[float] = None) -> float:
+        """
+        Calculate total cost for one complete trade (entry + exit + commission).
+
+        Returns:
+            Total cost in dollars.
+        """
+        entry_cost = self.get_entry_cost(entry_bar_spread)
+        exit_cost = self.get_exit_cost(exit_bar_spread)
+        commission_cost = self.get_commission_cost()
+
+        self.total_spread_cost += (entry_cost + exit_cost - 
+                                   (random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0) -
+                                   (random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0))
+        # Simpler accounting: track each component
+        total = entry_cost + exit_cost + commission_cost
+        self.trade_count += 1
+        return total
+
+    def record_trade_costs(self, entry_bar_spread: Optional[float] = None,
+                           exit_bar_spread: Optional[float] = None) -> Dict[str, float]:
+        """
+        Calculate and record costs for one trade, returning breakdown.
+
+        Returns:
+            Dict with spread_cost, slippage_cost, commission_cost, total_cost.
+        """
+        spread_entry = (entry_bar_spread if entry_bar_spread is not None else self.fixed_spread) / 2.0
+        spread_exit = (exit_bar_spread if exit_bar_spread is not None else self.fixed_spread) / 2.0
+        spread_cost = spread_entry + spread_exit
+
+        slippage_entry = random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0
+        slippage_exit = random.uniform(0, self.max_slippage) if self.max_slippage > 0 else 0.0
+        slippage_cost = slippage_entry + slippage_exit
+
+        commission_cost = self.get_commission_cost()
+
+        total_cost = spread_cost + slippage_cost + commission_cost
+
+        self.total_spread_cost += spread_cost
+        self.total_slippage_cost += slippage_cost
+        self.total_commission_cost += commission_cost
+        self.trade_count += 1
+
+        return {
+            "spread_cost": round(spread_cost, 4),
+            "slippage_cost": round(slippage_cost, 4),
+            "commission_cost": round(commission_cost, 4),
+            "total_cost": round(total_cost, 4),
+        }
+
+    def get_cost_summary(self) -> Dict[str, float]:
+        """Return summary of all accumulated costs."""
+        return {
+            "total_trades": self.trade_count,
+            "total_spread_cost": round(self.total_spread_cost, 2),
+            "total_slippage_cost": round(self.total_slippage_cost, 2),
+            "total_commission_cost": round(self.total_commission_cost, 2),
+            "total_all_costs": round(self.total_spread_cost + self.total_slippage_cost + self.total_commission_cost, 2),
+            "avg_cost_per_trade": round(
+                (self.total_spread_cost + self.total_slippage_cost + self.total_commission_cost) / self.trade_count, 4
+            ) if self.trade_count > 0 else 0.0,
+        }
+
+
+def convert_spread_points_to_dollars(spread_points: float, avg_price: float) -> float:
+    """
+    Convert spread from points to dollars.
+
+    Auto-detects point value based on average price:
+    - If avg price > 1000: point = 0.01 (gold 2-digit, e.g., XAUUSD at 2000.xx)
+    - If avg price > 100 and <= 1000: point = 0.001 (3-digit gold pricing)
+    - Otherwise: point = 0.00001 (standard forex 5-digit)
+
+    Args:
+        spread_points: Spread in points from MT5
+        avg_price: Average price of the instrument
+
+    Returns:
+        Spread in dollars
+    """
+    if avg_price > 1000:
+        # Gold 2-digit pricing (e.g., 2350.45) - point = 0.01
+        point_value = 0.01
+    elif avg_price > 100:
+        # Gold 3-digit pricing (e.g., 235.045) - point = 0.001
+        point_value = 0.001
+    else:
+        # Standard forex 5-digit (e.g., 1.12345) - point = 0.00001
+        point_value = 0.00001
+
+    return spread_points * point_value
+
+
+def load_broker_data(filepath: str) -> pd.DataFrame:
+    """
+    Load exported broker data from CSV file.
+
+    Expected CSV format (from Export_Tick_Data.mq5):
+    timestamp,open,high,low,close,volume,spread
+
+    Args:
+        filepath: Path to the CSV file
+
+    Returns:
+        DataFrame with Open, High, Low, Close, Volume, Spread columns
+        and DatetimeIndex.
+    """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Data file not found: {filepath}")
+
+    df = pd.read_csv(filepath)
+
+    # Validate required columns
+    required_cols = ["timestamp", "open", "high", "low", "close", "volume", "spread"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"CSV missing required columns: {missing}")
+
+    # Parse timestamp and set as index
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df.set_index("timestamp", inplace=True)
+
+    # Rename to match expected format (capitalized)
+    df.rename(columns={
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+        "spread": "Spread",
+    }, inplace=True)
+
+    # Convert spread from points to dollars
+    avg_price = df["Close"].mean()
+    df["Spread_Dollars"] = df["Spread"].apply(
+        lambda s: convert_spread_points_to_dollars(s, avg_price)
+    )
+
+    print(f"[Backtest] Loaded {len(df)} bars from {filepath}")
+    print(f"[Backtest] Price range: {df['Close'].min():.2f} - {df['Close'].max():.2f}")
+    print(f"[Backtest] Avg spread: {df['Spread'].mean():.1f} points "
+          f"(${df['Spread_Dollars'].mean():.4f})")
+    print(f"[Backtest] Date range: {df.index[0]} to {df.index[-1]}")
+
+    return df
+
+
+# ─────────────────────────────────────────────
 #  BACKTESTER ENGINE
 # ─────────────────────────────────────────────
 class Backtester:
@@ -264,9 +492,11 @@ class Backtester:
     bar-by-bar on historical data.
     """
 
-    def __init__(self, verbose: bool = False, min_bars_between_entries: int = MIN_BARS_BETWEEN_ENTRIES):
+    def __init__(self, verbose: bool = False, min_bars_between_entries: int = MIN_BARS_BETWEEN_ENTRIES,
+                 trading_costs: Optional[TradingCosts] = None):
         self.verbose = verbose
         self.min_bars_between_entries = min_bars_between_entries
+        self.trading_costs = trading_costs
         self.open_positions: List[Position] = []
         self.closed_trades: List[Dict] = []
         self.last_entry_bar: int = -min_bars_between_entries  # Allow entry on first qualifying bar
@@ -284,13 +514,18 @@ class Backtester:
 
         Args:
             df: DataFrame with Open, High, Low, Close, Volume columns
-                and DatetimeIndex (UTC).
+                and DatetimeIndex (UTC). Optionally includes Spread_Dollars
+                for variable spread from broker data.
 
         Returns:
             Dict with trade_log and summary statistics.
         """
         if df.empty or len(df) < MOMENTUM_LOOKBACK + RSI_PERIOD + 1:
             return {"trade_log": [], "summary": self._empty_summary()}
+
+        # Store reference for cost model lookups
+        self._current_df = df
+        has_spread_data = "Spread_Dollars" in df.columns
 
         # Compute RSI for all bars
         rsi_series = compute_rsi(df["Close"])
@@ -330,7 +565,7 @@ class Backtester:
 
             # Close positions that triggered exit
             for pos, exit_price, pnl, exit_reason in positions_to_close:
-                self._close_position(pos, exit_price, pnl, bar_time, exit_reason)
+                self._close_position(pos, exit_price, pnl, bar_time, exit_reason, exit_bar_index=i)
                 self.open_positions.remove(pos)
 
             # --- Entry logic ---
@@ -372,6 +607,11 @@ class Backtester:
                                     session=session,
                                     confidence=confidence,
                                 )
+                                # Store bar spread for cost model
+                                if has_spread_data:
+                                    pos.entry_bar_spread = bar["Spread_Dollars"]
+                                else:
+                                    pos.entry_bar_spread = None
                                 self.open_positions.append(pos)
                                 self.last_entry_bar = i
 
@@ -386,9 +626,10 @@ class Backtester:
             last_bar = df.iloc[-1]
             last_time = df.index[-1]
             last_close = last_bar["Close"]
+            last_idx = len(df) - 1
             for pos in list(self.open_positions):
                 pnl = pos.unrealized_pnl(last_close)
-                self._close_position(pos, last_close, pnl, last_time, "end_of_data")
+                self._close_position(pos, last_close, pnl, last_time, "end_of_data", exit_bar_index=last_idx)
             self.open_positions.clear()
 
         # Save auto_optimizer state
@@ -396,18 +637,41 @@ class Backtester:
 
         # Build results
         summary = self._compute_summary()
-        return {
+        results = {
             "trade_log": self.closed_trades,
             "summary": summary,
         }
 
+        # Add cost summary if trading costs are enabled
+        if self.trading_costs and self.trading_costs.trade_count > 0:
+            results["cost_summary"] = self.trading_costs.get_cost_summary()
+
+        return results
+
     def _close_position(self, pos: Position, exit_price: float, pnl: float,
-                        exit_time, exit_reason: str) -> None:
+                        exit_time, exit_reason: str, exit_bar_index: int = 0) -> None:
         """Record a closed trade and feed to AutoOptimizer."""
         exit_time_str = str(exit_time)
 
         # Determine trail tier for optimizer
         trail_tier = pos.trail_tier if pos.trail_tier != "none" else "wide"
+
+        # Apply trading costs if configured
+        cost_breakdown = None
+        if self.trading_costs:
+            # Get spread from entry/exit bars if available (broker data)
+            entry_spread = getattr(pos, 'entry_bar_spread', None)
+            exit_spread = getattr(pos, 'exit_bar_spread', None)
+            # Use exit bar index to look up spread if available
+            if hasattr(self, '_current_df') and 'Spread_Dollars' in self._current_df.columns:
+                if exit_bar_index > 0 and exit_bar_index < len(self._current_df):
+                    exit_spread = self._current_df.iloc[exit_bar_index]['Spread_Dollars']
+
+            cost_breakdown = self.trading_costs.record_trade_costs(
+                entry_bar_spread=entry_spread,
+                exit_bar_spread=exit_spread,
+            )
+            pnl -= cost_breakdown["total_cost"]
 
         trade_record = {
             "direction": pos.direction,
@@ -423,6 +687,8 @@ class Backtester:
             "max_profit": round(pos.max_profit, 2),
             "confidence": pos.confidence,
         }
+        if cost_breakdown:
+            trade_record["costs"] = cost_breakdown
         self.closed_trades.append(trade_record)
 
         # Record to AutoOptimizer
@@ -558,7 +824,7 @@ def download_data(symbol: str, days: int, interval: str) -> pd.DataFrame:
     return df
 
 
-def print_summary(summary: Dict) -> None:
+def print_summary(summary: Dict, cost_summary: Optional[Dict] = None) -> None:
     """Print backtest summary to console."""
     print("\n" + "=" * 60)
     print("  BACKTEST SUMMARY")
@@ -571,6 +837,17 @@ def print_summary(summary: Dict) -> None:
     print(f"  Profit Factor:   {summary['profit_factor']}")
     print(f"  Max Drawdown:    ${summary['max_drawdown']:.2f} (closed-trade)")
     print(f"  Wins/Losses:     {summary['wins']}/{summary['losses']}")
+
+    if cost_summary:
+        print("-" * 60)
+        print("  COST BREAKDOWN")
+        print("-" * 60)
+        print(f"  Total Spread Cost:     ${cost_summary['total_spread_cost']:.2f}")
+        print(f"  Total Slippage Cost:   ${cost_summary['total_slippage_cost']:.2f}")
+        print(f"  Total Commission Cost: ${cost_summary['total_commission_cost']:.2f}")
+        print(f"  Total All Costs:       ${cost_summary['total_all_costs']:.2f}")
+        print(f"  Avg Cost Per Trade:    ${cost_summary['avg_cost_per_trade']:.4f}")
+
     print("=" * 60)
 
 
@@ -604,24 +881,83 @@ def main():
         "--verbose", action="store_true",
         help="Print each trade entry/exit"
     )
+    # Real broker data options
+    parser.add_argument(
+        "--data-file", type=str, default=None,
+        help="Path to exported CSV from MT5 (uses real broker data instead of yfinance)"
+    )
+    parser.add_argument(
+        "--spread", type=float, default=0.30,
+        help="Fixed spread in dollars (default: 0.30, used when --data-file not provided)"
+    )
+    parser.add_argument(
+        "--slippage", type=float, default=0.10,
+        help="Max random slippage in dollars per entry/exit (default: 0.10)"
+    )
+    parser.add_argument(
+        "--commission", type=float, default=7.0,
+        help="Commission per lot round-trip in dollars (default: 7.0)"
+    )
+    parser.add_argument(
+        "--lot-size", type=float, default=0.01,
+        help="Lot size for commission calculation (default: 0.01)"
+    )
 
     args = parser.parse_args()
 
-    print(f"[Backtest] Starting backtest: symbol={args.symbol}, "
-          f"days={args.days}, interval={args.interval}")
+    # Determine data source and cost model
+    trading_costs = None
+    use_costs = False
 
-    # Download data
-    df = download_data(args.symbol, args.days, args.interval)
-    if df.empty:
-        print("[Backtest] ERROR: No data available. Exiting.")
-        sys.exit(1)
+    if args.data_file:
+        # Real broker data mode: variable spreads from CSV
+        print(f"[Backtest] MODE: Real broker data from {args.data_file}")
+        print(f"[Backtest] Costs: variable spread + slippage={args.slippage:.2f} + "
+              f"commission={args.commission:.2f}/lot * {args.lot_size} lots")
+
+        df = load_broker_data(args.data_file)
+        if df.empty:
+            print("[Backtest] ERROR: No data in file. Exiting.")
+            sys.exit(1)
+
+        # Use variable spread from data (spread_dollars per bar), plus slippage and commission
+        trading_costs = TradingCosts(
+            fixed_spread=0.0,  # Variable spread comes from bar data
+            max_slippage=args.slippage,
+            commission=args.commission,
+            lot_size=args.lot_size,
+        )
+        use_costs = True
+
+    else:
+        # yfinance mode
+        print(f"[Backtest] MODE: yfinance data (symbol={args.symbol}, "
+              f"days={args.days}, interval={args.interval})")
+
+        # Apply fixed spread/slippage/commission if --spread is explicitly given or defaults
+        if args.spread > 0 or args.slippage > 0 or args.commission > 0:
+            print(f"[Backtest] Costs: spread={args.spread:.2f} + slippage={args.slippage:.2f} + "
+                  f"commission={args.commission:.2f}/lot * {args.lot_size} lots")
+            trading_costs = TradingCosts(
+                fixed_spread=args.spread,
+                max_slippage=args.slippage,
+                commission=args.commission,
+                lot_size=args.lot_size,
+            )
+            use_costs = True
+
+        df = download_data(args.symbol, args.days, args.interval)
+        if df.empty:
+            print("[Backtest] ERROR: No data available. Exiting.")
+            sys.exit(1)
 
     # Run backtest
-    backtester = Backtester(verbose=args.verbose)
+    backtester = Backtester(verbose=args.verbose, trading_costs=trading_costs)
     results = backtester.run(df)
 
     # Print summary
-    print_summary(results["summary"])
+    cost_summary = results.get("cost_summary") if use_costs else None
+    print_summary(results["summary"], cost_summary)
 
     # Save results
     output_dir = os.path.dirname(os.path.abspath(__file__))

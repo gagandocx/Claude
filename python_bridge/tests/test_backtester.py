@@ -27,6 +27,9 @@ from backtest import (
     compute_rsi,
     Position,
     Backtester,
+    TradingCosts,
+    convert_spread_points_to_dollars,
+    load_broker_data,
     MOMENTUM_LOOKBACK,
     MOMENTUM_THRESHOLD,
     DEFAULT_SL_DISTANCE,
@@ -766,3 +769,221 @@ class TestBacktestIntegration:
         backtester = Backtester(verbose=False)
         results = backtester.run(df)
         assert results["summary"]["total_trades"] == 0
+
+
+# ─────────────────────────────────────────────
+#  TEST TRADING COSTS MODEL
+# ─────────────────────────────────────────────
+class TestTradingCosts:
+    """Tests for the TradingCosts class and cost-aware backtesting."""
+
+    def test_fixed_spread_cost(self):
+        """Fixed spread is split equally between entry and exit."""
+        from backtest import TradingCosts
+        costs = TradingCosts(fixed_spread=0.30, max_slippage=0.0, commission=0.0, lot_size=0.01)
+        breakdown = costs.record_trade_costs()
+        assert breakdown["spread_cost"] == 0.30  # 0.15 + 0.15
+        assert breakdown["slippage_cost"] == 0.0
+        assert breakdown["commission_cost"] == 0.0
+        assert breakdown["total_cost"] == 0.30
+
+    def test_commission_calculation(self):
+        """Commission = commission_per_lot * lot_size."""
+        from backtest import TradingCosts
+        costs = TradingCosts(fixed_spread=0.0, max_slippage=0.0, commission=7.0, lot_size=0.01)
+        breakdown = costs.record_trade_costs()
+        assert breakdown["commission_cost"] == 0.07  # 7.0 * 0.01
+
+    def test_commission_larger_lot(self):
+        """Commission scales with lot size."""
+        from backtest import TradingCosts
+        costs = TradingCosts(fixed_spread=0.0, max_slippage=0.0, commission=7.0, lot_size=0.10)
+        breakdown = costs.record_trade_costs()
+        assert breakdown["commission_cost"] == 0.70  # 7.0 * 0.10
+
+    def test_slippage_is_random_and_bounded(self):
+        """Slippage is between 0 and max_slippage."""
+        from backtest import TradingCosts
+        import random
+        random.seed(123)
+        costs = TradingCosts(fixed_spread=0.0, max_slippage=0.10, commission=0.0, lot_size=0.01)
+        for _ in range(50):
+            breakdown = costs.record_trade_costs()
+            # Entry slippage + exit slippage, each 0 to 0.10
+            assert 0 <= breakdown["slippage_cost"] <= 0.20
+
+    def test_cost_summary_accumulates(self):
+        """Cost summary accumulates across multiple trades."""
+        from backtest import TradingCosts
+        costs = TradingCosts(fixed_spread=0.30, max_slippage=0.0, commission=7.0, lot_size=0.01)
+        costs.record_trade_costs()
+        costs.record_trade_costs()
+        costs.record_trade_costs()
+        summary = costs.get_cost_summary()
+        assert summary["total_trades"] == 3
+        assert summary["total_spread_cost"] == 0.90  # 0.30 * 3
+        assert summary["total_commission_cost"] == 0.21  # 0.07 * 3
+
+    def test_variable_spread_from_bar_data(self):
+        """Variable spread from broker data overrides fixed spread."""
+        from backtest import TradingCosts
+        costs = TradingCosts(fixed_spread=0.50, max_slippage=0.0, commission=0.0, lot_size=0.01)
+        # Pass variable spread - should use 0.20 instead of fixed 0.50
+        breakdown = costs.record_trade_costs(entry_bar_spread=0.20, exit_bar_spread=0.20)
+        assert breakdown["spread_cost"] == 0.20  # 0.10 + 0.10
+
+    def test_costs_reduce_pnl_in_backtest(self):
+        """Trading costs reduce P/L in backtest results."""
+        # Create trending data
+        n_bars = 150
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        np.random.seed(42)
+        prices = np.full(n_bars, 2000.0)
+        price = 2000.0
+        for i in range(1, n_bars):
+            cycle_pos = i % 30
+            if cycle_pos < 15:
+                price -= 0.05
+            elif cycle_pos < 20:
+                price += 0.25
+            prices[i] = price
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.3,
+            "Low": prices - 0.3,
+            "Close": prices,
+            "Volume": np.random.randint(100, 1000, n_bars),
+        }, index=dates)
+
+        # Run without costs
+        bt_no_cost = Backtester(verbose=False, trading_costs=None)
+        results_no_cost = bt_no_cost.run(df)
+
+        # Run with costs
+        costs = TradingCosts(fixed_spread=0.30, max_slippage=0.10, commission=7.0, lot_size=0.01)
+        bt_with_cost = Backtester(verbose=False, trading_costs=costs)
+        results_with_cost = bt_with_cost.run(df)
+
+        # P/L with costs should be lower
+        if results_no_cost["summary"]["total_trades"] > 0:
+            assert results_with_cost["summary"]["total_pnl"] < results_no_cost["summary"]["total_pnl"]
+
+    def test_cost_summary_in_results(self):
+        """When costs are enabled, results include cost_summary."""
+        n_bars = 150
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        np.random.seed(42)
+        prices = np.full(n_bars, 2000.0)
+        price = 2000.0
+        for i in range(1, n_bars):
+            cycle_pos = i % 30
+            if cycle_pos < 15:
+                price -= 0.05
+            elif cycle_pos < 20:
+                price += 0.25
+            prices[i] = price
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.3,
+            "Low": prices - 0.3,
+            "Close": prices,
+            "Volume": np.random.randint(100, 1000, n_bars),
+        }, index=dates)
+
+        costs = TradingCosts(fixed_spread=0.30, max_slippage=0.0, commission=7.0, lot_size=0.01)
+        bt = Backtester(verbose=False, trading_costs=costs)
+        results = bt.run(df)
+
+        assert "cost_summary" in results
+        assert results["cost_summary"]["total_trades"] > 0
+        assert results["cost_summary"]["total_spread_cost"] > 0
+        assert results["cost_summary"]["total_commission_cost"] > 0
+
+
+# ─────────────────────────────────────────────
+#  TEST SPREAD CONVERSION
+# ─────────────────────────────────────────────
+class TestSpreadConversion:
+    """Tests for convert_spread_points_to_dollars."""
+
+    def test_gold_2_digit(self):
+        """Gold 2-digit (price > 1000): point = 0.01."""
+        from backtest import convert_spread_points_to_dollars
+        # 30 points * 0.01 = $0.30
+        assert convert_spread_points_to_dollars(30, 2350.0) == 0.30
+        assert convert_spread_points_to_dollars(15, 2000.0) == 0.15
+        assert convert_spread_points_to_dollars(50, 1500.0) == 0.50
+
+    def test_gold_3_digit(self):
+        """Gold 3-digit (100 < price <= 1000): point = 0.001."""
+        from backtest import convert_spread_points_to_dollars
+        assert convert_spread_points_to_dollars(30, 235.0) == 0.030
+        assert convert_spread_points_to_dollars(100, 500.0) == 0.10
+
+    def test_forex_5_digit(self):
+        """Standard forex (price <= 100): point = 0.00001."""
+        from backtest import convert_spread_points_to_dollars
+        result = convert_spread_points_to_dollars(30, 1.12)
+        assert abs(result - 0.0003) < 0.000001
+
+
+# ─────────────────────────────────────────────
+#  TEST BROKER DATA LOADING
+# ─────────────────────────────────────────────
+class TestBrokerDataLoading:
+    """Tests for load_broker_data function."""
+
+    def test_load_valid_csv(self, tmp_path):
+        """Loads valid broker CSV and returns correct DataFrame."""
+        from backtest import load_broker_data
+        csv_content = (
+            "timestamp,open,high,low,close,volume,spread\n"
+            "2024.01.15 08:00:00,2350.15,2350.50,2349.80,2350.30,200,25\n"
+            "2024.01.15 08:01:00,2350.30,2350.60,2350.10,2350.45,150,30\n"
+            "2024.01.15 08:02:00,2350.45,2350.80,2350.20,2350.60,180,20\n"
+        )
+        csv_path = tmp_path / "test_data.csv"
+        csv_path.write_text(csv_content)
+
+        df = load_broker_data(str(csv_path))
+        assert len(df) == 3
+        assert "Open" in df.columns
+        assert "High" in df.columns
+        assert "Low" in df.columns
+        assert "Close" in df.columns
+        assert "Volume" in df.columns
+        assert "Spread" in df.columns
+        assert "Spread_Dollars" in df.columns
+
+    def test_spread_dollars_computed(self, tmp_path):
+        """Spread_Dollars is correctly computed from points."""
+        from backtest import load_broker_data
+        csv_content = (
+            "timestamp,open,high,low,close,volume,spread\n"
+            "2024.01.15 08:00:00,2350.00,2350.50,2349.50,2350.00,200,30\n"
+            "2024.01.15 08:01:00,2350.00,2350.50,2349.50,2350.00,200,30\n"
+        )
+        csv_path = tmp_path / "test_data.csv"
+        csv_path.write_text(csv_content)
+
+        df = load_broker_data(str(csv_path))
+        # avg_price=2350 > 1000, so point=0.01, spread=30*0.01=0.30
+        assert abs(df["Spread_Dollars"].iloc[0] - 0.30) < 0.001
+
+    def test_missing_column_raises_error(self, tmp_path):
+        """Raises ValueError if CSV is missing required columns."""
+        from backtest import load_broker_data
+        csv_content = "timestamp,open,high,low,close,volume\n2024.01.15 08:00:00,2350,2351,2349,2350,100\n"
+        csv_path = tmp_path / "bad_data.csv"
+        csv_path.write_text(csv_content)
+
+        with pytest.raises(ValueError, match="missing required columns"):
+            load_broker_data(str(csv_path))
+
+    def test_file_not_found_raises_error(self):
+        """Raises FileNotFoundError for missing file."""
+        from backtest import load_broker_data
+        with pytest.raises(FileNotFoundError):
+            load_broker_data("/nonexistent/path/data.csv")
