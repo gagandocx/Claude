@@ -70,6 +70,10 @@ string         g_status         = "Initializing...";
 string         g_statusType     = "OK";
 string         g_newsWarning    = "";
 
+// Duplicate signal execution guard: prevents OnTimer and OnTick from
+// both executing the same signal within one bar.
+datetime       g_lastExecutedSignalTime = 0;
+
 // Emergency close-all cooldown (5 seconds between triggers)
 datetime       g_lastEmergencyClose = 0;
 
@@ -365,6 +369,15 @@ void ReadStatusFile()
 //+------------------------------------------------------------------+
 bool ValidateSignal()
 {
+    // Dedup guard: skip if this signal was already executed.
+    // Prevents OnTimer and OnTick from both executing the same signal
+    // within one bar window.
+    if(g_lastSignalTime == g_lastExecutedSignalTime)
+    {
+        g_status = "Signal already executed at " + TimeToString(g_lastSignalTime, TIME_MINUTES);
+        return false;
+    }
+
     // Check action is BUY or SELL
     if(g_lastAction != "BUY" && g_lastAction != "SELL")
     {
@@ -472,6 +485,7 @@ void ExecuteSignal()
                        "PythonBridge|" + g_lastModel + "|" + g_lastRegime))
         {
             g_tradesExecuted++;
+            g_lastExecutedSignalTime = g_lastSignalTime;
             g_status = "BUY executed @ " + DoubleToString(price, digits);
             Print("[PythonBridge] BUY ", lotSize, " lots @ ", price,
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
@@ -501,6 +515,7 @@ void ExecuteSignal()
                         "PythonBridge|" + g_lastModel + "|" + g_lastRegime))
         {
             g_tradesExecuted++;
+            g_lastExecutedSignalTime = g_lastSignalTime;
             g_status = "SELL executed @ " + DoubleToString(price, digits);
             Print("[PythonBridge] SELL ", lotSize, " lots @ ", price,
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),

@@ -166,43 +166,59 @@ class MT5Bridge:
                             "[Bridge] Fallback (unlink+rename) succeeded."
                         )
                     except (PermissionError, OSError) as e2:
-                        logger.warning(
-                            f"[Bridge] Fallback unlink+rename failed: {e2}. "
-                            f"Using direct write."
-                        )
-                        # Fallback 2: direct write to target path
+                        # Retry os.rename once more after a short delay.
+                        # The target was just unlinked, so a brief wait may
+                        # allow the OS to release handles.
                         try:
-                            with open(self.signal_path, "w", encoding="ascii",
-                                      newline="") as f:
-                                header = ",".join(SIGNAL_HEADERS) + "\r\n"
-                                f.write(header)
-                                data = (
-                                    f"{signal.timestamp},"
-                                    f"{signal.symbol},"
-                                    f"{signal.action},"
-                                    f"{signal.confidence:.4f},"
-                                    f"{signal.sl_pips:.1f},"
-                                    f"{signal.tp_pips:.1f},"
-                                    f"{signal.lot_size:.2f},"
-                                    f"{signal.model_name},"
-                                    f"{signal.regime}\r\n"
-                                )
-                                f.write(data)
+                            time.sleep(0.05)
+                            os.rename(tmp_path, self.signal_path)
                             replace_succeeded = True
                             logger.warning(
-                                "[Bridge] Direct write fallback succeeded."
+                                "[Bridge] Fallback (unlink+rename retry) "
+                                "succeeded."
                             )
-                        except Exception as e3:
-                            logger.error(
-                                f"[Bridge] All write methods failed: {e3}"
+                        except (PermissionError, OSError) as e3:
+                            logger.warning(
+                                f"[Bridge] Fallback unlink+rename failed: "
+                                f"{e2}, retry: {e3}. Using direct write."
                             )
-                        finally:
-                            # Clean up temp file if it still exists
+                            # Clean up orphaned temp file before direct write
                             if os.path.exists(tmp_path):
                                 try:
                                     os.unlink(tmp_path)
                                 except OSError:
                                     pass
+                            # Fallback 2: direct write to target path
+                            try:
+                                with open(self.signal_path, "w",
+                                          encoding="ascii",
+                                          newline="") as f:
+                                    header = (
+                                        ",".join(SIGNAL_HEADERS) + "\r\n"
+                                    )
+                                    f.write(header)
+                                    data = (
+                                        f"{signal.timestamp},"
+                                        f"{signal.symbol},"
+                                        f"{signal.action},"
+                                        f"{signal.confidence:.4f},"
+                                        f"{signal.sl_pips:.1f},"
+                                        f"{signal.tp_pips:.1f},"
+                                        f"{signal.lot_size:.2f},"
+                                        f"{signal.model_name},"
+                                        f"{signal.regime}\r\n"
+                                    )
+                                    f.write(data)
+                                replace_succeeded = True
+                                logger.warning(
+                                    "[Bridge] Direct write fallback "
+                                    "succeeded."
+                                )
+                            except Exception as e4:
+                                logger.error(
+                                    f"[Bridge] All write methods "
+                                    f"failed: {e4}"
+                                )
 
             except Exception:
                 # Clean up temp file on error
