@@ -2,6 +2,8 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
+//|  v5.2 - Signal Write Race Condition Fix                            |
+//|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
 //|  confirmations back for the Python system to read.                 |
@@ -11,7 +13,7 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "1.00"
+#property version   "5.20"
 #property strict
 
 #include <Trade\Trade.mqh>

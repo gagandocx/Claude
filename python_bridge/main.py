@@ -20,6 +20,8 @@ import threading
 from datetime import datetime
 from typing import Optional
 
+VERSION = "5.2"
+
 import numpy as np
 import pandas as pd
 
@@ -663,6 +665,7 @@ class PythonMLBridge:
     def run(self):
         """Run the main bridge loop (blocking)."""
         self._running = True
+        self.logger.info(f"Python ML Bridge v{VERSION} starting...")
         self.logger.info("Starting main loop...")
 
         # Register signal handlers for graceful shutdown
@@ -711,7 +714,7 @@ class PythonMLBridge:
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("  Python ML Bridge for MetaTrader 5")
+    print(f"  Python ML Bridge for MetaTrader 5 v{VERSION}")
     print("  Deep Learning Trade Signal Generator")
     print("=" * 60)
 
