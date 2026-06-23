@@ -985,10 +985,52 @@ class SignalGenerator:
         momentum_direction = self._compute_momentum_direction(prices, adaptive_atr=adaptive_atr_val, avg_atr=avg_atr_val)
         logger.info("[SignalGen] Momentum direction: %s", momentum_direction)
 
-        # If momentum is FLAT, do not trade (no clear short-term trend)
+        # Initialize range_signal (set to a value inside the FLAT block if range trading triggers)
+        range_signal = None
+
+        # MEAN-REVERSION RANGE TRADING: When momentum is FLAT, detect the
+        # consolidation range and trade the extremes (buy low, sell high).
         if momentum_direction == "FLAT":
-            logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction)")
-            return hold_signal
+            range_bars = 20
+            range_signal = None
+
+            if isinstance(prices, pd.DataFrame) and "High" in prices.columns and "Low" in prices.columns:
+                if len(prices) >= range_bars:
+                    range_high = float(prices["High"].iloc[-range_bars:].max())
+                    range_low = float(prices["Low"].iloc[-range_bars:].min())
+                    range_size = range_high - range_low
+
+                    if range_size > 0 and current_price > 0:
+                        # Position within range: 0.0 = at low, 1.0 = at high
+                        position_in_range = (current_price - range_low) / range_size
+
+                        logger.info("[SignalGen] Range detection: high=%.2f, low=%.2f, "
+                                    "size=%.2f, price=%.2f, position=%.1f%%",
+                                    range_high, range_low, range_size,
+                                    current_price, position_in_range * 100)
+
+                        if position_in_range <= 0.20:
+                            # Price is near the BOTTOM of range (within 20%) -> BUY
+                            momentum_direction = "BUY"
+                            range_signal = "range_buy"
+                            logger.info("[SignalGen] RANGE MODE: Price near bottom (%.1f%%) "
+                                        "- mean-reversion BUY signal", position_in_range * 100)
+                        elif position_in_range >= 0.80:
+                            # Price is near the TOP of range (within 80%+) -> SELL
+                            momentum_direction = "SELL"
+                            range_signal = "range_sell"
+                            logger.info("[SignalGen] RANGE MODE: Price near top (%.1f%%) "
+                                        "- mean-reversion SELL signal", position_in_range * 100)
+                        else:
+                            # Price is in the middle of range (20-80%) -> still FLAT/HOLD
+                            logger.info("[SignalGen] RANGE MODE: Price in middle (%.1f%%) "
+                                        "- no edge, holding", position_in_range * 100)
+
+            # If no range signal was generated, hold as before
+            if range_signal is None:
+                logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction, "
+                            "no range extremes)")
+                return hold_signal
 
         # 1b. Analyze candlestick patterns to detect pullbacks / reversals
         candle_info = self._analyze_candle_patterns(prices)
@@ -1194,6 +1236,15 @@ class SignalGenerator:
             current_price=current_price,
             sl_mult=sl_mult, tp_mult=tp_mult
         )
+
+        # 9a. Range mode SL override: tighter stop loss ($2 instead of $3)
+        # since range-bound moves are smaller and we want quicker exits on failure
+        if range_signal is not None:
+            range_sl_pips = 20.0  # $2 for gold (10 pips = $1)
+            if levels["sl_pips"] > range_sl_pips:
+                logger.info("[SignalGen] RANGE MODE: Reducing SL from %.1f to %.1f pips "
+                            "(tighter for range trading)", levels["sl_pips"], range_sl_pips)
+                levels["sl_pips"] = range_sl_pips
 
         # 9b. Dynamic trailing mode: if tp_pips == 0 (atr_tp_multiplier=0),
         # set tp_pips=9999 to signal the EA to manage exit dynamically (no fixed TP)
