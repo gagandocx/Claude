@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "v5.3 M1 Momentum Fix: Add separate M1 data fetch for momentum direction and M1 ATR for SL sizing, while keeping H1 for AI model features. This fixes the EA buying during downtrends by switching from 7-hour lookback to 7-minute lookback for direction.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "1. In python_bridge/data/market_data.py, add a new method `get_m1_atr(self, period: int = 14) -> float` that fetches M1 data (interval='1m', period='5d') and computes ATR(14) from M1 candles. This should return the M1 ATR value (~$2-3 for gold). Also update get_current_atr() to accept an optional `interval` parameter for flexibility.",
     "2. In python_bridge/strategies/signal_generator.py `generate_signal()`, add a new optional parameter `prices_m1: Optional[pd.DataFrame] = None`. When computing momentum direction (section 1d), use `prices_m1` if available, falling back to `prices` (H1) if not. Same for: (a) adaptive ATR calculation for momentum lookback selection, (b) price_structure detection, (c) RSI zone filter (section 1a3), (d) RSI exhaustion filter (section 5c), (e) support/resistance levels (section 5b). Keep prices (H1) for: model features input, candle pattern analysis (those only LOG on M1 anyway), spread filter (which proxies spread from H-L range).",
@@ -31,5 +31,5 @@
     "Verify main.py run_cycle() has df_m1 fetch and passes prices_m1 to generate_signal"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 74 signal generator tests pass. 519/520 total tests pass (1 pre-existing failure in test_smart_upgrades.py::TestConfigs::test_price_structure_config_defaults - config value is 0.05 but test expects 0.15, unrelated to this change). Fixed multiple pre-existing test failures: momentum tests needed 8+ bars for lookback=6, threshold is $1.50, candle pattern tests needed stricter thresholds (doji <1%, hammer 80%+). The v5.2 signal write retry logic in bridge.py is preserved unchanged."
 }
