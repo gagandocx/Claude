@@ -55,32 +55,32 @@ class TestMomentumDirection:
     """Tests for compute_momentum_direction function."""
 
     def test_buy_signal_when_price_rises(self):
-        """BUY when close[-1] - close[-6] > $2.50."""
-        # Create a series with a clear upward move > $2.50
-        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2003.0])
-        # index=5: close[5]-close[0] = 3.0 > 2.50 -> BUY
-        result = compute_momentum_direction(closes, 5)
+        """BUY when close[-1] - close[-LOOKBACK] > MOMENTUM_THRESHOLD."""
+        # Create a series with a clear upward move > $3.00 over 8 bars
+        closes = pd.Series([2000.0, 2000.3, 2000.6, 2001.0, 2001.4, 2001.8, 2002.2, 2002.7, 2003.5])
+        # index=8: close[8]-close[0] = 3.5 > 3.00 -> BUY
+        result = compute_momentum_direction(closes, 8)
         assert result == "BUY"
 
     def test_sell_signal_when_price_falls(self):
-        """SELL when close[-1] - close[-6] < -$2.50."""
-        closes = pd.Series([2003.0, 2002.5, 2002.0, 2001.5, 2001.0, 2000.0])
-        # index=5: close[5]-close[0] = -3.0 < -2.50 -> SELL
-        result = compute_momentum_direction(closes, 5)
+        """SELL when close[-1] - close[-LOOKBACK] < -MOMENTUM_THRESHOLD."""
+        closes = pd.Series([2003.5, 2003.2, 2002.8, 2002.4, 2002.0, 2001.5, 2001.0, 2000.5, 2000.0])
+        # index=8: close[8]-close[0] = -3.5 < -3.00 -> SELL
+        result = compute_momentum_direction(closes, 8)
         assert result == "SELL"
 
     def test_flat_when_price_unchanged(self):
-        """FLAT when price move < $2.50."""
-        closes = pd.Series([2000.0, 2000.3, 2000.5, 2000.7, 2000.9, 2001.0])
-        # index=5: close[5]-close[0] = 1.0 < 2.50 -> FLAT
-        result = compute_momentum_direction(closes, 5)
+        """FLAT when price move < MOMENTUM_THRESHOLD."""
+        closes = pd.Series([2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.5, 2000.6, 2000.7, 2001.0])
+        # index=8: close[8]-close[0] = 1.0 < 3.00 -> FLAT
+        result = compute_momentum_direction(closes, 8)
         assert result == "FLAT"
 
     def test_flat_at_exact_threshold(self):
-        """FLAT when price move equals exactly $2.50 (not strictly greater)."""
-        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.5])
-        # index=5: close[5]-close[0] = 2.5, not > 2.50 -> FLAT
-        result = compute_momentum_direction(closes, 5)
+        """FLAT when price move equals exactly MOMENTUM_THRESHOLD (not strictly greater)."""
+        closes = pd.Series([2000.0, 2000.3, 2000.5, 2000.8, 2001.0, 2001.3, 2001.8, 2002.3, 2003.0])
+        # index=8: close[8]-close[0] = 3.0, not > 3.00 -> FLAT
+        result = compute_momentum_direction(closes, 8)
         assert result == "FLAT"
 
     def test_flat_when_insufficient_bars(self):
@@ -90,9 +90,9 @@ class TestMomentumDirection:
         assert result == "FLAT"
 
     def test_buy_at_threshold_plus_epsilon(self):
-        """BUY when price move is just above $2.50."""
-        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.51])
-        result = compute_momentum_direction(closes, 5)
+        """BUY when price move is just above MOMENTUM_THRESHOLD."""
+        closes = pd.Series([2000.0, 2000.3, 2000.6, 2001.0, 2001.4, 2001.8, 2002.2, 2002.7, 2003.01])
+        result = compute_momentum_direction(closes, 8)
         assert result == "BUY"
 
 
@@ -103,63 +103,63 @@ class TestProgressiveTrailing:
     """Tests for apply_progressive_trailing function."""
 
     def test_no_trail_below_threshold(self):
-        """SL unchanged when profit < $0.50."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2000.3)
-        assert pos.sl_price == 1997.0  # Unchanged
+        """SL unchanged when profit < TRAIL_BE_THRESHOLD."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2001.5)
+        assert pos.sl_price == 1995.0  # Unchanged (profit $1.5 < BE threshold $2.0)
 
     def test_break_even_at_050_profit(self):
-        """SL moves to break-even at $0.50 profit."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2000.6)
+        """SL moves to break-even at TRAIL_BE_THRESHOLD profit."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2002.5)  # $2.5 profit >= $2.0 BE threshold
         assert pos.sl_price == 2000.0  # Break-even
         assert pos.trail_tier == "breakeven"
 
     def test_trail_050_at_100_profit(self):
-        """SL trails $0.50 behind at $1.0 profit."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2001.2)
-        # Expected: 2001.2 - 0.50 = 2000.70
-        assert pos.sl_price == pytest.approx(2000.70, abs=0.01)
+        """SL trails TRAIL_TIER1_DISTANCE behind at TRAIL_TIER1_THRESHOLD profit."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2004.0)  # $4.0 profit >= $3.5 tier1 threshold
+        # Expected: 2004.0 - 2.0 = 2002.0
+        assert pos.sl_price == pytest.approx(2002.0, abs=0.01)
 
     def test_trail_030_at_200_profit(self):
-        """SL trails $0.30 behind at $2.0 profit."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2002.5)
-        # Expected: 2002.5 - 0.30 = 2002.20
-        assert pos.sl_price == pytest.approx(2002.20, abs=0.01)
+        """SL trails TRAIL_TIER2_DISTANCE behind at TRAIL_TIER2_THRESHOLD profit."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2006.0)  # $6.0 profit >= $5.5 tier2 threshold
+        # Expected: 2006.0 - 1.5 = 2004.5
+        assert pos.sl_price == pytest.approx(2004.5, abs=0.01)
 
     def test_trail_020_at_300_profit(self):
-        """SL trails $0.20 behind at $3.0 profit."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2003.5)
-        # Expected: 2003.5 - 0.20 = 2003.30
-        assert pos.sl_price == pytest.approx(2003.30, abs=0.01)
+        """SL trails TRAIL_TIER3_DISTANCE behind at TRAIL_TIER3_THRESHOLD profit."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2009.0)  # $9.0 profit >= $8.0 tier3 threshold
+        # Expected: 2009.0 - 1.0 = 2008.0
+        assert pos.sl_price == pytest.approx(2008.0, abs=0.01)
 
     def test_sell_break_even(self):
-        """SL moves to break-even for SELL at $0.50 profit."""
-        pos = Position("SELL", 2000.0, 2003.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 1999.4)
-        # SELL profit = 2000 - 1999.4 = 0.6 >= 0.50 -> BE
+        """SL moves to break-even for SELL at TRAIL_BE_THRESHOLD profit."""
+        pos = Position("SELL", 2000.0, 2005.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 1997.5)
+        # SELL profit = 2000 - 1997.5 = 2.5 >= 2.0 -> BE
         assert pos.sl_price == 2000.0
 
     def test_sell_trail_020_at_300(self):
-        """SL trails $0.20 behind for SELL at $3.0 profit."""
-        pos = Position("SELL", 2000.0, 2003.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 1996.5)
-        # SELL profit = 2000 - 1996.5 = 3.5 >= 3.0 -> trail 0.20 behind
-        # SL = 1996.5 + 0.20 = 1996.70
-        assert pos.sl_price == pytest.approx(1996.70, abs=0.01)
+        """SL trails TRAIL_TIER1_DISTANCE behind for SELL at TRAIL_TIER1_THRESHOLD profit."""
+        pos = Position("SELL", 2000.0, 2005.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 1996.0)
+        # SELL profit = 2000 - 1996.0 = 4.0 >= 3.5 -> trail 2.0 behind
+        # SL = 1996.0 + 2.0 = 1998.0
+        assert pos.sl_price == pytest.approx(1998.0, abs=0.01)
 
     def test_sl_never_moves_backwards(self):
         """SL never moves to a worse position (further from price)."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        # First move to trail at $2.0 profit
-        apply_progressive_trailing(pos, 2002.5)
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        # First move to trail at tier1 profit ($4.0)
+        apply_progressive_trailing(pos, 2004.0)
         first_sl = pos.sl_price
 
         # Price retraces but still profitable
-        apply_progressive_trailing(pos, 2001.5)
+        apply_progressive_trailing(pos, 2003.0)
         # SL should not decrease (max of old and new)
         assert pos.sl_price >= first_sl
 
@@ -321,7 +321,7 @@ class TestMaxPositionLimit:
         np.random.seed(123)
         n_bars = 300
         dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
-        # Create a trending market with moves large enough (>$2.50 in 5 bars)
+        # Create a trending market with moves large enough (>$3.00 in 8 bars)
         prices = 2000.0 + np.cumsum(np.ones(n_bars) * 0.6)
 
         df = pd.DataFrame({
@@ -335,7 +335,7 @@ class TestMaxPositionLimit:
         backtester = Backtester(verbose=False)
         results = backtester.run(df)
 
-        assert MAX_POSITIONS == 3  # Confirm the limit constant
+        assert MAX_POSITIONS == 1  # Confirm the limit constant
         # The backtest should complete without errors - the limit is enforced
         assert results["summary"]["total_trades"] >= 0
 
@@ -382,40 +382,42 @@ class TestMomentumExit:
     """Tests for momentum exit logic."""
 
     def test_buy_exits_on_reversal(self):
-        """BUY position exits when momentum reverses > $1.50 and position at deep loss."""
-        closes = pd.Series([2001.0, 2000.5, 2000.0, 1999.5, 1999.0, 1998.5])
+        """BUY position exits when momentum reverses > MOMENTUM_EXIT_THRESHOLD and position at deep loss."""
+        # Need 8+ bars for MOMENTUM_LOOKBACK=8
+        closes = pd.Series([2002.0, 2001.5, 2001.0, 2000.5, 2000.0, 1999.5, 1999.0, 1998.5, 1998.0])
         # Position entered at 2005.0 with SL at 2000.0
-        # Current price 1998.5, so unrealized PnL = 1998.5 - 2005.0 = -6.5 (< -4.50)
+        # Current price 1998.0, so unrealized PnL = 1998.0 - 2005.0 = -7.0 (< -4.50)
         pos = Position("BUY", 2005.0, 2000.0, 0, "2024-01-01", 50.0, "london")
-        # diff = 1998.5 - 2001.0 = -2.5 < -1.50 -> exit (with deep loss condition met)
-        result = check_momentum_exit(pos, closes, 5)
+        # diff = 1998.0 - 2002.0 = -4.0 < -2.50 -> exit (with deep loss condition met)
+        result = check_momentum_exit(pos, closes, 8)
         assert result is True
 
     def test_sell_exits_on_reversal(self):
-        """SELL position exits when momentum reverses > $1.50 and position at deep loss."""
-        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.5])
+        """SELL position exits when momentum reverses > MOMENTUM_EXIT_THRESHOLD and position at deep loss."""
+        # Need 8+ bars for MOMENTUM_LOOKBACK=8
+        closes = pd.Series([1998.0, 1998.5, 1999.0, 1999.5, 2000.0, 2000.5, 2001.0, 2001.5, 2002.0])
         # Position entered at 1997.0 with SL at 2002.0
-        # Current price 2002.5, so unrealized PnL = 1997.0 - 2002.5 = -5.5 (< -4.50)
+        # Current price 2002.0, so unrealized PnL = 1997.0 - 2002.0 = -5.0 (< -4.50)
         pos = Position("SELL", 1997.0, 2002.0, 0, "2024-01-01", 50.0, "london")
-        # diff = 2002.5 - 2000.0 = 2.5 > 1.50 -> exit (with deep loss condition met)
-        result = check_momentum_exit(pos, closes, 5)
+        # diff = 2002.0 - 1998.0 = 4.0 > 2.50 -> exit (with deep loss condition met)
+        result = check_momentum_exit(pos, closes, 8)
         assert result is True
 
     def test_no_exit_when_momentum_continues(self):
         """No exit when momentum continues in position direction."""
-        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2003.0])
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        # diff = 2003.0 - 2000.0 = 3.0 > 0 -> no exit for BUY
-        result = check_momentum_exit(pos, closes, 5)
+        closes = pd.Series([2000.0, 2000.5, 2001.0, 2001.5, 2002.0, 2002.5, 2003.0, 2003.5, 2004.0])
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        # diff = 2004.0 - 2000.0 = 4.0 > 0 -> no exit for BUY
+        result = check_momentum_exit(pos, closes, 8)
         assert result is False
 
     def test_no_exit_when_not_in_deep_loss(self):
         """No momentum exit when position is not at deep loss (> -$4.50)."""
-        closes = pd.Series([2001.0, 2000.5, 2000.0, 1999.5, 1999.0, 1998.5])
-        # Position entered at 2001.0, so PnL = 1998.5 - 2001.0 = -2.5 (> -4.50)
+        closes = pd.Series([2002.0, 2001.5, 2001.0, 2000.5, 2000.0, 1999.5, 1999.0, 1998.5, 1998.0])
+        # Position entered at 2001.0, so PnL = 1998.0 - 2001.0 = -3.0 (> -4.50)
         pos = Position("BUY", 2001.0, 1996.0, 0, "2024-01-01", 50.0, "london")
-        # diff = -2.5 < -1.50 BUT PnL is only -2.5 (not deep enough)
-        result = check_momentum_exit(pos, closes, 5)
+        # diff = -4.0 < -2.50 BUT PnL is only -3.0 (not deep enough)
+        result = check_momentum_exit(pos, closes, 8)
         assert result is False
 
 
@@ -483,8 +485,8 @@ class TestEntryCooldown:
     """Tests for entry cooldown (min_bars_between_entries)."""
 
     def test_default_cooldown_is_15_bars(self):
-        """Default MIN_BARS_BETWEEN_ENTRIES is 15."""
-        assert MIN_BARS_BETWEEN_ENTRIES == 15
+        """Default MIN_BARS_BETWEEN_ENTRIES is 60."""
+        assert MIN_BARS_BETWEEN_ENTRIES == 60
 
     def test_cooldown_prevents_consecutive_entries(self):
         """Entries should not occur on consecutive bars due to cooldown."""
@@ -564,21 +566,21 @@ class TestSyntheticConfidence:
 
     def test_confidence_increases_with_momentum(self):
         """Higher momentum magnitude produces higher confidence."""
-        # Small momentum: $0.6 move
-        closes_small = pd.Series([2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.6])
-        conf_small = compute_momentum_magnitude(closes_small, 5)
+        # Small momentum: $0.6 move over 8 bars
+        closes_small = pd.Series([2000.0, 2000.05, 2000.1, 2000.15, 2000.2, 2000.3, 2000.4, 2000.5, 2000.6])
+        conf_small = compute_momentum_magnitude(closes_small, 8)
 
-        # Large momentum: $2.0 move
-        closes_large = pd.Series([2000.0, 2000.3, 2000.6, 2001.0, 2001.5, 2002.0])
-        conf_large = compute_momentum_magnitude(closes_large, 5)
+        # Large momentum: $4.0 move over 8 bars
+        closes_large = pd.Series([2000.0, 2000.4, 2000.8, 2001.2, 2001.8, 2002.4, 2003.0, 2003.5, 2004.0])
+        conf_large = compute_momentum_magnitude(closes_large, 8)
 
         assert conf_large > conf_small
 
     def test_confidence_bounded(self):
         """Confidence is always between 0 and 0.95."""
-        # Very large momentum
-        closes = pd.Series([2000.0, 2002.0, 2004.0, 2006.0, 2008.0, 2010.0])
-        result = compute_momentum_magnitude(closes, 5)
+        # Very large momentum over 8 bars
+        closes = pd.Series([2000.0, 2001.5, 2003.0, 2004.5, 2006.0, 2007.5, 2009.0, 2010.5, 2012.0])
+        result = compute_momentum_magnitude(closes, 8)
         assert 0.0 < result <= 0.95
 
     def test_confidence_not_hardcoded_in_trades(self):
@@ -652,42 +654,42 @@ class TestTrailTierBreakeven:
 
     def test_breakeven_tier_is_distinct_from_wide(self):
         """Break-even tier should be 'breakeven', not 'wide'."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        # Profit of $0.60 (above BE threshold, below tier1)
-        apply_progressive_trailing(pos, 2000.6)
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        # Profit of $2.5 (above BE threshold $2.0, below tier1 $3.5)
+        apply_progressive_trailing(pos, 2002.5)
         assert pos.trail_tier == "breakeven"
 
     def test_tier1_wide_still_works(self):
-        """Tier 1 (at $1.0+ profit) should still be 'wide'."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
-        apply_progressive_trailing(pos, 2001.2)
+        """Tier 1 (at TRAIL_TIER1_THRESHOLD profit) should still be 'wide'."""
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2004.0)  # $4.0 profit >= $3.5 tier1
         assert pos.trail_tier == "wide"
 
     def test_sell_breakeven_tier(self):
         """SELL break-even should also use 'breakeven' tier."""
-        pos = Position("SELL", 2000.0, 2003.0, 0, "2024-01-01", 50.0, "london")
-        # SELL profit = 2000 - 1999.4 = 0.6 >= 0.50 -> breakeven
-        apply_progressive_trailing(pos, 1999.4)
+        pos = Position("SELL", 2000.0, 2005.0, 0, "2024-01-01", 50.0, "london")
+        # SELL profit = 2000 - 1997.5 = 2.5 >= 2.0 -> breakeven
+        apply_progressive_trailing(pos, 1997.5)
         assert pos.trail_tier == "breakeven"
 
     def test_breakeven_upgrades_to_wide_then_medium(self):
         """Trail tier progresses: breakeven -> wide -> medium -> tight."""
-        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
+        pos = Position("BUY", 2000.0, 1995.0, 0, "2024-01-01", 50.0, "london")
 
-        # First: breakeven
-        apply_progressive_trailing(pos, 2000.6)
+        # First: breakeven ($2.5 profit, above $2.0 BE threshold)
+        apply_progressive_trailing(pos, 2002.5)
         assert pos.trail_tier == "breakeven"
 
-        # Then: wide (tier 1)
-        apply_progressive_trailing(pos, 2001.2)
+        # Then: wide (tier 1, $4.0 profit >= $3.5)
+        apply_progressive_trailing(pos, 2004.0)
         assert pos.trail_tier == "wide"
 
-        # Then: medium (tier 2)
-        apply_progressive_trailing(pos, 2002.5)
+        # Then: medium (tier 2, $6.0 profit >= $5.5)
+        apply_progressive_trailing(pos, 2006.0)
         assert pos.trail_tier == "medium"
 
-        # Then: tight (tier 3)
-        apply_progressive_trailing(pos, 2003.5)
+        # Then: tight (tier 3, $9.0 profit >= $8.0)
+        apply_progressive_trailing(pos, 2009.0)
         assert pos.trail_tier == "tight"
 
 

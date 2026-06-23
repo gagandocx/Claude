@@ -125,12 +125,12 @@ class DataConfig:
     sr_lookback: int = 100                  # Bars for S/R level detection
 
     # Momentum parameters
-    momentum_lookback: int = 5              # 5-bar momentum lookback
-    momentum_threshold: float = 2.5         # Min price move for momentum ($2.50 for gold - higher = fewer, better trades)
+    momentum_lookback: int = 8              # 8-bar momentum lookback (smoother, less noise)
+    momentum_threshold: float = 3.0         # Min price move for momentum ($3.00 for gold - moderate-strong filter)
 
     # RSI exhaustion filter thresholds
-    rsi_overbought: int = 70               # RSI above this = overbought
-    rsi_oversold: int = 30                 # RSI below this = oversold
+    rsi_overbought: int = 62               # RSI above this = overbought (stricter)
+    rsi_oversold: int = 38                 # RSI below this = oversold (stricter)
 
     # ATR-based labeling threshold
     atr_label_threshold: float = 0.3       # Label BUY/SELL if move > 0.3*ATR
@@ -161,12 +161,12 @@ class SentimentConfig:
 @dataclass
 class SignalConfig:
     """Signal generation thresholds."""
-    min_confidence: float = 0.15            # Very low threshold for aggressive trading
+    min_confidence: float = 0.25            # Higher bar for entries (quality over quantity)
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 1.0          # SL = ATR * multiplier (ATR~5 -> $5 SL = wider stops for better win rate)
+    atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 30              # 30-second cooldown between signals (quality over quantity)
+    cooldown_seconds: int = 120             # 2-minute cooldown between signals (quality over quantity)
 
 
 # ─────────────────────────────────────────────
@@ -180,7 +180,7 @@ class RiskConfig:
     max_daily_loss_dollars: float = 50.0    # Absolute dollar drawdown cap per day
     max_drawdown: float = 0.10              # 10% max drawdown before halt
     max_correlation: float = 0.7            # Max correlation between open positions
-    max_open_positions: int = 5             # HF scalping: limited concurrent positions
+    max_open_positions: int = 1             # Single position for maximum selectivity
     kelly_fraction: float = 0.25            # Quarter-Kelly for safety
     account_balance: float = 10000.0        # Default account balance
     min_lot_size: float = 0.01              # Minimum lot size
@@ -552,14 +552,14 @@ class AutoOptimizerConfig:
     state_file: str = "auto_optimizer_state.json"
 
     # Parameter ranges
-    sl_range: tuple = (1.0, 5.0)            # SL distance in dollars
+    sl_range: tuple = (3.0, 10.0)           # SL distance in dollars (wider range)
     session_mult_range: tuple = (0.3, 1.5)  # Session multiplier range
     confidence_range: tuple = (0.10, 0.50)  # Min confidence threshold range
-    momentum_range: tuple = (3, 7)          # Momentum lookback bars
+    momentum_range: tuple = (5, 10)         # Momentum lookback bars (wider range)
     rsi_ob_range: tuple = (65, 85)          # RSI overbought level range
     rsi_os_range: tuple = (15, 35)          # RSI oversold level range
-    cooldown_range: tuple = (2, 30)         # Cooldown seconds range
-    max_positions_range: tuple = (2, 10)    # Max concurrent positions range
+    cooldown_range: tuple = (30, 180)       # Cooldown seconds range (longer cooldowns)
+    max_positions_range: tuple = (1, 3)     # Max concurrent positions range (conservative)
 
 
 # ─────────────────────────────────────────────

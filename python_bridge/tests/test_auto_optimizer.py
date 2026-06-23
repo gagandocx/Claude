@@ -68,13 +68,13 @@ class TestAutoOptimizerInit:
     def test_default_params(self, optimizer):
         """Test that default parameters are set correctly."""
         params = optimizer.get_current_params()
-        assert params["sl_distance"] == 3.0
-        assert params["min_confidence"] == 0.15
-        assert params["momentum_lookback"] == 5
-        assert params["rsi_overbought"] == 70
-        assert params["rsi_oversold"] == 30
-        assert params["cooldown_seconds"] == 2
-        assert params["max_positions"] == 5
+        assert params["sl_distance"] == 5.0
+        assert params["min_confidence"] == 0.25
+        assert params["momentum_lookback"] == 8
+        assert params["rsi_overbought"] == 62
+        assert params["rsi_oversold"] == 38
+        assert params["cooldown_seconds"] == 120
+        assert params["max_positions"] == 1
 
     def test_default_session_multipliers(self, optimizer):
         """Test that session multipliers have correct defaults."""
@@ -140,7 +140,7 @@ class TestOptimization:
 
     def test_optimize_insufficient_trades(self, optimizer_50):
         """Test optimize returns insufficient_trades when not enough data."""
-        for i in range(10):
+        for i in range(5):
             optimizer_50._trades.append(_make_trade(1.0))
         result = optimizer_50.optimize()
         assert result["status"] == "insufficient_trades"
@@ -164,76 +164,78 @@ class TestOptimization:
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Add trades: SL=2.0 wins most, SL=4.0 loses most
+        # Add trades: SL=3.0 wins most, SL=7.0 loses most
         for _ in range(6):
-            opt._trades.append(_make_trade(2.0, sl_distance=2.0))
+            opt._trades.append(_make_trade(2.0, sl_distance=3.0))
         for _ in range(4):
-            opt._trades.append(_make_trade(-1.0, sl_distance=4.0))
+            opt._trades.append(_make_trade(-1.0, sl_distance=7.0))
 
         result = opt.optimize()
-        # SL should shift toward 2.0 from default 3.0
-        assert opt.get_current_params()["sl_distance"] < 3.0
+        # SL should shift toward 3.0 from default 5.0
+        assert opt.get_current_params()["sl_distance"] < 5.0
 
     def test_momentum_lookback_shifts(self, temp_dir):
         """Test momentum lookback shifts toward best performer."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Lookback 7 is best
+        # Lookback 10 is best
         for _ in range(7):
-            opt._trades.append(_make_trade(3.0, momentum_lookback=7))
+            opt._trades.append(_make_trade(3.0, momentum_lookback=10))
         for _ in range(3):
-            opt._trades.append(_make_trade(-1.0, momentum_lookback=3))
+            opt._trades.append(_make_trade(-1.0, momentum_lookback=5))
 
         opt.optimize()
-        # Should shift from default 5 toward 7 (max 1 step = 6)
-        assert opt.get_current_params()["momentum_lookback"] == 6
+        # Should shift from default 8 toward 10 (max 1 step = 9)
+        assert opt.get_current_params()["momentum_lookback"] == 9
 
     def test_confidence_raises_when_low_conf_loses(self, temp_dir):
         """Test confidence threshold raises when low-confidence trades lose."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Low confidence trades lose
+        # Low confidence trades lose (near current threshold 0.25)
         for _ in range(7):
-            opt._trades.append(_make_trade(-1.0, confidence=0.12))
+            opt._trades.append(_make_trade(-1.0, confidence=0.22))
         # High confidence trades win
         for _ in range(3):
-            opt._trades.append(_make_trade(2.0, confidence=0.40))
+            opt._trades.append(_make_trade(2.0, confidence=0.50))
 
         opt.optimize()
-        # Confidence should increase
-        assert opt.get_current_params()["min_confidence"] > 0.15
+        # Confidence should increase from 0.25
+        assert opt.get_current_params()["min_confidence"] > 0.25
 
     def test_cooldown_reduces_when_fast_profitable(self, temp_dir):
         """Test cooldown reduces when fast entries are profitable."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Fast entries (cooldown <= 2) are profitable
+        # Fast entries (cooldown <= 120) are profitable
         for _ in range(8):
-            opt._trades.append(_make_trade(1.5, cooldown_used=1.0))
+            opt._trades.append(_make_trade(1.5, cooldown_used=60.0))
         for _ in range(2):
-            opt._trades.append(_make_trade(-0.5, cooldown_used=5.0))
+            opt._trades.append(_make_trade(-0.5, cooldown_used=150.0))
 
         opt.optimize()
-        # Default is 2, fast entries profitable -> should stay at 2 (min range)
-        assert opt.get_current_params()["cooldown_seconds"] == 2
+        # Default is 120, fast entries profitable -> should reduce by 1
+        assert opt.get_current_params()["cooldown_seconds"] == 119
 
     def test_max_positions_reduces_on_high_drawdown(self, temp_dir):
         """Test max positions reduces when drawdown is high."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
+        # Set positions to 3 so it can be reduced
+        opt._params["max_positions"] = 3
 
         # Large losses creating high drawdown
         for _ in range(8):
-            opt._trades.append(_make_trade(-3.0, max_positions_at_entry=5))
+            opt._trades.append(_make_trade(-3.0, max_positions_at_entry=3))
         for _ in range(2):
-            opt._trades.append(_make_trade(1.0, max_positions_at_entry=5))
+            opt._trades.append(_make_trade(1.0, max_positions_at_entry=3))
 
         opt.optimize()
         # Should reduce positions due to losses
-        assert opt.get_current_params()["max_positions"] < 5
+        assert opt.get_current_params()["max_positions"] < 3
 
     def test_session_multipliers_increase_for_profitable_session(self, temp_dir):
         """Test session multiplier increases for profitable sessions."""
@@ -253,27 +255,27 @@ class TestOptimization:
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
         # Set momentum to max already
-        opt._params["momentum_lookback"] = 7
+        opt._params["momentum_lookback"] = 10
 
-        # All trades favor lookback 7
+        # All trades favor lookback 10
         for _ in range(10):
-            opt._trades.append(_make_trade(5.0, momentum_lookback=7))
+            opt._trades.append(_make_trade(5.0, momentum_lookback=10))
 
         opt.optimize()
-        # Should not exceed max range
-        assert opt.get_current_params()["momentum_lookback"] <= 7
+        # Should not exceed max range (10)
+        assert opt.get_current_params()["momentum_lookback"] <= 10
 
     def test_never_jumps_more_than_one_step(self, temp_dir):
         """Test that momentum lookback shifts at most 1 bar per cycle."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
-        # Current default is 5, best is 3
+        # Current default is 8, best is 5
         for _ in range(10):
-            opt._trades.append(_make_trade(3.0, momentum_lookback=3))
+            opt._trades.append(_make_trade(3.0, momentum_lookback=5))
 
         opt.optimize()
-        # Should shift from 5 to 4 (max 1 step)
-        assert opt.get_current_params()["momentum_lookback"] == 4
+        # Should shift from 8 to 7 (max 1 step)
+        assert opt.get_current_params()["momentum_lookback"] == 7
 
 
 class TestRollback:
@@ -434,26 +436,26 @@ class TestRSIOptimization:
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Trades near overbought that lose
+        # Trades near overbought that lose (RSI near current OB=62)
         for _ in range(10):
-            opt._trades.append(_make_trade(-1.0, rsi_at_entry=68))
+            opt._trades.append(_make_trade(-1.0, rsi_at_entry=60))
 
         opt.optimize()
-        # OB should rise from 70
-        assert opt.get_current_params()["rsi_overbought"] >= 70
+        # OB should rise from 62
+        assert opt.get_current_params()["rsi_overbought"] >= 62
 
     def test_rsi_os_lowers_when_filter_too_loose(self, temp_dir):
         """Test RSI OS level lowers when filtered trades still lose."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Trades near oversold that lose
+        # Trades near oversold that lose (RSI near current OS=38)
         for _ in range(10):
-            opt._trades.append(_make_trade(-1.0, rsi_at_entry=32))
+            opt._trades.append(_make_trade(-1.0, rsi_at_entry=40))
 
         opt.optimize()
-        # OS should lower from 30
-        assert opt.get_current_params()["rsi_oversold"] <= 30
+        # OS should lower from 38
+        assert opt.get_current_params()["rsi_oversold"] <= 38
 
 
 class TestTrailDistanceOptimization:

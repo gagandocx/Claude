@@ -73,10 +73,10 @@ class AutoOptimizer:
         self.load_state()
 
     def _default_params(self) -> Dict:
-        """Return default parameter values (midpoint of ranges)."""
+        """Return default parameter values (optimized baselines)."""
         cfg = self.config
         return {
-            "sl_distance": 3.0,  # Midpoint of (1.0, 5.0)
+            "sl_distance": 5.0,  # $5 SL balanced for gold M1
             "session_multipliers": {
                 "asian": 0.5,
                 "london": 1.2,
@@ -84,17 +84,17 @@ class AutoOptimizer:
                 "overlap": 1.2,
                 "off_session": 0.7,
             },
-            "min_confidence": 0.15,
-            "momentum_lookback": 5,
-            "rsi_overbought": 70,
-            "rsi_oversold": 30,
+            "min_confidence": 0.25,
+            "momentum_lookback": 8,
+            "rsi_overbought": 62,
+            "rsi_oversold": 38,
             "trail_distances": {
                 "tight": 0.5,
                 "medium": 1.0,
                 "wide": 2.0,
             },
-            "cooldown_seconds": 2,
-            "max_positions": 5,
+            "cooldown_seconds": 120,
+            "max_positions": 1,
         }
 
     def record_trade(self, trade_context: Dict) -> None:

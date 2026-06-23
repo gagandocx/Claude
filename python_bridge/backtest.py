@@ -36,26 +36,26 @@ from data.market_data import MarketDataFetcher
 # ─────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────
-DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (wider = fewer stop-outs, better win rate)
-MAX_POSITIONS = 3               # Max concurrent positions (reduced for quality)
-MAX_HOLD_BARS = 50              # Max bars to hold a trade
-MOMENTUM_LOOKBACK = 5           # 5 bars for momentum
-MOMENTUM_THRESHOLD = 2.50       # $2.50 for momentum direction (only strong moves qualify)
-MOMENTUM_EXIT_THRESHOLD = 1.50  # $1.50 reversal triggers exit (must be significant reversal)
-MIN_BARS_BETWEEN_ENTRIES = 15   # Minimum bars between entries (cooldown)
-MAX_TRADES_PER_DAY = 20         # Maximum trades per calendar day
+DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (balanced for gold M1)
+MAX_POSITIONS = 1               # Only 1 position at a time (maximum selectivity)
+MAX_HOLD_BARS = 90              # Max bars to hold a trade (1.5 hours on M1)
+MOMENTUM_LOOKBACK = 8           # 8 bars for momentum detection
+MOMENTUM_THRESHOLD = 3.00       # $3.00 for momentum direction
+MOMENTUM_EXIT_THRESHOLD = 2.50  # $2.50 reversal triggers exit
+MIN_BARS_BETWEEN_ENTRIES = 60   # Minimum bars between entries (1 hour cooldown)
+MAX_TRADES_PER_DAY = 3          # Maximum trades per calendar day
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 70
-RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 62
+RSI_OVERSOLD = 38
 
 # Progressive trailing stop thresholds
-TRAIL_BE_THRESHOLD = 0.50       # Move SL to break-even at $0.50 profit
-TRAIL_TIER1_THRESHOLD = 1.0     # Trail $0.50 behind at $1.0 profit
-TRAIL_TIER1_DISTANCE = 0.50
-TRAIL_TIER2_THRESHOLD = 2.0     # Trail $0.30 behind at $2.0 profit
-TRAIL_TIER2_DISTANCE = 0.30
-TRAIL_TIER3_THRESHOLD = 3.0     # Trail $0.20 behind at $3.0 profit
-TRAIL_TIER3_DISTANCE = 0.20
+TRAIL_BE_THRESHOLD = 2.0        # Move SL to break-even at $2.0 profit
+TRAIL_TIER1_THRESHOLD = 3.5     # Trail $2.0 behind at $3.5 profit
+TRAIL_TIER1_DISTANCE = 2.0
+TRAIL_TIER2_THRESHOLD = 5.5     # Trail $1.5 behind at $5.5 profit
+TRAIL_TIER2_DISTANCE = 1.5
+TRAIL_TIER3_THRESHOLD = 8.0     # Trail $1.0 behind at $8.0 profit
+TRAIL_TIER3_DISTANCE = 1.0
 
 
 # ─────────────────────────────────────────────
@@ -267,7 +267,7 @@ def check_momentum_exit(position: Position, closes: pd.Series, index: int) -> bo
     # Only exit if near stop loss level (90% of SL distance reached)
     # and momentum confirms the trade direction has fully failed
     current_pnl = position.unrealized_pnl(current_close)
-    if current_pnl >= -4.50:
+    if current_pnl >= -4.5:
         return False  # Let trailing stop manage everything else
 
     if position.direction == "BUY" and diff < -MOMENTUM_EXIT_THRESHOLD:
@@ -643,7 +643,7 @@ class Backtester:
 
                     momentum = compute_momentum_direction(df["Close"], i)
 
-                    # Range trading: only if momentum is FLAT and range > $5
+                    # Range trading: only if momentum is FLAT and range > $8
                     if momentum == "FLAT":
                         range_bars = 20
                         if i >= range_bars:
@@ -651,14 +651,14 @@ class Backtester:
                             range_low = float(df["Low"].iloc[i - range_bars:i].min())
                             range_size = range_high - range_low
 
-                            if range_size > 5.0 and current_price > 0:
+                            if range_size > 8.0 and current_price > 0:
                                 position_in_range = (current_price - range_low) / range_size
 
-                                if position_in_range <= 0.15:
-                                    # Near bottom 15% -> BUY
+                                if position_in_range <= 0.10:
+                                    # Near bottom 10% -> BUY
                                     momentum = "BUY"
-                                elif position_in_range >= 0.85:
-                                    # Near top 85% -> SELL
+                                elif position_in_range >= 0.90:
+                                    # Near top 10% -> SELL
                                     momentum = "SELL"
 
                     if momentum != "FLAT":
@@ -672,30 +672,84 @@ class Backtester:
                                 rsi_ok = False
 
                             # RSI zone filter: require RSI in favorable zone
-                            # BUY: RSI 30-60 (not overbought, shows upward room)
-                            # SELL: RSI 40-70 (not oversold, shows downward room)
+                            # BUY: RSI 35-58 (not overbought, shows upward room)
+                            # SELL: RSI 42-65 (not oversold, shows downward room)
                             if rsi_ok:
-                                if momentum == "BUY" and not (30 <= rsi_value <= 60):
+                                if momentum == "BUY" and not (35 <= rsi_value <= 58):
                                     rsi_ok = False
-                                elif momentum == "SELL" and not (40 <= rsi_value <= 70):
+                                elif momentum == "SELL" and not (42 <= rsi_value <= 65):
                                     rsi_ok = False
 
                             if rsi_ok:
                                 session = detect_session(bar_time)
 
-                                # Session filter: only trade during London or NY overlap
-                                if session not in ("london", "overlap", "newyork"):
+                                # Session filter: only trade during London or overlap
+                                if session not in ("london", "overlap"):
                                     continue
 
-                                # Price structure alignment: require structure to confirm
+                                # Price structure alignment: REQUIRE structure to confirm
                                 structure = detect_price_structure(df, i)
-                                structure_ok = True
-                                if momentum == "BUY" and structure == "downtrend":
-                                    structure_ok = False
-                                elif momentum == "SELL" and structure == "uptrend":
-                                    structure_ok = False
+                                structure_ok = False
+                                if momentum == "BUY" and structure == "uptrend":
+                                    structure_ok = True
+                                elif momentum == "SELL" and structure == "downtrend":
+                                    structure_ok = True
 
                                 if structure_ok:
+                                    # EMA 50 trend confirmation filter
+                                    ema_ok = True
+                                    if i >= 50:
+                                        ema50 = df["Close"].iloc[i - 50:i].mean()
+                                        if momentum == "BUY" and current_price < ema50:
+                                            ema_ok = False
+                                        elif momentum == "SELL" and current_price > ema50:
+                                            ema_ok = False
+
+                                    if not ema_ok:
+                                        continue
+
+                                    # Pullback filter: require price to be pulling back
+                                    # from recent extreme (don't chase peaks/troughs)
+                                    pullback_ok = True
+                                    if i >= 5:
+                                        recent_highs = df["High"].iloc[i - 5:i]
+                                        recent_lows = df["Low"].iloc[i - 5:i]
+                                        if momentum == "BUY":
+                                            # For buying: current price should be below recent high
+                                            # (means we're buying on a pullback, not at the peak)
+                                            recent_high = float(recent_highs.max())
+                                            if current_price >= recent_high:
+                                                pullback_ok = False
+                                        elif momentum == "SELL":
+                                            # For selling: current price should be above recent low
+                                            recent_low = float(recent_lows.min())
+                                            if current_price <= recent_low:
+                                                pullback_ok = False
+
+                                    if not pullback_ok:
+                                        continue
+
+                                    # ATR volatility filter: only trade when ATR is 1.0-6.0
+                                    atr_ok = True
+                                    if i >= 14:
+                                        highs_arr = df["High"].iloc[i - 14:i].values
+                                        lows_arr = df["Low"].iloc[i - 14:i].values
+                                        closes_arr = df["Close"].iloc[i - 14:i].values
+                                        tr_values = []
+                                        for k in range(1, len(highs_arr)):
+                                            tr = max(
+                                                highs_arr[k] - lows_arr[k],
+                                                abs(highs_arr[k] - closes_arr[k - 1]),
+                                                abs(lows_arr[k] - closes_arr[k - 1])
+                                            )
+                                            tr_values.append(tr)
+                                        atr_val = np.mean(tr_values) if tr_values else 0.0
+                                        if atr_val < 1.0 or atr_val > 6.0:
+                                            atr_ok = False
+
+                                    if not atr_ok:
+                                        continue
+
                                     entry_price = current_price
 
                                     if momentum == "BUY":
@@ -705,6 +759,10 @@ class Backtester:
 
                                     # Compute synthetic confidence from momentum magnitude
                                     confidence = compute_momentum_magnitude(df["Close"], i)
+
+                                    # Minimum confidence filter: reject weak momentum
+                                    if confidence < 0.70:
+                                        continue
 
                                     entry_time_str = str(bar_time)
                                     pos = Position(
