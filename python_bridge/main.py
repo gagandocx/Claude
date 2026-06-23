@@ -364,15 +364,20 @@ class PythonMLBridge:
 
             # 4. Get ATR and current price
             # Use M1 ATR for SL/TP sizing (~$2-3 for proper scalping stops)
-            # Fall back to H1 ATR if M1 unavailable
+            # Fall back to H1 ATR if M1 unavailable (with tighter $5 cap applied here)
             if df_m1 is not None and not df_m1.empty:
-                atr = self.data_fetcher.get_m1_atr()
+                # Compute ATR directly from the df_m1 we already fetched (no second network call)
+                atr = self.data_fetcher.compute_atr_from_df(df_m1, window=14)
                 if atr <= 0:
                     atr = self.data_fetcher.get_current_atr()
+                    # H1 fallback: apply tighter cap to prevent outsized scalping stops
+                    atr = min(atr, 5.0)
                 # Use M1 close for most current price
                 current_price = float(df_m1["Close"].iloc[-1])
             else:
                 atr = self.data_fetcher.get_current_atr()
+                # H1 fallback: apply tighter cap to prevent outsized scalping stops
+                atr = min(atr, 5.0)
                 current_price = float(df["Close"].iloc[-1])
 
             # 5. Get ADX for regime detection

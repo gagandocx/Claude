@@ -1300,8 +1300,8 @@ class SignalGenerator:
             atr = 3.0  # Default ATR for gold M1 scalping
 
         # Cap ATR to prevent excessively large SL/TP values
-        # With M1 ATR (~$2-3), this cap rarely triggers but protects against bad data
-        atr = min(atr, 8.0)
+        # M1 ATR (~$2-3) won't hit this; cap protects against H1 fallback or bad data
+        atr = min(atr, 5.0)
 
         sl_mult = self.signal_config.atr_sl_multiplier * regime_adjustments.get("sl_mult", 1.0)
         tp_mult = self.signal_config.atr_tp_multiplier * regime_adjustments.get("tp_mult", 1.0)

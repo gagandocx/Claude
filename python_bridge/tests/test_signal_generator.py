@@ -1399,3 +1399,39 @@ class TestM1ATR:
         sig = inspect.signature(MarketDataFetcher.get_current_atr)
         params = list(sig.parameters.keys())
         assert 'interval' in params
+
+    def test_compute_atr_from_df_returns_float(self):
+        """Test that compute_atr_from_df computes ATR from an existing DataFrame."""
+        from data.market_data import MarketDataFetcher
+        import pandas as pd
+        import numpy as np
+        # Create synthetic M1-like gold data with known volatility
+        np.random.seed(42)
+        n = 100
+        base_price = 2700.0
+        closes = base_price + np.cumsum(np.random.randn(n) * 2.0)
+        highs = closes + np.abs(np.random.randn(n) * 1.5)
+        lows = closes - np.abs(np.random.randn(n) * 1.5)
+        opens = closes + np.random.randn(n) * 0.5
+        df = pd.DataFrame({
+            "Open": opens, "High": highs, "Low": lows,
+            "Close": closes, "Volume": np.random.randint(100, 1000, n)
+        })
+        result = MarketDataFetcher.compute_atr_from_df(df, window=14)
+        assert isinstance(result, float)
+        assert result > 0
+        # M1-like ATR should be small (our synthetic data has ~$3 range per bar)
+        assert result < 20.0
+
+    def test_compute_atr_from_df_empty_returns_zero(self):
+        """Test that compute_atr_from_df returns 0.0 for empty/insufficient data."""
+        from data.market_data import MarketDataFetcher
+        import pandas as pd
+        assert MarketDataFetcher.compute_atr_from_df(pd.DataFrame(), window=14) == 0.0
+        assert MarketDataFetcher.compute_atr_from_df(None, window=14) == 0.0
+        # Only 5 bars, less than window+1=15
+        df = pd.DataFrame({
+            "Open": [1]*5, "High": [2]*5, "Low": [0.5]*5,
+            "Close": [1.5]*5, "Volume": [100]*5
+        })
+        assert MarketDataFetcher.compute_atr_from_df(df, window=14) == 0.0

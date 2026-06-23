@@ -378,11 +378,37 @@ class MarketDataFetcher:
         )
         return float(atr.iloc[-1]) if not atr.empty else 0.0
 
+    @staticmethod
+    def compute_atr_from_df(df: pd.DataFrame, window: int = 14) -> float:
+        """Compute ATR directly from an existing OHLCV DataFrame (no fetch).
+
+        Use this when you already have the data in hand to avoid a redundant
+        network call.  Works with any timeframe (M1, H1, etc.).
+
+        Args:
+            df: DataFrame with High, Low, Close columns
+            window: ATR lookback period (default 14)
+
+        Returns:
+            ATR value, or 0.0 if insufficient data
+        """
+        if df is None or df.empty or len(df) < window + 1:
+            return 0.0
+        atr = ta.volatility.average_true_range(
+            df["High"], df["Low"], df["Close"],
+            window=window
+        )
+        return float(atr.iloc[-1]) if not atr.empty else 0.0
+
     def get_m1_atr(self, period: int = 14) -> float:
         """Get the current ATR value from M1 data for scalping SL/TP sizing.
 
         M1 ATR is much smaller than H1 ATR (~$2-3 vs $10-15 for gold),
         giving proper scalping-sized stop losses.
+
+        Note: This fetches M1 data from yfinance. If you already have M1 data
+        in hand, prefer compute_atr_from_df(df_m1, period) to avoid a
+        duplicate network call.
 
         Args:
             period: ATR lookback period (default 14 bars = 14 minutes on M1)
