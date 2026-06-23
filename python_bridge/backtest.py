@@ -37,16 +37,16 @@ from data.market_data import MarketDataFetcher
 #  CONSTANTS
 # ─────────────────────────────────────────────
 DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (balanced for gold M1)
-MAX_POSITIONS = 1               # Only 1 position at a time (maximum selectivity)
+MAX_POSITIONS = 2               # Allow 2 concurrent positions for more opportunity
 MAX_HOLD_BARS = 90              # Max bars to hold a trade (1.5 hours on M1)
 MOMENTUM_LOOKBACK = 8           # 8 bars for momentum detection
-MOMENTUM_THRESHOLD = 3.00       # $3.00 for momentum direction
+MOMENTUM_THRESHOLD = 2.00       # $2.00 for momentum direction (catch more moves)
 MOMENTUM_EXIT_THRESHOLD = 2.50  # $2.50 reversal triggers exit
-MIN_BARS_BETWEEN_ENTRIES = 60   # Minimum bars between entries (1 hour cooldown)
-MAX_TRADES_PER_DAY = 3          # Maximum trades per calendar day
+MIN_BARS_BETWEEN_ENTRIES = 20   # Minimum bars between entries (~20 minute cooldown)
+MAX_TRADES_PER_DAY = 8          # Maximum trades per calendar day (more active)
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 62
-RSI_OVERSOLD = 38
+RSI_OVERBOUGHT = 65
+RSI_OVERSOLD = 35
 
 # Progressive trailing stop thresholds
 TRAIL_BE_THRESHOLD = 2.0        # Move SL to break-even at $2.0 profit
@@ -672,58 +672,63 @@ class Backtester:
                                 rsi_ok = False
 
                             # RSI zone filter: require RSI in favorable zone
-                            # BUY: RSI 35-58 (not overbought, shows upward room)
-                            # SELL: RSI 42-65 (not oversold, shows downward room)
+                            # BUY: RSI 30-65 (wider zone, catch more moves)
+                            # SELL: RSI 35-70 (wider zone, catch more moves)
                             if rsi_ok:
-                                if momentum == "BUY" and not (35 <= rsi_value <= 58):
+                                if momentum == "BUY" and not (30 <= rsi_value <= 65):
                                     rsi_ok = False
-                                elif momentum == "SELL" and not (42 <= rsi_value <= 65):
+                                elif momentum == "SELL" and not (35 <= rsi_value <= 70):
                                     rsi_ok = False
 
                             if rsi_ok:
                                 session = detect_session(bar_time)
 
-                                # Session filter: only trade during London or overlap
-                                if session not in ("london", "overlap"):
+                                # Session filter: trade during London, NY, or overlap
+                                if session not in ("london", "overlap", "newyork"):
                                     continue
 
-                                # Price structure alignment: REQUIRE structure to confirm
+                                # Price structure alignment: use as confidence boost, not hard block
+                                # Structure confirmation adds confidence; opposing structure reduces it
                                 structure = detect_price_structure(df, i)
-                                structure_ok = False
+                                structure_boost = 0.0
                                 if momentum == "BUY" and structure == "uptrend":
-                                    structure_ok = True
+                                    structure_boost = 0.10  # Confirmed trend, boost
                                 elif momentum == "SELL" and structure == "downtrend":
-                                    structure_ok = True
+                                    structure_boost = 0.10  # Confirmed trend, boost
+                                elif momentum == "BUY" and structure == "downtrend":
+                                    structure_boost = -0.10  # Against trend, penalty
+                                elif momentum == "SELL" and structure == "uptrend":
+                                    structure_boost = -0.10  # Against trend, penalty
 
-                                if structure_ok:
-                                    # EMA 50 trend confirmation filter
-                                    ema_ok = True
+                                if True:  # Always proceed (structure is not a gate)
+                                    # EMA 50 trend confirmation: confidence boost, not hard block
+                                    ema_boost = 0.0
                                     if i >= 50:
                                         ema50 = df["Close"].iloc[i - 50:i].mean()
-                                        if momentum == "BUY" and current_price < ema50:
-                                            ema_ok = False
+                                        if momentum == "BUY" and current_price > ema50:
+                                            ema_boost = 0.05  # Aligned with EMA, small boost
+                                        elif momentum == "SELL" and current_price < ema50:
+                                            ema_boost = 0.05  # Aligned with EMA, small boost
+                                        elif momentum == "BUY" and current_price < ema50:
+                                            ema_boost = -0.05  # Against EMA, small penalty
                                         elif momentum == "SELL" and current_price > ema50:
-                                            ema_ok = False
+                                            ema_boost = -0.05  # Against EMA, small penalty
 
-                                    if not ema_ok:
-                                        continue
-
-                                    # Pullback filter: require price to be pulling back
-                                    # from recent extreme (don't chase peaks/troughs)
+                                    # Pullback filter: less strict - allow entry within $1 of high
+                                    # (don't chase extreme peaks/troughs but allow recent-high entries)
                                     pullback_ok = True
                                     if i >= 5:
                                         recent_highs = df["High"].iloc[i - 5:i]
                                         recent_lows = df["Low"].iloc[i - 5:i]
                                         if momentum == "BUY":
-                                            # For buying: current price should be below recent high
-                                            # (means we're buying on a pullback, not at the peak)
+                                            # Allow if price is within $1 of recent high
                                             recent_high = float(recent_highs.max())
-                                            if current_price >= recent_high:
+                                            if current_price > recent_high + 1.0:
                                                 pullback_ok = False
                                         elif momentum == "SELL":
-                                            # For selling: current price should be above recent low
+                                            # Allow if price is within $1 of recent low
                                             recent_low = float(recent_lows.min())
-                                            if current_price <= recent_low:
+                                            if current_price < recent_low - 1.0:
                                                 pullback_ok = False
 
                                     if not pullback_ok:
@@ -760,8 +765,12 @@ class Backtester:
                                     # Compute synthetic confidence from momentum magnitude
                                     confidence = compute_momentum_magnitude(df["Close"], i)
 
-                                    # Minimum confidence filter: reject weak momentum
-                                    if confidence < 0.70:
+                                    # Apply structure and EMA boosts to confidence
+                                    confidence += structure_boost + ema_boost
+                                    confidence = max(0.0, min(0.95, confidence))
+
+                                    # Minimum confidence filter: lower threshold for more trades
+                                    if confidence < 0.50:
                                         continue
 
                                     entry_time_str = str(bar_time)

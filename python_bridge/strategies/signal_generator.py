@@ -1043,7 +1043,7 @@ class SignalGenerator:
                         session)
             return hold_signal
 
-        # 1a2. DAILY TRADE LIMIT: Max 20 trades per day to enforce quality
+        # 1a2. DAILY TRADE LIMIT: Max 15 trades per day to enforce quality
         current_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if not hasattr(self, '_trade_day'):
             self._trade_day = current_day
@@ -1051,14 +1051,14 @@ class SignalGenerator:
         if self._trade_day != current_day:
             self._trade_day = current_day
             self._trades_today = 0
-        if self._trades_today >= 20:
+        if self._trades_today >= 15:
             logger.info("[SignalGen] HOLD - daily trade limit reached (%d trades today)",
                         self._trades_today)
             return hold_signal
 
         # 1a3. RSI ZONE FILTER: Require RSI in favorable zone
-        # BUY: RSI must be 30-60 (not overbought, room to rise)
-        # SELL: RSI must be 40-70 (not oversold, room to fall)
+        # BUY: RSI must be 28-65 (wider zone, catch more moves)
+        # SELL: RSI must be 35-72 (wider zone, catch more moves)
         import pandas as pd
         rsi_zone_ok = True
         current_rsi_for_zone = None
@@ -1068,13 +1068,13 @@ class SignalGenerator:
                 if rsi_zone_series is not None and len(rsi_zone_series) > 0:
                     current_rsi_for_zone = float(rsi_zone_series.iloc[-1])
                     if not np.isnan(current_rsi_for_zone):
-                        if momentum_direction == "BUY" and not (30 <= current_rsi_for_zone <= 60):
+                        if momentum_direction == "BUY" and not (28 <= current_rsi_for_zone <= 65):
                             rsi_zone_ok = False
-                            logger.info("[SignalGen] HOLD - RSI zone filter: BUY requires RSI 30-60, "
+                            logger.info("[SignalGen] HOLD - RSI zone filter: BUY requires RSI 28-65, "
                                         "got RSI=%.1f", current_rsi_for_zone)
-                        elif momentum_direction == "SELL" and not (40 <= current_rsi_for_zone <= 70):
+                        elif momentum_direction == "SELL" and not (35 <= current_rsi_for_zone <= 72):
                             rsi_zone_ok = False
-                            logger.info("[SignalGen] HOLD - RSI zone filter: SELL requires RSI 40-70, "
+                            logger.info("[SignalGen] HOLD - RSI zone filter: SELL requires RSI 35-72, "
                                         "got RSI=%.1f", current_rsi_for_zone)
             except Exception as e:
                 logger.warning("[SignalGen] RSI zone filter error: %s", e)
@@ -1082,18 +1082,17 @@ class SignalGenerator:
         if not rsi_zone_ok:
             return hold_signal
 
-        # 1a4. PRICE STRUCTURE ALIGNMENT: Block trades against confirmed structure
-        # Don't buy in a downtrend, don't sell in an uptrend
+        # 1a4. PRICE STRUCTURE ALIGNMENT: Confidence penalty instead of hard block
+        # Opposing structure reduces confidence but does not prevent trade entry
         structure_check = self._detect_price_structure(prices)
         if structure_check != "no_structure":
             if momentum_direction == "BUY" and structure_check == "downtrend":
-                logger.info("[SignalGen] HOLD - price structure misalignment: "
-                            "BUY signal against confirmed downtrend")
-                return hold_signal
+                logger.info("[SignalGen] Price structure penalty: BUY against confirmed downtrend "
+                            "(confidence will be reduced, not blocked)")
+                # Penalty is applied later in the confidence pipeline (section 5d)
             elif momentum_direction == "SELL" and structure_check == "uptrend":
-                logger.info("[SignalGen] HOLD - price structure misalignment: "
-                            "SELL signal against confirmed uptrend")
-                return hold_signal
+                logger.info("[SignalGen] Price structure penalty: SELL against confirmed uptrend "
+                            "(confidence will be reduced, not blocked)")
 
         # 1b. Analyze candlestick patterns to detect pullbacks / reversals
         candle_info = self._analyze_candle_patterns(prices)

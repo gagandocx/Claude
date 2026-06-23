@@ -126,11 +126,11 @@ class DataConfig:
 
     # Momentum parameters
     momentum_lookback: int = 8              # 8-bar momentum lookback (smoother, less noise)
-    momentum_threshold: float = 3.0         # Min price move for momentum ($3.00 for gold - moderate-strong filter)
+    momentum_threshold: float = 2.0         # Min price move for momentum ($2.00 for gold - catch more moves)
 
     # RSI exhaustion filter thresholds
-    rsi_overbought: int = 62               # RSI above this = overbought (stricter)
-    rsi_oversold: int = 38                 # RSI below this = oversold (stricter)
+    rsi_overbought: int = 65               # RSI above this = overbought
+    rsi_oversold: int = 35                 # RSI below this = oversold
 
     # ATR-based labeling threshold
     atr_label_threshold: float = 0.3       # Label BUY/SELL if move > 0.3*ATR
@@ -166,7 +166,7 @@ class SignalConfig:
     atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 120             # 2-minute cooldown between signals (quality over quantity)
+    cooldown_seconds: int = 20              # 20-second cooldown between signals (more active trading)
 
 
 # ─────────────────────────────────────────────
@@ -180,7 +180,7 @@ class RiskConfig:
     max_daily_loss_dollars: float = 50.0    # Absolute dollar drawdown cap per day
     max_drawdown: float = 0.10              # 10% max drawdown before halt
     max_correlation: float = 0.7            # Max correlation between open positions
-    max_open_positions: int = 1             # Single position for maximum selectivity
+    max_open_positions: int = 3             # Allow 3 concurrent positions for more opportunities
     kelly_fraction: float = 0.25            # Quarter-Kelly for safety
     account_balance: float = 10000.0        # Default account balance
     min_lot_size: float = 0.01              # Minimum lot size

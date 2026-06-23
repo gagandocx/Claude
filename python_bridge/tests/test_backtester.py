@@ -65,21 +65,21 @@ class TestMomentumDirection:
     def test_sell_signal_when_price_falls(self):
         """SELL when close[-1] - close[-LOOKBACK] < -MOMENTUM_THRESHOLD."""
         closes = pd.Series([2003.5, 2003.2, 2002.8, 2002.4, 2002.0, 2001.5, 2001.0, 2000.5, 2000.0])
-        # index=8: close[8]-close[0] = -3.5 < -3.00 -> SELL
+        # index=8: close[8]-close[0] = -3.5 < -2.00 -> SELL
         result = compute_momentum_direction(closes, 8)
         assert result == "SELL"
 
     def test_flat_when_price_unchanged(self):
         """FLAT when price move < MOMENTUM_THRESHOLD."""
         closes = pd.Series([2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.5, 2000.6, 2000.7, 2001.0])
-        # index=8: close[8]-close[0] = 1.0 < 3.00 -> FLAT
+        # index=8: close[8]-close[0] = 1.0 < 2.00 -> FLAT
         result = compute_momentum_direction(closes, 8)
         assert result == "FLAT"
 
     def test_flat_at_exact_threshold(self):
         """FLAT when price move equals exactly MOMENTUM_THRESHOLD (not strictly greater)."""
-        closes = pd.Series([2000.0, 2000.3, 2000.5, 2000.8, 2001.0, 2001.3, 2001.8, 2002.3, 2003.0])
-        # index=8: close[8]-close[0] = 3.0, not > 3.00 -> FLAT
+        closes = pd.Series([2000.0, 2000.2, 2000.4, 2000.6, 2000.8, 2001.0, 2001.3, 2001.6, 2002.0])
+        # index=8: close[8]-close[0] = 2.0, not > 2.00 -> FLAT
         result = compute_momentum_direction(closes, 8)
         assert result == "FLAT"
 
@@ -91,7 +91,7 @@ class TestMomentumDirection:
 
     def test_buy_at_threshold_plus_epsilon(self):
         """BUY when price move is just above MOMENTUM_THRESHOLD."""
-        closes = pd.Series([2000.0, 2000.3, 2000.6, 2001.0, 2001.4, 2001.8, 2002.2, 2002.7, 2003.01])
+        closes = pd.Series([2000.0, 2000.2, 2000.4, 2000.6, 2000.8, 2001.0, 2001.3, 2001.7, 2002.01])
         result = compute_momentum_direction(closes, 8)
         assert result == "BUY"
 
@@ -335,7 +335,7 @@ class TestMaxPositionLimit:
         backtester = Backtester(verbose=False)
         results = backtester.run(df)
 
-        assert MAX_POSITIONS == 1  # Confirm the limit constant
+        assert MAX_POSITIONS == 2  # Confirm the limit constant (2 concurrent positions)
         # The backtest should complete without errors - the limit is enforced
         assert results["summary"]["total_trades"] >= 0
 
@@ -485,8 +485,8 @@ class TestEntryCooldown:
     """Tests for entry cooldown (min_bars_between_entries)."""
 
     def test_default_cooldown_is_15_bars(self):
-        """Default MIN_BARS_BETWEEN_ENTRIES is 60."""
-        assert MIN_BARS_BETWEEN_ENTRIES == 60
+        """Default MIN_BARS_BETWEEN_ENTRIES is 20 (~20 minute cooldown)."""
+        assert MIN_BARS_BETWEEN_ENTRIES == 20
 
     def test_cooldown_prevents_consecutive_entries(self):
         """Entries should not occur on consecutive bars due to cooldown."""
