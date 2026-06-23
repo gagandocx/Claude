@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Fix signal file write race condition causing 'Signal expired' errors. Add retry logic to bridge.py write_signal(), add return value checking in main.py run_cycle(), and add timer-based signal reading in Python_Bridge_EA.mq5.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1: In /projects/sandbox/Claude/python_bridge/signals/bridge.py write_signal() method - Add retry logic specifically around the os.replace() call. Catch PermissionError/OSError. Retry 3 times with short sleep (0.05s) between attempts. If atomic replace fails after retries, fall back to direct file write (delete old file if exists, then os.rename() the temp file, or as last resort write directly). Log warnings when retries are needed. Keep the existing tempfile write logic intact - only wrap the os.replace() in retry.",
     "Step 2: In /projects/sandbox/Claude/python_bridge/main.py run_cycle() method at line 420 where self.bridge.write_signal(signal) is called - Check the return value. If it returns False, log a WARNING about signal write failure and attempt one immediate retry. The retry should just call self.bridge.write_signal(signal) again.",
@@ -27,5 +27,5 @@
     "Verify Python_Bridge_EA.mq5 has OnTimer() and EventSetTimer(10) in OnInit()"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 28 tests pass (21 existing + 7 new retry tests). Required installing pytest, numpy, pandas, ta, scikit-learn, and torch (CPU) to run tests due to deep import chain from bridge.py -> signal_generator.py -> models. MQL5 changes validated by code review only (no compiler available)."
 }
