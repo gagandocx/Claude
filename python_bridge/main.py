@@ -522,8 +522,18 @@ class PythonMLBridge:
             # 11. Write heartbeat
             self.bridge.write_heartbeat()
 
-            # Write OK status for MT5 dashboard display
-            self.bridge.write_status("OK", "Running - scanning for signals")
+            # Write detailed status for MT5 dashboard display
+            if result.get("signal") and hasattr(result["signal"], "action") and result["signal"].action != "HOLD":
+                sig = result["signal"]
+                status_msg = f"SIGNAL: {sig.action} | Conf:{sig.confidence:.2f} | {sig.regime}"
+                self.bridge.write_status("OK", status_msg)
+            elif result.get("news_filtered"):
+                pass  # Already written above
+            elif result.get("error"):
+                self.bridge.write_status("WARNING", result["error"][:150])
+            else:
+                # Show what the system is doing (momentum, session, range mode)
+                self.bridge.write_status("OK", "Scanning - no signal this cycle")
 
             # 12. Check confirmations from MT5
             confirmations = self.bridge.read_confirmations()
