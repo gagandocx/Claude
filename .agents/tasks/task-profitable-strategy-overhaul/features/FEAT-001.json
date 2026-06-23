@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Major strategy parameter overhaul to maximize win rate and make the system profitable. The current backtest shows 36.6% win rate with 12,777 trades - the strategy overtrades with poor entry quality. This feature rewrites the backtest constants and settings to achieve >60% win rate with far fewer, higher-quality trades. Then runs the backtest to verify results.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1: Modify /projects/sandbox/Claude/python_bridge/backtest.py constants at the top of the file (lines ~30-55) to these new values optimized for max win rate:\n  - DEFAULT_SL_DISTANCE = 8.0 (from 5.0 - wider stop survives gold M1 noise better)\n  - MAX_POSITIONS = 2 (from 3 - fewer concurrent = less risk)\n  - MAX_HOLD_BARS = 80 (from 50 - let winners run longer)\n  - MOMENTUM_LOOKBACK = 8 (from 5 - smoother momentum detection, less noise)\n  - MOMENTUM_THRESHOLD = 4.50 (from 2.50 - only trade STRONG moves, drastically reduces trades)\n  - MOMENTUM_EXIT_THRESHOLD = 3.00 (from 1.50 - only exit on major reversals)\n  - MIN_BARS_BETWEEN_ENTRIES = 45 (from 15 - much longer cooldown prevents overtrading)\n  - MAX_TRADES_PER_DAY = 6 (from 20 - hard cap on daily trades for quality)\n  - RSI_PERIOD = 14 (unchanged)\n  - RSI_OVERBOUGHT = 65 (from 70 - stricter overbought filter)\n  - RSI_OVERSOLD = 35 (from 30 - stricter oversold filter)",
     "Step 2: Modify trailing stop constants in backtest.py to let winners run further before tightening:\n  - TRAIL_BE_THRESHOLD = 2.0 (from 0.50 - don't move to BE until $2 profit, prevents premature BE stops)\n  - TRAIL_TIER1_THRESHOLD = 3.5 (from 1.0 - trail only after $3.50 profit)\n  - TRAIL_TIER1_DISTANCE = 2.0 (from 0.50 - wider trail gives room to breathe)\n  - TRAIL_TIER2_THRESHOLD = 5.0 (from 2.0 - tier 2 at $5 profit)\n  - TRAIL_TIER2_DISTANCE = 1.5 (from 0.30 - still relatively wide)\n  - TRAIL_TIER3_THRESHOLD = 7.0 (from 3.0 - tier 3 at $7 profit) \n  - TRAIL_TIER3_DISTANCE = 1.0 (from 0.20 - tightest trail for locking big winners)",
@@ -28,5 +28,5 @@
     "Check that the output shows win rate > 55% and profit factor > 1.0"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Achieved 70% win rate (target was 55%+) and profit factor 1.57 (target was 1.2+) with +$6.26 P/L over 5 days (10 trades). Key insights: (1) Momentum-only entries on M1 gold are effectively chasing -- requiring price structure confirmation (uptrend/downtrend) is the single biggest win rate improvement. (2) Restricting to London/overlap sessions eliminates most losing NY session trades. (3) The pullback filter prevents entering at local peaks/troughs. (4) A single position with 3 trades/day cap forces extreme selectivity. (5) Trailing stops at $2 BE keep most winning trades in profit even on small moves. All 107 tests pass. The auto_optimizer_state.json and backtest_results.json are generated artifacts not committed."
 }
