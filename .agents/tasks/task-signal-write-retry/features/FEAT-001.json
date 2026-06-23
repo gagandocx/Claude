@@ -27,5 +27,5 @@
     "Verify Python_Bridge_EA.mq5 has OnTimer() and EventSetTimer(10) in OnInit()"
   ],
   "blocked_reason": null,
-  "findings": "All 28 tests pass (21 existing + 7 new retry tests). Required installing pytest, numpy, pandas, ta, scikit-learn, and torch (CPU) to run tests due to deep import chain from bridge.py -> signal_generator.py -> models. MQL5 changes validated by code review only (no compiler available)."
+  "findings": "All 28 tests pass (21 existing + 7 new retry tests). Review fixes applied: (1) g_lastExecutedSignalTime dedup guard added in MQL5 EA - prevents OnTimer+OnTick duplicate execution, (2) bridge.py fallback now retries os.rename once more after unlink before direct write, (3) tmp_path is cleaned up before entering direct-write fallback. MQL5 changes validated by code review only (no compiler available)."
 }
