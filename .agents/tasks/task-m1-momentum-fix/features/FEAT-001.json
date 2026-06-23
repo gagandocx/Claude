@@ -31,5 +31,5 @@
     "Verify main.py run_cycle() has df_m1 fetch and passes prices_m1 to generate_signal"
   ],
   "blocked_reason": null,
-  "findings": "All 74 signal generator tests pass. 519/520 total tests pass (1 pre-existing failure in test_smart_upgrades.py::TestConfigs::test_price_structure_config_defaults - config value is 0.05 but test expects 0.15, unrelated to this change). Fixed multiple pre-existing test failures: momentum tests needed 8+ bars for lookback=6, threshold is $1.50, candle pattern tests needed stricter thresholds (doji <1%, hammer 80%+). The v5.2 signal write retry logic in bridge.py is preserved unchanged."
+  "findings": "All 76 signal generator tests pass. 521/522 total tests pass (1 pre-existing failure in test_smart_upgrades.py::TestConfigs::test_price_structure_config_defaults - config value is 0.05 but test expects 0.15, unrelated to this change). Post-review fixes applied: (1) Eliminated double M1 fetch by adding compute_atr_from_df() static helper and using it in main.py instead of get_m1_atr(). (2) Restored ATR cap to $5 in signal_generator.py and added $5 cap on H1 fallback path in main.py to prevent outsized stops ($12) when M1 data is unavailable."
 }
