@@ -545,8 +545,8 @@ class AutoOptimizerConfig:
     the best-performing value each cycle.
     """
     enabled: bool = True
-    optimize_frequency: int = 50            # Trades between optimization cycles
-    min_trades_before_tuning: int = 50      # Min trades before first optimization
+    optimize_frequency: int = 10            # Trades between optimization cycles
+    min_trades_before_tuning: int = 10      # Min trades before first optimization
     shift_rate: float = 0.15                # 15% shift toward optimal per cycle
     rollback_threshold: float = 0.20        # Rollback if 20% worse after optimization
     state_file: str = "auto_optimizer_state.json"
