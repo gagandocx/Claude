@@ -35,7 +35,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Advanced AI Trading Systems"
 #property link      "https://github.com/advanced-ai-ea"
-#property version   "5.00"
+#property version   "5.10"
 #property strict
 #property description "Most Advanced Self-Learning AI Expert Advisor"
 #property description "19 AI/ML Systems Implemented From Scratch"
@@ -73,7 +73,7 @@
 #define MTF_TIMEFRAMES         5        // Multi-timeframe count
 #define WAVELET_LEVELS         5        // Wavelet decomposition levels
 #define WAVELET_MAX_SIZE       256      // Max wavelet data size
-#define DASHBOARD_ROWS         40       // Dashboard display rows
+#define DASHBOARD_ROWS         60       // Dashboard display rows
 #define MAX_TRADES_HISTORY     500      // Trade history for analysis
 #define SENTIMENT_WINDOW       20       // Sentiment calculation window
 #define RISK_LOOKBACK          100      // Risk calculation lookback
@@ -169,6 +169,32 @@ input int      InpDashboardX        = 10;      // Dashboard X Position
 input int      InpDashboardY        = 30;      // Dashboard Y Position
 input color    InpDashColorBG       = clrBlack;// Dashboard Background
 input color    InpDashColorText     = clrWhite;// Dashboard Text Color
+
+input group "=== SMART ENHANCEMENTS ==="
+input bool     InpEnableSession     = true;    // Session-Aware Position Sizing
+input bool     InpEnableStructure   = true;    // Price Structure Filter
+input bool     InpEnableFVG         = true;    // Fair Value Gap Boost
+input bool     InpEnableSweep       = true;    // Liquidity Sweep Boost
+input bool     InpEnableRSIExhaust  = true;    // RSI Exhaustion Filter
+// Session hours (UTC)
+input int      InpSessionLondonStart = 8;      // London Session Start (UTC)
+input int      InpSessionLondonEnd   = 16;     // London Session End (UTC)
+input int      InpSessionNYStart     = 13;     // NY Session Start (UTC)
+input int      InpSessionNYEnd       = 21;     // NY Session End (UTC)
+// Session sizing multipliers
+input double   InpAsianSizeMult      = 0.5;   // Asian Session Size Multiplier
+input double   InpLondonSizeMult     = 1.2;   // London Session Size Multiplier
+input double   InpNYSizeMult         = 1.0;   // NY Session Size Multiplier
+input double   InpOverlapSizeMult    = 1.2;   // London/NY Overlap Size Multiplier
+// Structure, FVG, sweep parameters
+input int      InpStructureLookback  = 20;    // Price Structure Lookback (bars)
+input double   InpStructurePenalty   = 0.15;  // Counter-Trend Confidence Penalty
+input double   InpFVGBoost           = 0.05;  // FVG Alignment Confidence Boost
+input double   InpSweepBoost         = 0.10;  // Liquidity Sweep Confidence Boost
+// RSI exhaustion parameters
+input int      InpRSIOverbought      = 70;    // RSI Overbought Level
+input int      InpRSIOversold        = 30;    // RSI Oversold Level
+input double   InpRSIPenalty         = 0.10;  // RSI Exhaustion Confidence Penalty
 
 
 //+------------------------------------------------------------------+
@@ -744,6 +770,15 @@ datetime g_time[];
 // Feature buffer for AI input
 double g_feature_vector[NN_INPUT_SIZE];
 double g_previous_features[NN_INPUT_SIZE];
+
+// Smart enhancement state (updated each bar inside GenerateSignal)
+string g_current_session    = "off_session"; // Current session: asian/london/newyork/overlap/off_session
+double g_session_multiplier = 1.0;           // Session-based lot size multiplier
+string g_price_structure    = "no_structure";// Price structure: uptrend/downtrend/no_structure
+bool   g_fvg_aligns_buy     = false;         // Bullish FVG aligns with a BUY signal
+bool   g_fvg_aligns_sell    = false;         // Bearish FVG aligns with a SELL signal
+bool   g_bullish_sweep      = false;         // Bullish liquidity sweep detected this bar
+bool   g_bearish_sweep      = false;         // Bearish liquidity sweep detected this bar
 
 //+------------------------------------------------------------------+
 //| MATHEMATICAL UTILITY FUNCTIONS                                     |
@@ -3913,16 +3948,30 @@ void Risk_UpdateAfterTrade(double profit_pct, double mae, double mfe)
       g_risk.consecutive_losses++;
       g_risk.consecutive_wins = 0;
    }
-   
-   // Anti-martingale: increase size after wins, decrease after losses
+
+   // Streak-based position sizing (proven Python bridge parameters)
+   // Severe losses cut size hard; a short win streak restores/boosts size.
    if(InpAntiMartingale)
    {
-      if(g_risk.consecutive_wins >= 2)
-         g_risk.anti_martingale_mult = MathMin(2.0, 1.0 + g_risk.consecutive_wins * 0.2);
-      else if(g_risk.consecutive_losses >= 2)
-         g_risk.anti_martingale_mult = MathMax(0.3, 1.0 - g_risk.consecutive_losses * 0.2);
-      else
+      int cw = g_risk.consecutive_wins;
+      int cl = g_risk.consecutive_losses;
+
+      if(cl >= 5)
+         // Severe losing streak: trade at 25% to protect capital
+         g_risk.anti_martingale_mult = 0.25;
+      else if(cl >= 3)
+         // Moderate losing streak: trade at 50%
+         g_risk.anti_martingale_mult = 0.50;
+      else if(cw >= 5)
+         // Strong winning streak: boost to 150%
+         g_risk.anti_martingale_mult = MathMin(1.5, g_risk.anti_martingale_mult);
+      else if(cw >= 3)
+         // Good winning streak: boost to 125%
+         g_risk.anti_martingale_mult = MathMin(1.25, g_risk.anti_martingale_mult);
+      else if(cw >= 2)
+         // Two wins in a row: restore to full size
          g_risk.anti_martingale_mult = 1.0;
+      // cl == 1 or cl == 2: no change — give one bad trade the benefit of the doubt
    }
    
    // Update rolling statistics
@@ -4890,6 +4939,183 @@ void BuildFeatureVector()
 }
 
 //+------------------------------------------------------------------+
+//| SMART ENHANCEMENT FUNCTIONS                                        |
+//| (Session Awareness, Price Structure, FVG, Liquidity Sweep)        |
+//+------------------------------------------------------------------+
+
+//--- Detect current trading session from GMT clock
+string DetectSession()
+{
+   if(!InpEnableSession) return "any";
+
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   int hour = dt.hour;
+
+   bool in_london = (hour >= InpSessionLondonStart && hour < InpSessionLondonEnd);
+   bool in_ny     = (hour >= InpSessionNYStart     && hour < InpSessionNYEnd);
+
+   if(in_london && in_ny) return "overlap";   // 13:00-16:00 UTC
+   if(in_london)          return "london";    // 08:00-13:00 UTC
+   if(in_ny)              return "newyork";   // 16:00-21:00 UTC
+   if(hour < InpSessionLondonStart) return "asian"; // 00:00-08:00 UTC
+   return "off_session";                      // 21:00-23:59 UTC dead zone
+}
+
+//--- Get position sizing multiplier for the detected session
+double GetSessionMultiplier(const string &session)
+{
+   if(!InpEnableSession) return 1.0;
+   if(session == "asian")      return InpAsianSizeMult;
+   if(session == "london")     return InpLondonSizeMult;
+   if(session == "newyork")    return InpNYSizeMult;
+   if(session == "overlap")    return InpOverlapSizeMult;
+   if(session == "off_session") return 0.7;   // Reduced size in dead zone
+   return 1.0;
+}
+
+//--- Detect price action structure from swing highs and lows
+//--- Returns "uptrend", "downtrend", or "no_structure"
+//--- Arrays are in series order: [0]=newest, higher indices=older
+string DetectPriceStructure(int lookback)
+{
+   if(!InpEnableStructure) return "no_structure";
+
+   int bars = ArraySize(g_high);
+   if(bars < lookback) return "no_structure";
+
+   double swing_highs[];
+   double swing_lows[];
+   ArrayResize(swing_highs, 0);
+   ArrayResize(swing_lows, 0);
+
+   // Scan: skip index 0 (no left neighbor) and last index (no right neighbor)
+   for(int i = 1; i < lookback - 1; i++)
+   {
+      // Swing high: higher than both adjacent bars in series order
+      if(g_high[i] > g_high[i-1] && g_high[i] > g_high[i+1])
+      {
+         int sz = ArraySize(swing_highs);
+         ArrayResize(swing_highs, sz + 1);
+         swing_highs[sz] = g_high[i];
+      }
+      // Swing low: lower than both adjacent bars in series order
+      if(g_low[i] < g_low[i-1] && g_low[i] < g_low[i+1])
+      {
+         int sz = ArraySize(swing_lows);
+         ArrayResize(swing_lows, sz + 1);
+         swing_lows[sz] = g_low[i];
+      }
+   }
+
+   if(ArraySize(swing_highs) < 2 || ArraySize(swing_lows) < 2)
+      return "no_structure";
+
+   // Index [0] = most recently found swing (series order preserved)
+   bool higher_highs = swing_highs[0] > swing_highs[1];
+   bool higher_lows  = swing_lows[0]  > swing_lows[1];
+   bool lower_highs  = swing_highs[0] < swing_highs[1];
+   bool lower_lows   = swing_lows[0]  < swing_lows[1];
+
+   if(higher_highs && higher_lows) return "uptrend";
+   if(lower_highs  && lower_lows)  return "downtrend";
+   return "no_structure";
+}
+
+//--- Detect Fair Value Gaps (FVG / imbalance zones) in the last ~10 bars
+//--- Bullish FVG: low[N] > high[N-2] (upward gap, unfilled)
+//--- Bearish FVG: high[N] < low[N-2] (downward gap, unfilled)
+void DetectFVG(bool &aligns_buy, bool &aligns_sell)
+{
+   aligns_buy  = false;
+   aligns_sell = false;
+   if(!InpEnableFVG) return;
+
+   int bars = ArraySize(g_close);
+   if(bars < 12) return;
+
+   double current_price = g_close[0];
+
+   // Scan the last 10 candles for fresh unfilled FVGs
+   for(int i = 0; i < MathMin(10, bars - 2); i++)
+   {
+      int n   = i;       // Candle N   (series index: 0=newest)
+      int nm2 = i + 2;   // Candle N-2 (2 bars older)
+
+      // Bullish FVG: gap up (low of N > high of N-2)
+      if(!aligns_buy && g_low[n] > g_high[nm2])
+      {
+         double gap_bottom = g_high[nm2];
+         double gap_top    = g_low[n];
+         double gap_size   = gap_top - gap_bottom;
+         // Unfilled if price is still above the gap; aligns buy if price near zone
+         if(current_price > gap_bottom && gap_size > 0 &&
+            MathAbs(current_price - gap_top) < gap_size * 2.0)
+         {
+            aligns_buy = true;
+         }
+      }
+
+      // Bearish FVG: gap down (high of N < low of N-2)
+      if(!aligns_sell && g_high[n] < g_low[nm2])
+      {
+         double gap_bottom = g_high[n];
+         double gap_top    = g_low[nm2];
+         double gap_size   = gap_top - gap_bottom;
+         // Unfilled if price is still below the gap; aligns sell if price near zone
+         if(current_price < gap_top && gap_size > 0 &&
+            MathAbs(current_price - gap_bottom) < gap_size * 2.0)
+         {
+            aligns_sell = true;
+         }
+      }
+
+      if(aligns_buy && aligns_sell) break; // Both found; stop scanning
+   }
+}
+
+//--- Detect liquidity sweep (stop-hunt reversal) patterns
+//--- Bullish sweep: prior bar broke below recent low, current close recovered above it
+//--- Bearish sweep: prior bar broke above recent high, current close fell back below it
+void DetectLiquiditySweep(bool &bullish_sweep, bool &bearish_sweep)
+{
+   bullish_sweep = false;
+   bearish_sweep = false;
+   if(!InpEnableSweep) return;
+
+   int bars    = ArraySize(g_close);
+   int lookback = 20;
+   if(bars < lookback + 2) return;
+
+   // Reference range: bars 2 to lookback+1 (excluding last 2 active bars)
+   double recent_low  = g_low[2];
+   double recent_high = g_high[2];
+   for(int i = 3; i <= lookback + 1; i++)
+   {
+      if(g_low[i]  < recent_low)  recent_low  = g_low[i];
+      if(g_high[i] > recent_high) recent_high = g_high[i];
+   }
+
+   // Bullish sweep: previous bar pierced recent low, current bar closed back above it
+   if(g_low[1] < recent_low && g_close[0] > recent_low)
+   {
+      double depth    = recent_low - g_low[1];
+      double recovery = g_close[0] - g_low[1];
+      if(depth > 0 && (recovery / (depth + 1e-10)) >= 0.5)
+         bullish_sweep = true;
+   }
+
+   // Bearish sweep: previous bar pierced recent high, current bar closed back below it
+   if(g_high[1] > recent_high && g_close[0] < recent_high)
+   {
+      double depth    = g_high[1] - recent_high;
+      double recovery = g_high[1] - g_close[0];
+      if(depth > 0 && (recovery / (depth + 1e-10)) >= 0.5)
+         bearish_sweep = true;
+   }
+}
+
+//+------------------------------------------------------------------+
 //| TRADING SIGNAL GENERATION                                          |
 //+------------------------------------------------------------------+
 
@@ -4980,7 +5206,97 @@ ENUM_AI_ACTION GenerateSignal(double &confidence)
       confidence = 0.0;
       return ACTION_HOLD;
    }
-   
+
+   //=================================================================
+   // SMART ENHANCEMENTS: Session, Structure, FVG, Sweep, RSI Exhaust
+   //=================================================================
+
+   // --- 1. Session Awareness ---
+   // Update global session state so ExecuteTrade() can apply lot multiplier
+   g_current_session    = DetectSession();
+   g_session_multiplier = GetSessionMultiplier(g_current_session);
+
+   // --- 2. Price Structure Filter ---
+   // Penalise signals that trade against the detected swing structure
+   g_price_structure = DetectPriceStructure(InpStructureLookback);
+   if(InpEnableStructure)
+   {
+      if(g_price_structure == "downtrend")
+      {
+         // Counter-trend BUY is risky: reduce its score
+         final_scores[ACTION_BUY] = MathMax(0.0, final_scores[ACTION_BUY] - InpStructurePenalty);
+         Print("[SmartEA] Price structure DOWNTREND: BUY penalised -", DoubleToString(InpStructurePenalty, 2));
+      }
+      else if(g_price_structure == "uptrend")
+      {
+         // Counter-trend SELL is risky: reduce its score
+         final_scores[ACTION_SELL] = MathMax(0.0, final_scores[ACTION_SELL] - InpStructurePenalty);
+         Print("[SmartEA] Price structure UPTREND: SELL penalised -", DoubleToString(InpStructurePenalty, 2));
+      }
+   }
+
+   // --- 3. Fair Value Gap (FVG) Confluence Boost ---
+   // Boost the score when price is approaching an unfilled FVG in direction of signal
+   DetectFVG(g_fvg_aligns_buy, g_fvg_aligns_sell);
+   if(InpEnableFVG)
+   {
+      if(g_fvg_aligns_buy)
+      {
+         final_scores[ACTION_BUY] += InpFVGBoost;
+         Print("[SmartEA] Bullish FVG zone: BUY boosted +", DoubleToString(InpFVGBoost, 2));
+      }
+      if(g_fvg_aligns_sell)
+      {
+         final_scores[ACTION_SELL] += InpFVGBoost;
+         Print("[SmartEA] Bearish FVG zone: SELL boosted +", DoubleToString(InpFVGBoost, 2));
+      }
+   }
+
+   // --- 4. Liquidity Sweep (Stop-Hunt Reversal) Boost ---
+   // A sweep that aligns with the current signal direction is high-probability
+   DetectLiquiditySweep(g_bullish_sweep, g_bearish_sweep);
+   if(InpEnableSweep)
+   {
+      if(g_bullish_sweep)
+      {
+         final_scores[ACTION_BUY] += InpSweepBoost;
+         Print("[SmartEA] Bullish liquidity sweep: BUY boosted +", DoubleToString(InpSweepBoost, 2));
+      }
+      if(g_bearish_sweep)
+      {
+         final_scores[ACTION_SELL] += InpSweepBoost;
+         Print("[SmartEA] Bearish liquidity sweep: SELL boosted +", DoubleToString(InpSweepBoost, 2));
+      }
+   }
+
+   // --- 5. RSI Exhaustion Filter ---
+   // Overbought BUY or oversold SELL signals are exhausted; penalise them
+   if(InpEnableRSIExhaust && g_handle_rsi != INVALID_HANDLE)
+   {
+      double rsi_buf[];
+      ArrayResize(rsi_buf, 1);
+      if(CopyBuffer(g_handle_rsi, 0, 0, 1, rsi_buf) > 0)
+      {
+         double rsi_val = rsi_buf[0];
+         if(rsi_val > InpRSIOverbought)
+         {
+            // Overbought: BUY is riskier
+            final_scores[ACTION_BUY] = MathMax(0.0, final_scores[ACTION_BUY] - InpRSIPenalty);
+            Print("[SmartEA] RSI overbought (", DoubleToString(rsi_val, 1),
+                  "): BUY penalised -", DoubleToString(InpRSIPenalty, 2));
+         }
+         else if(rsi_val < InpRSIOversold)
+         {
+            // Oversold: SELL is riskier
+            final_scores[ACTION_SELL] = MathMax(0.0, final_scores[ACTION_SELL] - InpRSIPenalty);
+            Print("[SmartEA] RSI oversold (", DoubleToString(rsi_val, 1),
+                  "): SELL penalised -", DoubleToString(InpRSIPenalty, 2));
+         }
+         ArrayFree(rsi_buf);
+      }
+   }
+   //=================================================================
+
    // Normalize final scores
    double score_sum = final_scores[0] + final_scores[1] + final_scores[2];
    if(score_sum > 0)
@@ -5126,7 +5442,7 @@ void Dashboard_Update()
    int row = 0;
    
    // Header
-   Dashboard_AddRow(row++, "=== AI ADAPTIVE EA v5.0 ===", "", clrGold);
+   Dashboard_AddRow(row++, "=== AI ADAPTIVE EA v5.1 ===", "", clrGold);
    Dashboard_AddRow(row++, "Status", g_risk.circuit_breaker_active ? "CIRCUIT BREAKER" : "ACTIVE",
       g_risk.circuit_breaker_active ? clrRed : clrLime);
    
@@ -5231,7 +5547,52 @@ void Dashboard_Update()
    Dashboard_AddRow(row++, "Replay Buffer", IntegerToString(g_replay.size) + "/" + 
       IntegerToString(REPLAY_BUFFER_SIZE), clrWhite);
    Dashboard_AddRow(row++, "GP Observations", IntegerToString(g_gp.n_observations), clrWhite);
-   
+
+   // Smart Enhancements Panel
+   Dashboard_AddRow(row++, "--- SMART FILTERS ---", "", clrDodgerBlue);
+
+   // Session
+   color session_clr = clrWhite;
+   if(g_current_session == "london" || g_current_session == "overlap") session_clr = clrLime;
+   else if(g_current_session == "asian")      session_clr = clrYellow;
+   else if(g_current_session == "off_session") session_clr = clrGray;
+   Dashboard_AddRow(row++, "Session",
+      g_current_session + " (" + DoubleToString(g_session_multiplier, 2) + "x)",
+      session_clr);
+
+   // Price Structure
+   color struct_clr = clrYellow;
+   if(g_price_structure == "uptrend")        struct_clr = clrLime;
+   else if(g_price_structure == "downtrend") struct_clr = clrRed;
+   Dashboard_AddRow(row++, "Price Structure", g_price_structure, struct_clr);
+
+   // FVG status
+   string fvg_str = "none";
+   color  fvg_clr = clrGray;
+   if(g_fvg_aligns_buy && g_fvg_aligns_sell) { fvg_str = "both"; fvg_clr = clrYellow; }
+   else if(g_fvg_aligns_buy)  { fvg_str = "bullish";  fvg_clr = clrLime; }
+   else if(g_fvg_aligns_sell) { fvg_str = "bearish";  fvg_clr = clrRed;  }
+   Dashboard_AddRow(row++, "FVG Zone", fvg_str, fvg_clr);
+
+   // Liquidity sweep status
+   string sweep_str = "none";
+   color  sweep_clr = clrGray;
+   if(g_bullish_sweep && g_bearish_sweep) { sweep_str = "both";    sweep_clr = clrYellow; }
+   else if(g_bullish_sweep) { sweep_str = "bullish"; sweep_clr = clrLime; }
+   else if(g_bearish_sweep) { sweep_str = "bearish"; sweep_clr = clrRed;  }
+   Dashboard_AddRow(row++, "Liq. Sweep", sweep_str, sweep_clr);
+
+   // Streak multiplier
+   color streak_clr = clrWhite;
+   if(g_risk.anti_martingale_mult < 0.75)     streak_clr = clrRed;
+   else if(g_risk.anti_martingale_mult < 1.0) streak_clr = clrOrange;
+   else if(g_risk.anti_martingale_mult > 1.0) streak_clr = clrLime;
+   Dashboard_AddRow(row++, "Streak Mult",
+      DoubleToString(g_risk.anti_martingale_mult, 2) + "x  (W" +
+      IntegerToString(g_risk.consecutive_wins) + " / L" +
+      IntegerToString(g_risk.consecutive_losses) + ")",
+      streak_clr);
+
    g_dashboard.row_count = row;
    
    // Render to chart
@@ -5365,9 +5726,19 @@ bool ExecuteTrade(ENUM_AI_ACTION action, double confidence)
    
    // Adjust for confidence (higher confidence = closer to full size)
    lots *= Clip(confidence, 0.5, 1.0);
+
+   // Apply session-aware position sizing multiplier
+   // (Asian=0.5x, London=1.2x, NY=1.0x, Overlap=1.2x, Off=0.7x)
+   if(InpEnableSession)
+   {
+      lots *= g_session_multiplier;
+      // Ensure we still meet broker minimums after scaling
+      lots = MathMax(g_lot_min, lots);
+   }
+
    lots = MathMax(g_lot_min, lots);
    lots = MathRound(lots / g_lot_step) * g_lot_step;
-   
+
    // Execute
    g_trade.SetDeviationInPoints((int)(InpSlippageTolerance * 2));
    
@@ -5714,7 +6085,7 @@ bool IsNewDay()
 int OnInit()
 {
    Print("=======================================================");
-   Print("  AI ADAPTIVE EA v5.0 - Advanced Self-Learning System  ");
+   Print("  AI ADAPTIVE EA v5.1 - Advanced Self-Learning System  ");
    Print("  19 AI/ML Systems | Real-Time Market Adaptation       ");
    Print("=======================================================");
    
