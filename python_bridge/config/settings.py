@@ -163,7 +163,7 @@ class SignalConfig:
     """Signal generation thresholds."""
     min_confidence: float = 0.25            # Higher bar for entries (quality over quantity)
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
+    atr_sl_multiplier: float = 1.0          # SL = ATR * 1.0 (max $5 with ATR cap)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
     cooldown_seconds: int = 10              # 10-second cooldown between signals (maximum trade frequency)
