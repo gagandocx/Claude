@@ -990,6 +990,7 @@ class SignalGenerator:
 
         # MEAN-REVERSION RANGE TRADING: When momentum is FLAT, detect the
         # consolidation range and trade the extremes (buy low, sell high).
+        # Only trade ranges > $5 for meaningful setups.
         if momentum_direction == "FLAT":
             range_bars = 20
             range_signal = None
@@ -1000,7 +1001,7 @@ class SignalGenerator:
                     range_low = float(prices["Low"].iloc[-range_bars:].min())
                     range_size = range_high - range_low
 
-                    if range_size > 0 and current_price > 0:
+                    if range_size > 5.0 and current_price > 0:
                         # Position within range: 0.0 = at low, 1.0 = at high
                         position_in_range = (current_price - range_low) / range_size
 
@@ -1009,27 +1010,89 @@ class SignalGenerator:
                                     range_high, range_low, range_size,
                                     current_price, position_in_range * 100)
 
-                        if position_in_range <= 0.20:
-                            # Price is near the BOTTOM of range (within 20%) -> BUY
+                        if position_in_range <= 0.15:
+                            # Price is near the BOTTOM of range (within 15%) -> BUY
                             momentum_direction = "BUY"
                             range_signal = "range_buy"
                             logger.info("[SignalGen] RANGE MODE: Price near bottom (%.1f%%) "
                                         "- mean-reversion BUY signal", position_in_range * 100)
-                        elif position_in_range >= 0.80:
-                            # Price is near the TOP of range (within 80%+) -> SELL
+                        elif position_in_range >= 0.85:
+                            # Price is near the TOP of range (within 85%+) -> SELL
                             momentum_direction = "SELL"
                             range_signal = "range_sell"
                             logger.info("[SignalGen] RANGE MODE: Price near top (%.1f%%) "
                                         "- mean-reversion SELL signal", position_in_range * 100)
                         else:
-                            # Price is in the middle of range (20-80%) -> still FLAT/HOLD
+                            # Price is in the middle of range (15-85%) -> still FLAT/HOLD
                             logger.info("[SignalGen] RANGE MODE: Price in middle (%.1f%%) "
                                         "- no edge, holding", position_in_range * 100)
+                    elif range_size <= 5.0:
+                        logger.info("[SignalGen] RANGE MODE: Range too small ($%.2f < $5.00) "
+                                    "- no trade", range_size)
 
             # If no range signal was generated, hold as before
             if range_signal is None:
                 logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction, "
                             "no range extremes)")
+                return hold_signal
+
+        # 1a. SESSION FILTER: Only trade during London, NY, or overlap sessions
+        # Block Asian and off-session entries (low liquidity, choppy price action)
+        if session not in ("london", "newyork", "overlap"):
+            logger.info("[SignalGen] HOLD - session '%s' blocked (only London/NY/overlap allowed)",
+                        session)
+            return hold_signal
+
+        # 1a2. DAILY TRADE LIMIT: Max 20 trades per day to enforce quality
+        current_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not hasattr(self, '_trade_day'):
+            self._trade_day = current_day
+            self._trades_today = 0
+        if self._trade_day != current_day:
+            self._trade_day = current_day
+            self._trades_today = 0
+        if self._trades_today >= 20:
+            logger.info("[SignalGen] HOLD - daily trade limit reached (%d trades today)",
+                        self._trades_today)
+            return hold_signal
+
+        # 1a3. RSI ZONE FILTER: Require RSI in favorable zone
+        # BUY: RSI must be 30-60 (not overbought, room to rise)
+        # SELL: RSI must be 40-70 (not oversold, room to fall)
+        import pandas as pd
+        rsi_zone_ok = True
+        current_rsi_for_zone = None
+        if isinstance(prices, pd.DataFrame) and "Close" in prices.columns:
+            try:
+                rsi_zone_series = ta.momentum.rsi(prices["Close"], window=14)
+                if rsi_zone_series is not None and len(rsi_zone_series) > 0:
+                    current_rsi_for_zone = float(rsi_zone_series.iloc[-1])
+                    if not np.isnan(current_rsi_for_zone):
+                        if momentum_direction == "BUY" and not (30 <= current_rsi_for_zone <= 60):
+                            rsi_zone_ok = False
+                            logger.info("[SignalGen] HOLD - RSI zone filter: BUY requires RSI 30-60, "
+                                        "got RSI=%.1f", current_rsi_for_zone)
+                        elif momentum_direction == "SELL" and not (40 <= current_rsi_for_zone <= 70):
+                            rsi_zone_ok = False
+                            logger.info("[SignalGen] HOLD - RSI zone filter: SELL requires RSI 40-70, "
+                                        "got RSI=%.1f", current_rsi_for_zone)
+            except Exception as e:
+                logger.warning("[SignalGen] RSI zone filter error: %s", e)
+
+        if not rsi_zone_ok:
+            return hold_signal
+
+        # 1a4. PRICE STRUCTURE ALIGNMENT: Block trades against confirmed structure
+        # Don't buy in a downtrend, don't sell in an uptrend
+        structure_check = self._detect_price_structure(prices)
+        if structure_check != "no_structure":
+            if momentum_direction == "BUY" and structure_check == "downtrend":
+                logger.info("[SignalGen] HOLD - price structure misalignment: "
+                            "BUY signal against confirmed downtrend")
+                return hold_signal
+            elif momentum_direction == "SELL" and structure_check == "uptrend":
+                logger.info("[SignalGen] HOLD - price structure misalignment: "
+                            "SELL signal against confirmed uptrend")
                 return hold_signal
 
         # 1b. Analyze candlestick patterns to detect pullbacks / reversals
@@ -1038,7 +1101,7 @@ class SignalGenerator:
         candle_bias = candle_info["bias"]
 
         # Log candle patterns for info but DO NOT block on M1 scalping
-        # On M1 timeframe, candle patterns are noise — momentum is king
+        # On M1 timeframe, candle patterns are noise - momentum is king
         if momentum_direction == "BUY" and candle_info["block_buy"]:
             logger.info("[SignalGen] Candle pattern '%s' (bias=%s) conflicts with BUY - "
                         "logging only, NOT blocking (M1 scalper mode)",
@@ -1291,6 +1354,9 @@ class SignalGenerator:
 
         self._last_signal_time = time.time()
         self._signal_count += 1
+        # Increment daily trade counter
+        if hasattr(self, '_trades_today'):
+            self._trades_today += 1
 
         logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",
                     signal.action, signal.symbol, signal.confidence,

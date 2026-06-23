@@ -126,7 +126,7 @@ class DataConfig:
 
     # Momentum parameters
     momentum_lookback: int = 5              # 5-bar momentum lookback
-    momentum_threshold: float = 0.5         # Min price move for momentum ($0.50 for gold/5 pips; scale for other instruments)
+    momentum_threshold: float = 2.5         # Min price move for momentum ($2.50 for gold - higher = fewer, better trades)
 
     # RSI exhaustion filter thresholds
     rsi_overbought: int = 70               # RSI above this = overbought
@@ -163,10 +163,10 @@ class SignalConfig:
     """Signal generation thresholds."""
     min_confidence: float = 0.15            # Very low threshold for aggressive trading
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 0.6          # SL = ATR * multiplier (ATR~5 -> $3 SL = 30 pips)
+    atr_sl_multiplier: float = 1.0          # SL = ATR * multiplier (ATR~5 -> $5 SL = wider stops for better win rate)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 2               # Ultra-fast cooldown for HF scalping
+    cooldown_seconds: int = 30              # 30-second cooldown between signals (quality over quantity)
 
 
 # ─────────────────────────────────────────────

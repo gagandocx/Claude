@@ -36,13 +36,14 @@ from data.market_data import MarketDataFetcher
 # ─────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────
-DEFAULT_SL_DISTANCE = 3.0       # $3 stop loss
-MAX_POSITIONS = 5               # Max concurrent positions
+DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (wider = fewer stop-outs, better win rate)
+MAX_POSITIONS = 3               # Max concurrent positions (reduced for quality)
 MAX_HOLD_BARS = 50              # Max bars to hold a trade
 MOMENTUM_LOOKBACK = 5           # 5 bars for momentum
-MOMENTUM_THRESHOLD = 0.50       # $0.50 for momentum direction
-MOMENTUM_EXIT_THRESHOLD = 0.30  # $0.30 reversal triggers exit
-MIN_BARS_BETWEEN_ENTRIES = 3    # Minimum bars between entries (cooldown)
+MOMENTUM_THRESHOLD = 2.50       # $2.50 for momentum direction (only strong moves qualify)
+MOMENTUM_EXIT_THRESHOLD = 1.50  # $1.50 reversal triggers exit (must be significant reversal)
+MIN_BARS_BETWEEN_ENTRIES = 15   # Minimum bars between entries (cooldown)
+MAX_TRADES_PER_DAY = 20         # Maximum trades per calendar day
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
@@ -245,9 +246,16 @@ def check_sl_hit(position: Position, bar_low: float, bar_high: float) -> Tuple[b
 
 def check_momentum_exit(position: Position, closes: pd.Series, index: int) -> bool:
     """
-    Check if momentum has reversed against the position.
+    Check if momentum has reversed against the position while near stop loss.
 
-    If momentum reverses > $0.30 against position, signal exit.
+    Only triggers exit if:
+    1. Momentum has reversed significantly ($1.50+ against position)
+    2. The trade is already near the stop loss (unrealized PnL < -$4.50)
+
+    With a $5 stop loss and progressive trailing stops, all exit management
+    is handled by the trailing stop system. This is a near-disabled safety
+    valve that only triggers when price is almost at the stop AND momentum
+    confirms we should cut before the full stop hit.
     """
     if index < MOMENTUM_LOOKBACK:
         return False
@@ -256,12 +264,62 @@ def check_momentum_exit(position: Position, closes: pd.Series, index: int) -> bo
     lookback_close = closes.iloc[index - MOMENTUM_LOOKBACK]
     diff = current_close - lookback_close
 
+    # Only exit if near stop loss level (90% of SL distance reached)
+    # and momentum confirms the trade direction has fully failed
+    current_pnl = position.unrealized_pnl(current_close)
+    if current_pnl >= -4.50:
+        return False  # Let trailing stop manage everything else
+
     if position.direction == "BUY" and diff < -MOMENTUM_EXIT_THRESHOLD:
         return True
     elif position.direction == "SELL" and diff > MOMENTUM_EXIT_THRESHOLD:
         return True
 
     return False
+
+
+def detect_price_structure(df: pd.DataFrame, index: int, lookback: int = 20) -> str:
+    """
+    Detect price action structure (trend) from swing highs and lows.
+
+    Analyzes the last `lookback` bars for higher highs + higher lows (uptrend)
+    or lower highs + lower lows (downtrend).
+
+    Returns "uptrend", "downtrend", or "no_structure".
+    """
+    if index < lookback:
+        return "no_structure"
+
+    highs = df["High"].values[index - lookback:index]
+    lows = df["Low"].values[index - lookback:index]
+
+    # Find swing highs (local maxima over 3-bar window)
+    swing_highs = []
+    swing_lows = []
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
+            swing_highs.append(highs[i])
+        if lows[i] < lows[i - 1] and lows[i] < lows[i + 1]:
+            swing_lows.append(lows[i])
+
+    # Need at least 2 swing points to determine structure
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return "no_structure"
+
+    # Check for higher highs and higher lows (uptrend)
+    higher_highs = swing_highs[-1] > swing_highs[-2]
+    higher_lows = swing_lows[-1] > swing_lows[-2]
+
+    # Check for lower highs and lower lows (downtrend)
+    lower_highs = swing_highs[-1] < swing_highs[-2]
+    lower_lows = swing_lows[-1] < swing_lows[-2]
+
+    if higher_highs and higher_lows:
+        return "uptrend"
+    elif lower_highs and lower_lows:
+        return "downtrend"
+    else:
+        return "no_structure"
 
 
 # ─────────────────────────────────────────────
@@ -500,6 +558,8 @@ class Backtester:
         self.open_positions: List[Position] = []
         self.closed_trades: List[Dict] = []
         self.last_entry_bar: int = -min_bars_between_entries  # Allow entry on first qualifying bar
+        self.trades_today: int = 0
+        self.current_trade_day: Optional[str] = None
         self.auto_optimizer = AutoOptimizer(
             config=AutoOptimizerConfig(
                 optimize_frequency=50,
@@ -573,7 +633,34 @@ class Backtester:
                 # Check cooldown: min bars since last entry
                 bars_since_last_entry = i - self.last_entry_bar
                 if bars_since_last_entry >= self.min_bars_between_entries:
+                    # Daily trade limit
+                    bar_day = str(bar_time.date()) if hasattr(bar_time, 'date') else str(bar_time)[:10]
+                    if self.current_trade_day != bar_day:
+                        self.current_trade_day = bar_day
+                        self.trades_today = 0
+                    if self.trades_today >= MAX_TRADES_PER_DAY:
+                        continue
+
                     momentum = compute_momentum_direction(df["Close"], i)
+
+                    # Range trading: only if momentum is FLAT and range > $5
+                    if momentum == "FLAT":
+                        range_bars = 20
+                        if i >= range_bars:
+                            range_high = float(df["High"].iloc[i - range_bars:i].max())
+                            range_low = float(df["Low"].iloc[i - range_bars:i].min())
+                            range_size = range_high - range_low
+
+                            if range_size > 5.0 and current_price > 0:
+                                position_in_range = (current_price - range_low) / range_size
+
+                                if position_in_range <= 0.15:
+                                    # Near bottom 15% -> BUY
+                                    momentum = "BUY"
+                                elif position_in_range >= 0.85:
+                                    # Near top 85% -> SELL
+                                    momentum = "SELL"
+
                     if momentum != "FLAT":
                         rsi_value = rsi_series.iloc[i]
                         if not np.isnan(rsi_value):
@@ -584,42 +671,67 @@ class Backtester:
                             elif momentum == "SELL" and rsi_value < RSI_OVERSOLD:
                                 rsi_ok = False
 
+                            # RSI zone filter: require RSI in favorable zone
+                            # BUY: RSI 30-60 (not overbought, shows upward room)
+                            # SELL: RSI 40-70 (not oversold, shows downward room)
+                            if rsi_ok:
+                                if momentum == "BUY" and not (30 <= rsi_value <= 60):
+                                    rsi_ok = False
+                                elif momentum == "SELL" and not (40 <= rsi_value <= 70):
+                                    rsi_ok = False
+
                             if rsi_ok:
                                 session = detect_session(bar_time)
-                                entry_price = current_price
 
-                                if momentum == "BUY":
-                                    sl_price = entry_price - DEFAULT_SL_DISTANCE
-                                else:
-                                    sl_price = entry_price + DEFAULT_SL_DISTANCE
+                                # Session filter: only trade during London or NY overlap
+                                if session not in ("london", "overlap", "newyork"):
+                                    continue
 
-                                # Compute synthetic confidence from momentum magnitude
-                                confidence = compute_momentum_magnitude(df["Close"], i)
+                                # Price structure alignment: require structure to confirm
+                                structure = detect_price_structure(df, i)
+                                structure_ok = True
+                                if momentum == "BUY" and structure == "downtrend":
+                                    structure_ok = False
+                                elif momentum == "SELL" and structure == "uptrend":
+                                    structure_ok = False
 
-                                entry_time_str = str(bar_time)
-                                pos = Position(
-                                    direction=momentum,
-                                    entry_price=entry_price,
-                                    sl_price=sl_price,
-                                    entry_bar_index=i,
-                                    entry_time=entry_time_str,
-                                    rsi_at_entry=rsi_value,
-                                    session=session,
-                                    confidence=confidence,
-                                )
-                                # Store bar spread for cost model
-                                if has_spread_data:
-                                    pos.entry_bar_spread = bar["Spread_Dollars"]
-                                else:
-                                    pos.entry_bar_spread = None
-                                self.open_positions.append(pos)
-                                self.last_entry_bar = i
+                                if structure_ok:
+                                    entry_price = current_price
 
-                                if self.verbose:
-                                    print(f"  [ENTRY] {momentum} at {entry_price:.2f} "
-                                          f"SL={sl_price:.2f} RSI={rsi_value:.1f} "
-                                          f"conf={confidence:.3f} session={session} "
-                                          f"time={entry_time_str}")
+                                    if momentum == "BUY":
+                                        sl_price = entry_price - DEFAULT_SL_DISTANCE
+                                    else:
+                                        sl_price = entry_price + DEFAULT_SL_DISTANCE
+
+                                    # Compute synthetic confidence from momentum magnitude
+                                    confidence = compute_momentum_magnitude(df["Close"], i)
+
+                                    entry_time_str = str(bar_time)
+                                    pos = Position(
+                                        direction=momentum,
+                                        entry_price=entry_price,
+                                        sl_price=sl_price,
+                                        entry_bar_index=i,
+                                        entry_time=entry_time_str,
+                                        rsi_at_entry=rsi_value,
+                                        session=session,
+                                        confidence=confidence,
+                                    )
+                                    # Store bar spread for cost model
+                                    if has_spread_data:
+                                        pos.entry_bar_spread = bar["Spread_Dollars"]
+                                    else:
+                                        pos.entry_bar_spread = None
+                                    self.open_positions.append(pos)
+                                    self.last_entry_bar = i
+                                    self.trades_today += 1
+
+                                    if self.verbose:
+                                        print(f"  [ENTRY] {momentum} at {entry_price:.2f} "
+                                              f"SL={sl_price:.2f} RSI={rsi_value:.1f} "
+                                              f"conf={confidence:.3f} session={session} "
+                                              f"structure={structure} "
+                                              f"time={entry_time_str}")
 
         # Close any remaining open positions at last bar's close
         if self.open_positions:
