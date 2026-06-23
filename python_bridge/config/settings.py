@@ -51,6 +51,7 @@ class TransformerConfig:
     learning_rate: float = 1e-4
     weight_decay: float = 1e-5
     batch_size: int = 32
+    batch_size_gpu: int = 256       # Larger batch size for GPU training
     epochs: int = 100
     patience: int = 15              # Early stopping patience
 
@@ -69,6 +70,7 @@ class LSTMConfig:
     learning_rate: float = 5e-4
     weight_decay: float = 1e-5
     batch_size: int = 32
+    batch_size_gpu: int = 256       # Larger batch size for GPU training
     epochs: int = 100
     patience: int = 15
 

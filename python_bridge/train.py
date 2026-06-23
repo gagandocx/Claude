@@ -42,6 +42,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Training")
 
+# ─────────────────────────────────────────────
+#  GPU SUPPORT - AUTO-DETECT CUDA
+# ─────────────────────────────────────────────
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 # ─────────────────────────────────────────────
 #  TRAINING FUNCTIONS
@@ -147,12 +152,14 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
         config: Model configuration
 
     Returns:
-        Trained MarketTransformer model
+        Trained MarketTransformer model (on CPU for portable checkpoints)
     """
     config = config or TransformerConfig()
     config.input_features = X_train.shape[2]
 
     model = MarketTransformer(config)
+    model = model.to(device)
+
     optimizer = optim.AdamW(model.parameters(),
                             lr=config.learning_rate,
                             weight_decay=config.weight_decay)
@@ -161,6 +168,9 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
     )
     criterion = nn.CrossEntropyLoss()
 
+    # Select batch size based on device (GPU can handle larger batches)
+    batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
+
     # Create data loaders
     train_dataset = TensorDataset(
         torch.FloatTensor(X_train), torch.LongTensor(y_train)
@@ -168,21 +178,26 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
     val_dataset = TensorDataset(
         torch.FloatTensor(X_val), torch.LongTensor(y_val)
     )
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
-                              shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
+
+    # Use pin_memory and num_workers for faster GPU data transfer
+    loader_kwargs = {"num_workers": 4, "pin_memory": True} if device.type == "cuda" else {"num_workers": 0}
+    train_loader = DataLoader(train_dataset, batch_size=batch_size,
+                              shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, **loader_kwargs)
 
     # Training loop
     best_val_loss = float("inf")
     patience_counter = 0
 
     logger.info(f"Training Transformer: {sum(p.numel() for p in model.parameters())} parameters")
+    logger.info(f"  Device: {device} | Batch size: {batch_size}")
 
     for epoch in range(config.epochs):
         # Train
         model.train()
         train_loss = 0.0
         for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             optimizer.zero_grad()
             output = model(batch_X)
             loss = criterion(output, batch_y)
@@ -200,6 +215,7 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
         total = 0
         with torch.no_grad():
             for batch_X, batch_y in val_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 output = model(batch_X)
                 loss = criterion(output, batch_y)
                 val_loss += loss.item()
@@ -224,14 +240,15 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            best_state = model.state_dict().copy()
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
                 logger.info(f"  Early stopping at epoch {epoch+1}")
                 break
 
-    # Restore best model
+    # Restore best model on CPU for device-agnostic checkpoints
+    model = model.cpu()
     if 'best_state' in locals():
         model.load_state_dict(best_state)
 
@@ -252,12 +269,14 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
         config: Model configuration
 
     Returns:
-        Trained MarketLSTM model
+        Trained MarketLSTM model (on CPU for portable checkpoints)
     """
     config = config or LSTMConfig()
     config.input_features = X_train.shape[2]
 
     model = MarketLSTM(config)
+    model = model.to(device)
+
     optimizer = optim.AdamW(model.parameters(),
                             lr=config.learning_rate,
                             weight_decay=config.weight_decay)
@@ -266,6 +285,9 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
     )
     criterion = nn.CrossEntropyLoss()
 
+    # Select batch size based on device (GPU can handle larger batches)
+    batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
+
     # Create data loaders
     train_dataset = TensorDataset(
         torch.FloatTensor(X_train), torch.LongTensor(y_train)
@@ -273,21 +295,26 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
     val_dataset = TensorDataset(
         torch.FloatTensor(X_val), torch.LongTensor(y_val)
     )
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
-                              shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
+
+    # Use pin_memory and num_workers for faster GPU data transfer
+    loader_kwargs = {"num_workers": 4, "pin_memory": True} if device.type == "cuda" else {"num_workers": 0}
+    train_loader = DataLoader(train_dataset, batch_size=batch_size,
+                              shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, **loader_kwargs)
 
     # Training loop
     best_val_loss = float("inf")
     patience_counter = 0
 
     logger.info(f"Training LSTM: {sum(p.numel() for p in model.parameters())} parameters")
+    logger.info(f"  Device: {device} | Batch size: {batch_size}")
 
     for epoch in range(config.epochs):
         # Train
         model.train()
         train_loss = 0.0
         for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             optimizer.zero_grad()
             output = model(batch_X)
             loss = criterion(output, batch_y)
@@ -305,6 +332,7 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
         total = 0
         with torch.no_grad():
             for batch_X, batch_y in val_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 output = model(batch_X)
                 loss = criterion(output, batch_y)
                 val_loss += loss.item()
@@ -329,14 +357,15 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            best_state = model.state_dict().copy()
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
                 logger.info(f"  Early stopping at epoch {epoch+1}")
                 break
 
-    # Restore best model
+    # Restore best model on CPU for device-agnostic checkpoints
+    model = model.cpu()
     if 'best_state' in locals():
         model.load_state_dict(best_state)
 
@@ -356,6 +385,12 @@ def train_all():
     logger.info("=" * 60)
     logger.info("  Python ML Bridge - Full Training Pipeline")
     logger.info("=" * 60)
+
+    # Log training device info
+    logger.info(f"Training device: {device}")
+    if device.type == "cuda":
+        logger.info(f"  GPU: {torch.cuda.get_device_name(0)}")
+        logger.info(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1024**3:.1f} GB")
 
     start_time = time.time()
 
