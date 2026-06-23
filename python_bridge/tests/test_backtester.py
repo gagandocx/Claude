@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backtest import (
     compute_momentum_direction,
+    compute_momentum_magnitude,
     detect_session,
     apply_progressive_trailing,
     check_sl_hit,
@@ -31,6 +32,7 @@ from backtest import (
     DEFAULT_SL_DISTANCE,
     MAX_POSITIONS,
     MAX_HOLD_BARS,
+    MIN_BARS_BETWEEN_ENTRIES,
     TRAIL_BE_THRESHOLD,
     TRAIL_TIER1_THRESHOLD,
     TRAIL_TIER1_DISTANCE,
@@ -108,6 +110,7 @@ class TestProgressiveTrailing:
         pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
         apply_progressive_trailing(pos, 2000.6)
         assert pos.sl_price == 2000.0  # Break-even
+        assert pos.trail_tier == "breakeven"
 
     def test_trail_050_at_100_profit(self):
         """SL trails $0.50 behind at $1.0 profit."""
@@ -462,6 +465,221 @@ class TestRSIComputation:
         rsi = compute_rsi(prices)
         # After 14+ bars of uptrend, RSI should be elevated
         assert rsi.iloc[-1] > 60
+
+
+# ─────────────────────────────────────────────
+#  TEST ENTRY COOLDOWN
+# ─────────────────────────────────────────────
+class TestEntryCooldown:
+    """Tests for entry cooldown (min_bars_between_entries)."""
+
+    def test_default_cooldown_is_3_bars(self):
+        """Default MIN_BARS_BETWEEN_ENTRIES is 3."""
+        assert MIN_BARS_BETWEEN_ENTRIES == 3
+
+    def test_cooldown_prevents_consecutive_entries(self):
+        """Entries should not occur on consecutive bars due to cooldown."""
+        # Create a strong uptrend that would trigger entries on every bar
+        n_bars = 50
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        # Strong consistent uptrend: $0.2/bar rise
+        prices = 2000.0 + np.arange(n_bars) * 0.2
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.5,
+            "Low": prices - 0.1,
+            "Close": prices,
+            "Volume": np.full(n_bars, 500),
+        }, index=dates)
+
+        backtester = Backtester(verbose=False, min_bars_between_entries=3)
+        results = backtester.run(df)
+
+        # Check that entries are spaced at least 3 bars apart
+        # Look at entry bar indices from closed trades
+        if len(results["trade_log"]) > 1:
+            entry_times = [t["entry_time"] for t in results["trade_log"]]
+            # Convert to bar indices by matching against df index
+            entry_indices = []
+            for et in entry_times:
+                matches = df.index[df.index.astype(str) == et]
+                if len(matches) > 0:
+                    entry_indices.append(df.index.get_loc(matches[0]))
+
+            # Verify spacing between consecutive entries
+            for i in range(1, len(entry_indices)):
+                spacing = entry_indices[i] - entry_indices[i - 1]
+                assert spacing >= 3, f"Entries at bars {entry_indices[i-1]} and {entry_indices[i]} are only {spacing} bars apart"
+
+    def test_cooldown_reduces_trade_count(self):
+        """Cooldown of 3 should produce fewer trades than cooldown of 1."""
+        n_bars = 100
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        prices = 2000.0 + np.arange(n_bars) * 0.15
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.5,
+            "Low": prices - 0.1,
+            "Close": prices,
+            "Volume": np.full(n_bars, 500),
+        }, index=dates)
+
+        bt_fast = Backtester(verbose=False, min_bars_between_entries=1)
+        results_fast = bt_fast.run(df)
+
+        bt_slow = Backtester(verbose=False, min_bars_between_entries=5)
+        results_slow = bt_slow.run(df)
+
+        # More restrictive cooldown should produce fewer or equal trades
+        assert results_slow["summary"]["total_trades"] <= results_fast["summary"]["total_trades"]
+
+    def test_custom_cooldown_parameter(self):
+        """Backtester accepts custom min_bars_between_entries."""
+        bt = Backtester(verbose=False, min_bars_between_entries=10)
+        assert bt.min_bars_between_entries == 10
+
+
+# ─────────────────────────────────────────────
+#  TEST SYNTHETIC CONFIDENCE
+# ─────────────────────────────────────────────
+class TestSyntheticConfidence:
+    """Tests for compute_momentum_magnitude and synthetic confidence."""
+
+    def test_zero_confidence_at_zero_momentum(self):
+        """Confidence is low when momentum is zero (insufficient bars)."""
+        closes = pd.Series([2000.0, 2000.0, 2000.0])
+        result = compute_momentum_magnitude(closes, 2)
+        assert result == 0.0
+
+    def test_confidence_increases_with_momentum(self):
+        """Higher momentum magnitude produces higher confidence."""
+        # Small momentum: $0.6 move
+        closes_small = pd.Series([2000.0, 2000.1, 2000.2, 2000.3, 2000.4, 2000.6])
+        conf_small = compute_momentum_magnitude(closes_small, 5)
+
+        # Large momentum: $2.0 move
+        closes_large = pd.Series([2000.0, 2000.3, 2000.6, 2001.0, 2001.5, 2002.0])
+        conf_large = compute_momentum_magnitude(closes_large, 5)
+
+        assert conf_large > conf_small
+
+    def test_confidence_bounded(self):
+        """Confidence is always between 0 and 0.95."""
+        # Very large momentum
+        closes = pd.Series([2000.0, 2002.0, 2004.0, 2006.0, 2008.0, 2010.0])
+        result = compute_momentum_magnitude(closes, 5)
+        assert 0.0 < result <= 0.95
+
+    def test_confidence_not_hardcoded_in_trades(self):
+        """Trade records should have varying confidence, not all 0.5."""
+        n_bars = 150
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        np.random.seed(42)
+        # Create varying momentum by using price oscillations
+        prices = 2000.0 + np.cumsum(np.random.randn(n_bars) * 0.4)
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.3,
+            "Low": prices - 0.3,
+            "Close": prices,
+            "Volume": np.random.randint(100, 1000, n_bars),
+        }, index=dates)
+
+        import tempfile
+        backtester = Backtester(verbose=False, min_bars_between_entries=1)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            backtester.auto_optimizer = AutoOptimizer(
+                config=AutoOptimizerConfig(optimize_frequency=50, min_trades_before_tuning=10),
+                state_dir=tmp_dir
+            )
+            results = backtester.run(df)
+
+            if len(results["trade_log"]) > 2:
+                confidences = [t["confidence"] for t in results["trade_log"]]
+                # Not all should be 0.5
+                unique_confidences = set(confidences)
+                assert len(unique_confidences) > 1, "All confidence values are the same; expected variation"
+
+    def test_confidence_recorded_to_optimizer(self):
+        """Synthetic confidence is passed to AutoOptimizer, not hardcoded 0.5."""
+        n_bars = 100
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars, freq="1min", tz="UTC")
+        # Strong uptrend for consistent entries
+        prices = 2000.0 + np.arange(n_bars) * 0.25
+
+        df = pd.DataFrame({
+            "Open": prices - 0.05,
+            "High": prices + 0.5,
+            "Low": prices - 0.1,
+            "Close": prices,
+            "Volume": np.full(n_bars, 500),
+        }, index=dates)
+
+        import tempfile
+        backtester = Backtester(verbose=False, min_bars_between_entries=1)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            backtester.auto_optimizer = AutoOptimizer(
+                config=AutoOptimizerConfig(optimize_frequency=50, min_trades_before_tuning=10),
+                state_dir=tmp_dir
+            )
+            results = backtester.run(df)
+
+            if backtester.auto_optimizer.trade_count > 0:
+                # Check that at least one trade has confidence != 0.5
+                trades = backtester.auto_optimizer._trades
+                confidences = [t["confidence"] for t in trades]
+                # With strong momentum, confidence should be > 0.5
+                assert any(c != 0.5 for c in confidences), "Confidence still hardcoded to 0.5"
+
+
+# ─────────────────────────────────────────────
+#  TEST TRAIL TIER BREAKEVEN
+# ─────────────────────────────────────────────
+class TestTrailTierBreakeven:
+    """Tests for trail tier breakeven distinction."""
+
+    def test_breakeven_tier_is_distinct_from_wide(self):
+        """Break-even tier should be 'breakeven', not 'wide'."""
+        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
+        # Profit of $0.60 (above BE threshold, below tier1)
+        apply_progressive_trailing(pos, 2000.6)
+        assert pos.trail_tier == "breakeven"
+
+    def test_tier1_wide_still_works(self):
+        """Tier 1 (at $1.0+ profit) should still be 'wide'."""
+        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
+        apply_progressive_trailing(pos, 2001.2)
+        assert pos.trail_tier == "wide"
+
+    def test_sell_breakeven_tier(self):
+        """SELL break-even should also use 'breakeven' tier."""
+        pos = Position("SELL", 2000.0, 2003.0, 0, "2024-01-01", 50.0, "london")
+        # SELL profit = 2000 - 1999.4 = 0.6 >= 0.50 -> breakeven
+        apply_progressive_trailing(pos, 1999.4)
+        assert pos.trail_tier == "breakeven"
+
+    def test_breakeven_upgrades_to_wide_then_medium(self):
+        """Trail tier progresses: breakeven -> wide -> medium -> tight."""
+        pos = Position("BUY", 2000.0, 1997.0, 0, "2024-01-01", 50.0, "london")
+
+        # First: breakeven
+        apply_progressive_trailing(pos, 2000.6)
+        assert pos.trail_tier == "breakeven"
+
+        # Then: wide (tier 1)
+        apply_progressive_trailing(pos, 2001.2)
+        assert pos.trail_tier == "wide"
+
+        # Then: medium (tier 2)
+        apply_progressive_trailing(pos, 2002.5)
+        assert pos.trail_tier == "medium"
+
+        # Then: tight (tier 3)
+        apply_progressive_trailing(pos, 2003.5)
+        assert pos.trail_tier == "tight"
 
 
 # ─────────────────────────────────────────────

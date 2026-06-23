@@ -33,6 +33,7 @@ MAX_HOLD_BARS = 50              # Max bars to hold a trade
 MOMENTUM_LOOKBACK = 5           # 5 bars for momentum
 MOMENTUM_THRESHOLD = 0.50       # $0.50 for momentum direction
 MOMENTUM_EXIT_THRESHOLD = 0.30  # $0.30 reversal triggers exit
+MIN_BARS_BETWEEN_ENTRIES = 3    # Minimum bars between entries (cooldown)
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
@@ -55,7 +56,7 @@ class Position:
 
     def __init__(self, direction: str, entry_price: float, sl_price: float,
                  entry_bar_index: int, entry_time: str, rsi_at_entry: float,
-                 session: str):
+                 session: str, confidence: float = 0.5):
         self.direction = direction
         self.entry_price = entry_price
         self.sl_price = sl_price
@@ -63,6 +64,7 @@ class Position:
         self.entry_time = entry_time
         self.rsi_at_entry = rsi_at_entry
         self.session = session
+        self.confidence = confidence
         self.max_profit = 0.0
         self.trail_tier = "none"
 
@@ -97,6 +99,30 @@ def compute_momentum_direction(closes: pd.Series, index: int) -> str:
         return "SELL"
     else:
         return "FLAT"
+
+
+def compute_momentum_magnitude(closes: pd.Series, index: int) -> float:
+    """
+    Compute the absolute momentum magnitude for synthetic confidence.
+
+    Returns a value between 0.0 and 1.0 based on momentum strength:
+    - Momentum at threshold ($0.50) maps to ~0.3 confidence
+    - Momentum at $1.50 maps to ~0.7 confidence
+    - Momentum at $3.0+ maps to ~0.9 confidence
+
+    Uses a sigmoid-like scaling: confidence = 0.2 + 0.7 * (1 - exp(-abs_diff / scale))
+    """
+    if index < MOMENTUM_LOOKBACK:
+        return 0.0
+
+    current_close = closes.iloc[index]
+    lookback_close = closes.iloc[index - MOMENTUM_LOOKBACK]
+    abs_diff = abs(current_close - lookback_close)
+
+    # Scale factor: momentum of $1.50 yields ~0.7 confidence
+    scale = 1.5
+    confidence = 0.2 + 0.7 * (1.0 - np.exp(-abs_diff / scale))
+    return round(min(confidence, 0.95), 4)
 
 
 def detect_session(timestamp) -> str:
@@ -176,7 +202,7 @@ def apply_progressive_trailing(position: Position, current_price: float) -> floa
         # Move SL to break-even
         new_sl = position.entry_price
         if position.trail_tier == "none":
-            position.trail_tier = "wide"
+            position.trail_tier = "breakeven"
     else:
         return sl_price
 
@@ -238,10 +264,12 @@ class Backtester:
     bar-by-bar on historical data.
     """
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, min_bars_between_entries: int = MIN_BARS_BETWEEN_ENTRIES):
         self.verbose = verbose
+        self.min_bars_between_entries = min_bars_between_entries
         self.open_positions: List[Position] = []
         self.closed_trades: List[Dict] = []
+        self.last_entry_bar: int = -min_bars_between_entries  # Allow entry on first qualifying bar
         self.auto_optimizer = AutoOptimizer(
             config=AutoOptimizerConfig(
                 optimize_frequency=50,
@@ -307,42 +335,51 @@ class Backtester:
 
             # --- Entry logic ---
             if len(self.open_positions) < MAX_POSITIONS:
-                momentum = compute_momentum_direction(df["Close"], i)
-                if momentum != "FLAT":
-                    rsi_value = rsi_series.iloc[i]
-                    if not np.isnan(rsi_value):
-                        # RSI filter: don't buy overbought, don't sell oversold
-                        rsi_ok = True
-                        if momentum == "BUY" and rsi_value > RSI_OVERBOUGHT:
-                            rsi_ok = False
-                        elif momentum == "SELL" and rsi_value < RSI_OVERSOLD:
-                            rsi_ok = False
+                # Check cooldown: min bars since last entry
+                bars_since_last_entry = i - self.last_entry_bar
+                if bars_since_last_entry >= self.min_bars_between_entries:
+                    momentum = compute_momentum_direction(df["Close"], i)
+                    if momentum != "FLAT":
+                        rsi_value = rsi_series.iloc[i]
+                        if not np.isnan(rsi_value):
+                            # RSI filter: don't buy overbought, don't sell oversold
+                            rsi_ok = True
+                            if momentum == "BUY" and rsi_value > RSI_OVERBOUGHT:
+                                rsi_ok = False
+                            elif momentum == "SELL" and rsi_value < RSI_OVERSOLD:
+                                rsi_ok = False
 
-                        if rsi_ok:
-                            session = detect_session(bar_time)
-                            entry_price = current_price
+                            if rsi_ok:
+                                session = detect_session(bar_time)
+                                entry_price = current_price
 
-                            if momentum == "BUY":
-                                sl_price = entry_price - DEFAULT_SL_DISTANCE
-                            else:
-                                sl_price = entry_price + DEFAULT_SL_DISTANCE
+                                if momentum == "BUY":
+                                    sl_price = entry_price - DEFAULT_SL_DISTANCE
+                                else:
+                                    sl_price = entry_price + DEFAULT_SL_DISTANCE
 
-                            entry_time_str = str(bar_time)
-                            pos = Position(
-                                direction=momentum,
-                                entry_price=entry_price,
-                                sl_price=sl_price,
-                                entry_bar_index=i,
-                                entry_time=entry_time_str,
-                                rsi_at_entry=rsi_value,
-                                session=session,
-                            )
-                            self.open_positions.append(pos)
+                                # Compute synthetic confidence from momentum magnitude
+                                confidence = compute_momentum_magnitude(df["Close"], i)
 
-                            if self.verbose:
-                                print(f"  [ENTRY] {momentum} at {entry_price:.2f} "
-                                      f"SL={sl_price:.2f} RSI={rsi_value:.1f} "
-                                      f"session={session} time={entry_time_str}")
+                                entry_time_str = str(bar_time)
+                                pos = Position(
+                                    direction=momentum,
+                                    entry_price=entry_price,
+                                    sl_price=sl_price,
+                                    entry_bar_index=i,
+                                    entry_time=entry_time_str,
+                                    rsi_at_entry=rsi_value,
+                                    session=session,
+                                    confidence=confidence,
+                                )
+                                self.open_positions.append(pos)
+                                self.last_entry_bar = i
+
+                                if self.verbose:
+                                    print(f"  [ENTRY] {momentum} at {entry_price:.2f} "
+                                          f"SL={sl_price:.2f} RSI={rsi_value:.1f} "
+                                          f"conf={confidence:.3f} session={session} "
+                                          f"time={entry_time_str}")
 
         # Close any remaining open positions at last bar's close
         if self.open_positions:
@@ -384,20 +421,21 @@ class Backtester:
             "exit_reason": exit_reason,
             "trail_tier": trail_tier,
             "max_profit": round(pos.max_profit, 2),
+            "confidence": pos.confidence,
         }
         self.closed_trades.append(trade_record)
 
         # Record to AutoOptimizer
         trade_context = {
             "session": pos.session,
-            "confidence": 0.5,  # No AI model in backtest
+            "confidence": pos.confidence,
             "momentum_lookback": MOMENTUM_LOOKBACK,
             "sl_distance": DEFAULT_SL_DISTANCE,
             "result_pnl": round(pnl, 2),
             "direction": pos.direction,
             "rsi_at_entry": round(pos.rsi_at_entry, 2),
             "trail_tier": trail_tier,
-            "cooldown_used": 2,
+            "cooldown_used": self.min_bars_between_entries,
             "max_positions_at_entry": MAX_POSITIONS,
             "entry_time": pos.entry_time,
             "exit_time": exit_time_str,
@@ -438,6 +476,7 @@ class Backtester:
             "avg_loss": round(avg_loss, 2),
             "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else "inf",
             "max_drawdown": round(max_drawdown, 2),
+            "max_drawdown_note": "closed-trade drawdown (not mark-to-market equity drawdown)",
             "wins": win_count,
             "losses": len(losses),
         }
@@ -530,7 +569,7 @@ def print_summary(summary: Dict) -> None:
     print(f"  Avg Win:         ${summary['avg_win']:.2f}")
     print(f"  Avg Loss:        ${summary['avg_loss']:.2f}")
     print(f"  Profit Factor:   {summary['profit_factor']}")
-    print(f"  Max Drawdown:    ${summary['max_drawdown']:.2f}")
+    print(f"  Max Drawdown:    ${summary['max_drawdown']:.2f} (closed-trade)")
     print(f"  Wins/Losses:     {summary['wins']}/{summary['losses']}")
     print("=" * 60)
 
