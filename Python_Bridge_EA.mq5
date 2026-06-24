@@ -13,7 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "5.20"
+#property version   "5.31"
+// v5.3.1 - M1 Momentum + M15 HTF Bias + Signal Write Retry
 #property strict
 
 #include <Trade\Trade.mqh>
