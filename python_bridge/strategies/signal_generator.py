@@ -1050,19 +1050,6 @@ class SignalGenerator:
             session_confidence_mult = 0.5  # Off-session: 0.5x multiplier
             logger.info("[SignalGen] Off-session detected - trading with 0.5x confidence multiplier")
 
-        # 1a2. DAILY TRADE LIMIT: Max 30 trades per day for aggressive trading
-        current_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if not hasattr(self, '_trade_day'):
-            self._trade_day = current_day
-            self._trades_today = 0
-        if self._trade_day != current_day:
-            self._trade_day = current_day
-            self._trades_today = 0
-        if self._trades_today >= 30:
-            logger.info("[SignalGen] HOLD - daily trade limit reached (%d trades today)",
-                        self._trades_today)
-            return hold_signal
-
         # 1a3. RSI ZONE FILTER: Require RSI in favorable zone
         # BUY: RSI must be 25-70 (ultra-wide zone for max trades)
         # SELL: RSI must be 30-75 (ultra-wide zone for max trades)
@@ -1374,10 +1361,6 @@ class SignalGenerator:
 
         self._last_signal_time = time.time()
         self._signal_count += 1
-        # Increment daily trade counter
-        if hasattr(self, '_trades_today'):
-            self._trades_today += 1
-
         logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",
                     signal.action, signal.symbol, signal.confidence,
                     signal.lot_size, signal.regime)
