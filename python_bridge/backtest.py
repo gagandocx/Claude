@@ -683,14 +683,8 @@ class Backtester:
                             if rsi_ok:
                                 session = detect_session(bar_time)
 
-                                # Session filter: allow ALL sessions
-                                # Asian session trades with reduced confidence (0.6x multiplier)
-                                # London, NY, overlap trade at full confidence
+                                # Session filter: ALL sessions at full confidence - 24/7 no restrictions
                                 session_confidence_mult = 1.0
-                                if session == "asian":
-                                    session_confidence_mult = 0.6  # Reduced confidence for Asian
-                                elif session == "off_session":
-                                    session_confidence_mult = 0.5  # Even lower for off-session
 
                                 # Price structure alignment: use as confidence boost, not hard block
                                 # Structure confirmation adds confidence; opposing structure reduces it

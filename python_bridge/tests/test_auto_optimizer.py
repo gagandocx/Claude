@@ -79,11 +79,11 @@ class TestAutoOptimizerInit:
     def test_default_session_multipliers(self, optimizer):
         """Test that session multipliers have correct defaults."""
         params = optimizer.get_current_params()
-        assert params["session_multipliers"]["asian"] == 0.5
+        assert params["session_multipliers"]["asian"] == 1.0
         assert params["session_multipliers"]["london"] == 1.2
         assert params["session_multipliers"]["newyork"] == 1.0
         assert params["session_multipliers"]["overlap"] == 1.2
-        assert params["session_multipliers"]["off_session"] == 0.7
+        assert params["session_multipliers"]["off_session"] == 1.0
 
     def test_default_trail_distances(self, optimizer):
         """Test that trail distances have correct defaults."""
@@ -140,7 +140,7 @@ class TestOptimization:
 
     def test_optimize_insufficient_trades(self, optimizer_50):
         """Test optimize returns insufficient_trades when not enough data."""
-        for i in range(5):
+        for i in range(3):
             optimizer_50._trades.append(_make_trade(1.0))
         result = optimizer_50.optimize()
         assert result["status"] == "insufficient_trades"

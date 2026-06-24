@@ -78,11 +78,11 @@ class AutoOptimizer:
         return {
             "sl_distance": 5.0,  # $5 SL balanced for gold M1
             "session_multipliers": {
-                "asian": 0.5,
+                "asian": 1.0,
                 "london": 1.2,
                 "newyork": 1.0,
                 "overlap": 1.2,
-                "off_session": 0.7,
+                "off_session": 1.0,
             },
             "min_confidence": 0.25,
             "momentum_lookback": 8,

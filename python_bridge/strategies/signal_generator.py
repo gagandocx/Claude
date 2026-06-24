@@ -361,7 +361,7 @@ class SignalGenerator:
             "london": cfg.london_multiplier,
             "newyork": cfg.ny_multiplier,
             "overlap": cfg.overlap_multiplier,
-            "off_session": 0.7,  # Reduced sizing for 21:00-23:59 UTC dead zone
+            "off_session": 1.0,  # Full sizing - trade 24/7 no restrictions
         }
         return multipliers.get(session, 1.0)
 
@@ -1040,15 +1040,8 @@ class SignalGenerator:
                             "no range extremes)")
                 return hold_signal
 
-        # 1a. SESSION FILTER: Allow ALL sessions with reduced confidence for low-liquidity
-        # Asian and off-session trade with reduced confidence multiplier
+        # 1a. SESSION FILTER: ALL sessions trade at full confidence - 24/7 no restrictions
         session_confidence_mult = 1.0
-        if session == "asian":
-            session_confidence_mult = 0.6  # Asian session: 0.6x multiplier
-            logger.info("[SignalGen] Asian session detected - trading with 0.6x confidence multiplier")
-        elif session == "off_session":
-            session_confidence_mult = 0.5  # Off-session: 0.5x multiplier
-            logger.info("[SignalGen] Off-session detected - trading with 0.5x confidence multiplier")
 
         # 1a3. RSI ZONE FILTER: Require RSI in favorable zone
         # BUY: RSI must be 25-70 (ultra-wide zone for max trades)
@@ -1268,9 +1261,7 @@ class SignalGenerator:
                         self.liquidity_sweep_config.confidence_boost)
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
-        # 6. Apply session confidence multiplier and confidence threshold (timing gate)
-        # Asian/off-session trades get reduced confidence to filter out marginal signals
-        timing_confidence *= session_confidence_mult
+        # 6. Apply confidence threshold (timing gate) - all sessions trade at full confidence
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
         min_confidence = regime_adjustments.get(

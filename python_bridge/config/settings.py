@@ -461,7 +461,7 @@ class SessionConfig:
     ny_start: int = 13                       # UTC hour New York session starts
     ny_end: int = 21                         # UTC hour New York session ends
     # Position sizing multipliers per session
-    asian_multiplier: float = 0.5            # Lower volatility, smaller size
+    asian_multiplier: float = 1.0            # Full size - trade 24/7 no restrictions
     london_multiplier: float = 1.2           # Peak liquidity, full size
     ny_multiplier: float = 1.0              # Standard size
     overlap_multiplier: float = 1.2          # London/NY overlap, peak volatility
@@ -550,8 +550,8 @@ class AutoOptimizerConfig:
     the best-performing value each cycle.
     """
     enabled: bool = True
-    optimize_frequency: int = 10            # Trades between optimization cycles
-    min_trades_before_tuning: int = 10      # Min trades before first optimization
+    optimize_frequency: int = 5             # Trades between optimization cycles (fast learning)
+    min_trades_before_tuning: int = 5       # Min trades before first optimization
     shift_rate: float = 0.15                # 15% shift toward optimal per cycle
     rollback_threshold: float = 0.20        # Rollback if 20% worse after optimization
     state_file: str = "auto_optimizer_state.json"
@@ -579,7 +579,7 @@ class MainConfig:
     enable_alternative_data: bool = True
     enable_regime_detection: bool = True
     enable_multi_timeframe: bool = True     # Multi-timeframe analysis
-    enable_news_filter: bool = True         # News calendar event filter
+    enable_news_filter: bool = False        # Disabled - trade 24/7 no restrictions
     enable_multi_pair: bool = True          # Cross-pair correlation analysis
     enable_smart_exits: bool = True         # AI-driven exit management (RL agent)
     enable_auto_retrain: bool = True        # Weekend auto-retraining scheduler

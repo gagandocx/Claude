@@ -150,11 +150,11 @@ class TestSessionAwareness:
 
     def test_session_multipliers(self, signal_gen):
         """Test that session multipliers are correctly assigned."""
-        assert signal_gen._get_session_multiplier("asian") == 0.5
+        assert signal_gen._get_session_multiplier("asian") == 1.0
         assert signal_gen._get_session_multiplier("london") == 1.2
         assert signal_gen._get_session_multiplier("newyork") == 1.0
         assert signal_gen._get_session_multiplier("overlap") == 1.2
-        assert signal_gen._get_session_multiplier("off_session") == 0.7
+        assert signal_gen._get_session_multiplier("off_session") == 1.0
 
 
 # ─────────────────────────────────────────────
@@ -580,7 +580,7 @@ class TestConfigs:
         assert cfg.london_end == 16
         assert cfg.ny_start == 13
         assert cfg.ny_end == 21
-        assert cfg.asian_multiplier == 0.5
+        assert cfg.asian_multiplier == 1.0
         assert cfg.london_multiplier == 1.2
         assert cfg.ny_multiplier == 1.0
 
