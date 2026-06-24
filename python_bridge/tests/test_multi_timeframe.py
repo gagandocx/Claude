@@ -293,8 +293,8 @@ class TestHTFTrendBias:
         """Test that HTF trend bias returns scores per timeframe."""
         mock_download.return_value = mock_ohlcv_data
         bias = fetcher.get_htf_trend_bias()
-        assert "1h" in bias
-        assert "4h" in bias
+        assert "5m" in bias
+        assert "15m" in bias
         # Scores should be between -1 and 1
         for tf, score in bias.items():
             assert -1.0 <= score <= 1.0, f"{tf} score {score} out of range"
@@ -304,8 +304,8 @@ class TestHTFTrendBias:
         """Test HTF bias with empty data returns zero scores."""
         mock_download.return_value = pd.DataFrame()
         bias = fetcher.get_htf_trend_bias()
-        assert bias.get("1h", 0.0) == 0.0
-        assert bias.get("4h", 0.0) == 0.0
+        assert bias.get("5m", 0.0) == 0.0
+        assert bias.get("15m", 0.0) == 0.0
 
     @patch("data.multi_timeframe.yf.download")
     def test_htf_trend_bias_bullish(self, mock_download, fetcher):
@@ -329,7 +329,7 @@ class TestHTFTrendBias:
         mock_download.return_value = df
         bias = fetcher.get_htf_trend_bias()
         # Strong uptrend should produce positive bias
-        assert bias.get("1h", 0) > 0, f"Expected positive bias for uptrend, got {bias}"
+        assert bias.get("5m", 0) > 0, f"Expected positive bias for uptrend, got {bias}"
 
 
 # ─────────────────────────────────────────────

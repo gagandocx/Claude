@@ -236,9 +236,9 @@ class TestMultiTimeframeTraining:
         """Test that training_periods config has correct default values."""
         config = DataConfig()
         assert len(config.training_periods) == 3
-        assert config.training_periods[0] == {"period": "5y", "interval": "1d"}
-        assert config.training_periods[1] == {"period": "2y", "interval": "1h"}
-        assert config.training_periods[2] == {"period": "60d", "interval": "15m"}
+        assert config.training_periods[0] == {"period": "60d", "interval": "1m"}
+        assert config.training_periods[1] == {"period": "60d", "interval": "15m"}
+        assert config.training_periods[2] == {"period": "2y", "interval": "1h"}
 
     def test_prepare_data_all_empty_returns_empty(self):
         """Test that prepare_data returns empty arrays when all timeframes fail."""

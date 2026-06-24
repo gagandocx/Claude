@@ -235,8 +235,8 @@ class MultiTimeframeDataFetcher:
         """
         Get higher timeframe trend bias for trade confirmation.
 
-        Professional traders only take long entries when H4 and H1
-        trends align bullish, and short entries when they align bearish.
+        M15 trend confirmation for M1 scalping. Uses 5m and 15m timeframes
+        as the "higher timeframe" bias for scalp entries on M1.
         This method returns a trend score per HTF.
 
         Returns:
@@ -245,9 +245,9 @@ class MultiTimeframeDataFetcher:
         ticker = ticker or self.data_config.yfinance_ticker
         trend_bias = {}
 
-        for tf in ["1h", "4h"]:
+        for tf in ["5m", "15m"]:
             df = self.fetch_timeframe(tf, ticker)
-            if df.empty or len(df) < 200:
+            if df.empty or len(df) < 50:
                 trend_bias[tf] = 0.0
                 continue
 

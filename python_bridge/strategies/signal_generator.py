@@ -1162,18 +1162,27 @@ class SignalGenerator:
         logger.info("[SignalGen] Momentum action: %s, Timing confidence: %.4f",
                     action, timing_confidence)
 
-        # 5. HTF bias - REDUCED penalty for scalper
-        # Only penalize if H4 is STRONGLY against momentum (magnitude > 0.8)
-        # and only reduce confidence by 0.05 instead of blocking
+        # 5. HTF bias - M15/M5 penalty for scalper
+        # Penalize if M15 is against momentum (magnitude > 0.5)
+        # M15 is more meaningful for M1 scalps than lazy H4
         htf_confidence_adj = 0.0
         if htf_bias:
-            h4_bias = htf_bias.get("4h", 0.0)
-            if action == "BUY" and h4_bias < -0.8:
-                htf_confidence_adj = -0.05
-                logger.info("[SignalGen] HTF: Slight penalty for BUY against strong H4 bearish (%.2f)", h4_bias)
-            elif action == "SELL" and h4_bias > 0.8:
-                htf_confidence_adj = -0.05
-                logger.info("[SignalGen] HTF: Slight penalty for SELL against strong H4 bullish (%.2f)", h4_bias)
+            m15_bias = htf_bias.get("15m", 0.0)
+            if action == "BUY" and m15_bias < -0.5:
+                htf_confidence_adj = -0.10
+                logger.info("[SignalGen] HTF: Penalty for BUY against M15 bearish (%.2f)", m15_bias)
+            elif action == "SELL" and m15_bias > 0.5:
+                htf_confidence_adj = -0.10
+                logger.info("[SignalGen] HTF: Penalty for SELL against M15 bullish (%.2f)", m15_bias)
+
+            # 5m micro-trend check: additional penalty if strongly against
+            m5_bias = htf_bias.get("5m", 0.0)
+            if action == "BUY" and m5_bias < -0.6:
+                htf_confidence_adj += -0.05
+                logger.info("[SignalGen] HTF: Additional M5 penalty for BUY against M5 bearish (%.2f)", m5_bias)
+            elif action == "SELL" and m5_bias > 0.6:
+                htf_confidence_adj += -0.05
+                logger.info("[SignalGen] HTF: Additional M5 penalty for SELL against M5 bullish (%.2f)", m5_bias)
 
         # Apply HTF adjustment
         timing_confidence = timing_confidence + htf_confidence_adj

@@ -118,9 +118,9 @@ class DataConfig:
 
     # Multi-timeframe training parameters
     training_periods: list = field(default_factory=lambda: [
-        {"period": "5y", "interval": "1d"},
-        {"period": "2y", "interval": "1h"},
+        {"period": "60d", "interval": "1m"},
         {"period": "60d", "interval": "15m"},
+        {"period": "2y", "interval": "1h"},
     ])
 
     # Support/resistance detection
@@ -218,8 +218,9 @@ class MultiTimeframeConfig:
 
     Professional traders analyze multiple timeframes to confirm
     trend direction, identify key support/resistance levels, and
-    time entries precisely. This config enables M1/M5/M15/H1/H4
-    analysis for institutional-grade signal quality.
+    time entries precisely. For M1 scalping, only 5m and 15m are
+    used for HTF bias (faster reaction than H1/H4). The full list
+    of timeframes is retained for training and feature extraction.
     """
     timeframes: List[str] = field(default_factory=lambda: [
         "1m", "5m", "15m", "1h", "4h"

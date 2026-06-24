@@ -401,8 +401,8 @@ class PythonMLBridge:
                     htf_bias = self.multi_tf.get_htf_trend_bias()
                     if htf_bias:
                         self.logger.debug(
-                            f"HTF Bias: H1={htf_bias.get('1h', 0):.2f} "
-                            f"H4={htf_bias.get('4h', 0):.2f}"
+                            f"HTF Bias: M5={htf_bias.get('5m', 0):.2f} "
+                            f"M15={htf_bias.get('15m', 0):.2f}"
                         )
                 except Exception as e:
                     self.logger.debug(f"Multi-TF error: {e}")
@@ -463,8 +463,8 @@ class PythonMLBridge:
                 )
                 if htf_bias:
                     self.logger.info(
-                        f"  HTF Confirmation: H1={htf_bias.get('1h', 0):.2f} "
-                        f"H4={htf_bias.get('4h', 0):.2f}"
+                        f"  HTF Confirmation: M5={htf_bias.get('5m', 0):.2f} "
+                        f"M15={htf_bias.get('15m', 0):.2f}"
                     )
                 if cross_pair_info:
                     self.logger.info(
