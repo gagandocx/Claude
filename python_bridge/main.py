@@ -20,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-VERSION = "5.3.4"
+VERSION = "5.3.5"
 
 import numpy as np
 import pandas as pd

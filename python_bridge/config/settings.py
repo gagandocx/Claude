@@ -563,7 +563,7 @@ class AutoOptimizerConfig:
     momentum_range: tuple = (5, 10)         # Momentum lookback bars (wider range)
     rsi_ob_range: tuple = (65, 85)          # RSI overbought level range
     rsi_os_range: tuple = (15, 35)          # RSI oversold level range
-    cooldown_range: tuple = (30, 180)       # Cooldown seconds range (longer cooldowns)
+    cooldown_range: tuple = (10, 120)       # Cooldown seconds range (shorter cooldowns)
     max_positions_range: tuple = (1, 3)     # Max concurrent positions range (conservative)
 
 

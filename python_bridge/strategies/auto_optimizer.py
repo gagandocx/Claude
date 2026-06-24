@@ -93,8 +93,8 @@ class AutoOptimizer:
                 "medium": 1.0,
                 "wide": 2.0,
             },
-            "cooldown_seconds": 120,
-            "max_positions": 1,
+            "cooldown_seconds": 10,
+            "max_positions": 3,
         }
 
     def record_trade(self, trade_context: Dict) -> None:
