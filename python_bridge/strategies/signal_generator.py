@@ -999,10 +999,10 @@ class SignalGenerator:
             range_bars = 20
             range_signal = None
 
-            if isinstance(prices, pd.DataFrame) and "High" in prices.columns and "Low" in prices.columns:
-                if len(prices) >= range_bars:
-                    range_high = float(prices["High"].iloc[-range_bars:].max())
-                    range_low = float(prices["Low"].iloc[-range_bars:].min())
+            if isinstance(momentum_prices, pd.DataFrame) and "High" in momentum_prices.columns and "Low" in momentum_prices.columns:
+                if len(momentum_prices) >= range_bars:
+                    range_high = float(momentum_prices["High"].iloc[-range_bars:].max())
+                    range_low = float(momentum_prices["Low"].iloc[-range_bars:].min())
                     range_size = range_high - range_low
 
                     if range_size > 5.0 and current_price > 0:
