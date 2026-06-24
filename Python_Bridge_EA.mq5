@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
-//|  v5.3.1 - M1 Momentum + M15 HTF Bias + Signal Write Retry         |
+//|  v5.3.2 - M1 Momentum + M15 HTF + Faster Training            |
 //|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
@@ -13,8 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "5.31"
-// v5.3.1 - M1 Momentum + M15 HTF Bias + Signal Write Retry
+#property version   "5.32"
+// v5.3.2 - M1 Momentum + M15 HTF + Faster Training
 #property strict
 
 #include <Trade\Trade.mqh>

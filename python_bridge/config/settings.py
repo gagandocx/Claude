@@ -52,8 +52,9 @@ class TransformerConfig:
     weight_decay: float = 1e-5
     batch_size: int = 32
     batch_size_gpu: int = 256       # Larger batch size for GPU training
-    epochs: int = 100
-    patience: int = 15              # Early stopping patience
+    epochs: int = 150
+    patience: int = 20              # Early stopping patience
+    label_smoothing: float = 0.1    # Reduces overconfident predictions
 
 
 @dataclass
@@ -71,8 +72,9 @@ class LSTMConfig:
     weight_decay: float = 1e-5
     batch_size: int = 32
     batch_size_gpu: int = 256       # Larger batch size for GPU training
-    epochs: int = 100
-    patience: int = 15
+    epochs: int = 150
+    patience: int = 20
+    label_smoothing: float = 0.1    # Reduces overconfident predictions
 
 
 @dataclass
@@ -118,7 +120,7 @@ class DataConfig:
 
     # Multi-timeframe training parameters
     training_periods: list = field(default_factory=lambda: [
-        {"period": "60d", "interval": "1m"},
+        {"period": "7d", "interval": "1m"},
         {"period": "60d", "interval": "15m"},
         {"period": "2y", "interval": "1h"},
     ])
@@ -135,7 +137,7 @@ class DataConfig:
     rsi_oversold: int = 35                 # RSI below this = oversold
 
     # ATR-based labeling threshold
-    atr_label_threshold: float = 0.3       # Label BUY/SELL if move > 0.3*ATR
+    atr_label_threshold: float = 0.5       # Label BUY/SELL only for strong moves > 0.5*ATR (reduces noise)
 
 
 # ─────────────────────────────────────────────

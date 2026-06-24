@@ -147,11 +147,11 @@ class TestATRBasedLabeling:
     def test_atr_label_threshold_from_config(self):
         """Test that ATR label threshold is configurable."""
         config = DataConfig()
-        assert config.atr_label_threshold == 0.3
+        assert config.atr_label_threshold == 0.5
 
         # Custom threshold
-        config2 = DataConfig(atr_label_threshold=0.5)
-        assert config2.atr_label_threshold == 0.5
+        config2 = DataConfig(atr_label_threshold=0.3)
+        assert config2.atr_label_threshold == 0.3
 
 
 # ─────────────────────────────────────────────
@@ -236,7 +236,7 @@ class TestMultiTimeframeTraining:
         """Test that training_periods config has correct default values."""
         config = DataConfig()
         assert len(config.training_periods) == 3
-        assert config.training_periods[0] == {"period": "60d", "interval": "1m"}
+        assert config.training_periods[0] == {"period": "7d", "interval": "1m"}
         assert config.training_periods[1] == {"period": "60d", "interval": "15m"}
         assert config.training_periods[2] == {"period": "2y", "interval": "1h"}
 

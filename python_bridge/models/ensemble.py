@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from typing import Dict, List, Optional, Tuple
 from collections import deque
-from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 
 import sys
@@ -28,7 +28,7 @@ class EnsembleManager:
     Models:
         1. MarketTransformer - Attention-based pattern recognition
         2. MarketLSTM - Sequential pattern recognition
-        3. GradientBoostingClassifier - Traditional ML baseline
+        3. HistGradientBoostingClassifier - Fast histogram-based ML baseline
 
     Meta-learner: Logistic Regression on stacked predictions
     Dynamic weight adjustment based on recent accuracy.
@@ -42,12 +42,16 @@ class EnsembleManager:
         # Initialize models
         self.transformer = MarketTransformer(transformer_config or TransformerConfig())
         self.lstm = MarketLSTM(lstm_config or LSTMConfig())
-        self.gradient_boost = GradientBoostingClassifier(
-            n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=42
+        self.gradient_boost = HistGradientBoostingClassifier(
+            max_iter=200,
+            max_depth=6,
+            learning_rate=0.05,
+            min_samples_leaf=20,
+            l2_regularization=0.1,
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.1,
+            n_iter_no_change=10,
         )
 
         # Meta-learner (stacking)

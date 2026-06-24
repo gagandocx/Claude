@@ -166,7 +166,12 @@ def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.epochs
     )
-    criterion = nn.CrossEntropyLoss()
+
+    # Class weight balancing (handles imbalanced BUY/HOLD/SELL distribution)
+    class_counts = np.bincount(y_train, minlength=3)
+    total = class_counts.sum()
+    class_weights = torch.FloatTensor([total / (3 * c) if c > 0 else 1.0 for c in class_counts]).to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=config.label_smoothing)
 
     # Select batch size based on device (GPU can handle larger batches)
     batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
@@ -283,7 +288,12 @@ def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.epochs
     )
-    criterion = nn.CrossEntropyLoss()
+
+    # Class weight balancing (handles imbalanced BUY/HOLD/SELL distribution)
+    class_counts = np.bincount(y_train, minlength=3)
+    total = class_counts.sum()
+    class_weights = torch.FloatTensor([total / (3 * c) if c > 0 else 1.0 for c in class_counts]).to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=config.label_smoothing)
 
     # Select batch size based on device (GPU can handle larger batches)
     batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
@@ -390,7 +400,7 @@ def train_all():
     logger.info(f"Training device: {device}")
     if device.type == "cuda":
         logger.info(f"  GPU: {torch.cuda.get_device_name(0)}")
-        logger.info(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1024**3:.1f} GB")
+        logger.info(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
     start_time = time.time()
 
