@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
-//|  v5.2 - Signal Write Race Condition Fix                            |
+//|  v5.3.1 - M1 Momentum + M15 HTF Bias + Signal Write Retry         |
 //|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
