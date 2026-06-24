@@ -253,6 +253,9 @@ class MT5Bridge:
         """
         Read execution confirmations from MT5.
 
+        Handles UTF-16LE BOM encoding that MT5 may write when using
+        FileOpen with FILE_UNICODE flag.
+
         Returns:
             List of confirmation dicts
         """
@@ -261,8 +264,21 @@ class MT5Bridge:
 
         confirmations = []
         try:
-            with open(self.confirmation_path, "r") as f:
-                reader = csv.DictReader(f)
+            # Detect encoding: MT5 may write UTF-16LE with BOM
+            with open(self.confirmation_path, "rb") as f:
+                raw = f.read(2)
+            if raw == b'\xff\xfe':
+                encoding = 'utf-16-le'
+            else:
+                encoding = 'utf-8'
+
+            with open(self.confirmation_path, "r", encoding=encoding) as f:
+                # Skip BOM character if present
+                content = f.read()
+                if content and content[0] == '\ufeff':
+                    content = content[1:]
+                import io
+                reader = csv.DictReader(io.StringIO(content))
                 for row in reader:
                     confirmations.append(dict(row))
         except Exception as e:

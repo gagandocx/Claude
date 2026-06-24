@@ -1014,17 +1014,17 @@ class SignalGenerator:
                                     range_high, range_low, range_size,
                                     current_price, position_in_range * 100)
 
-                        if position_in_range <= 0.15:
-                            # Price is near the BOTTOM of range (within 15%) -> BUY
+                        if position_in_range <= 0.25:
+                            # Price is near the BOTTOM of range (within 25%) -> BUY
                             momentum_direction = "BUY"
                             range_signal = "range_buy"
-                            logger.info("[SignalGen] RANGE MODE: Price near bottom (%.1f%%) "
+                            logger.info("[SignalGen] RANGE MODE: Price within 25%% (%.1f%%) "
                                         "- mean-reversion BUY signal", position_in_range * 100)
-                        elif position_in_range >= 0.85:
-                            # Price is near the TOP of range (within 85%+) -> SELL
+                        elif position_in_range >= 0.75:
+                            # Price is near the TOP of range (within 75%+) -> SELL
                             momentum_direction = "SELL"
                             range_signal = "range_sell"
-                            logger.info("[SignalGen] RANGE MODE: Price near top (%.1f%%) "
+                            logger.info("[SignalGen] RANGE MODE: Price within 75%%+ (%.1f%%) "
                                         "- mean-reversion SELL signal", position_in_range * 100)
                         else:
                             # Price is in the middle of range (15-85%) -> still FLAT/HOLD

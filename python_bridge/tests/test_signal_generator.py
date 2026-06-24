@@ -396,12 +396,12 @@ class TestMomentumDirection:
         assert direction == "BUY"
 
     def test_momentum_threshold_boundary(self):
-        """Test that movement below $1.50 threshold is still FLAT."""
+        """Test that movement below $1.00 threshold is still FLAT."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
         # With 6-bar lookback on 8 elements: close[-7]=close[1], close[-1]=close[7]
-        # close[1]=2000.0, close[7]=2001.4, diff=+1.4 < 1.5 => FLAT
+        # close[1]=2000.0, close[7]=2000.9, diff=+0.9 < 1.0 => FLAT
         prices = pd.DataFrame({
-            "Close": [1999.5, 2000.0, 2000.1, 2000.2, 2000.5, 2000.8, 2001.0, 2001.4]
+            "Close": [1999.5, 2000.0, 2000.1, 2000.1, 2000.2, 2000.3, 2000.5, 2000.9]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"

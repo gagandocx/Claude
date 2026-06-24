@@ -130,7 +130,7 @@ class DataConfig:
 
     # Momentum parameters
     momentum_lookback: int = 6              # 6-bar momentum lookback (faster reaction)
-    momentum_threshold: float = 1.50        # Min price move for momentum ($1.50 for gold - aggressive)
+    momentum_threshold: float = 1.00        # Min price move for momentum ($1.00 for gold - more signals)
 
     # RSI exhaustion filter thresholds
     rsi_overbought: int = 65               # RSI above this = overbought
