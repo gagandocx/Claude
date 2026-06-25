@@ -283,24 +283,83 @@ class TimesNetConfig:
 
 
 @dataclass
+class ChronosConfig:
+    """Chronos — Amazon pre-trained T5 foundation model (2024)."""
+    model_name: str     = "amazon/chronos-t5-tiny"  # 8 M params, fast on CPU
+    input_features: int = 46
+    seq_length: int     = 64
+    d_model: int        = 64          # classification head hidden dim
+    chronos_d_model: int = 512        # T5-tiny encoder hidden size (auto-detected at runtime)
+    num_classes: int    = 3
+    dropout: float      = 0.1
+    learning_rate: float = 1e-4       # only the head trains; encoder is frozen
+    weight_decay: float  = 1e-5
+    batch_size: int      = 32
+    batch_size_gpu: int  = 256
+    epochs: int          = 60         # fewer epochs — head trains quickly
+    patience: int        = 10
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class TimeMixerConfig:
+    """TimeMixer — decomposable multiscale mixing (Wang et al., ICLR 2024)."""
+    input_features: int  = 46
+    seq_length: int      = 64
+    hidden_size: int     = 256
+    pool_sizes: list     = field(default_factory=lambda: [1, 2, 4, 8])
+    decomp_kernel: int   = 25         # moving-average decomposition kernel
+    num_classes: int     = 3
+    dropout: float       = 0.1
+    learning_rate: float = 1e-4
+    weight_decay: float  = 1e-5
+    batch_size: int      = 32
+    batch_size_gpu: int  = 256
+    epochs: int          = 100
+    patience: int        = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class SOFTSConfig:
+    """SOFTS — Star aggregate O(N) series-core fusion (Han et al., NeurIPS 2024)."""
+    input_features: int  = 46
+    seq_length: int      = 64
+    d_model: int         = 64
+    n_layers: int        = 3          # number of STAR blocks
+    num_classes: int     = 3
+    dropout: float       = 0.1
+    learning_rate: float = 1e-4
+    weight_decay: float  = 1e-5
+    batch_size: int      = 32
+    batch_size_gpu: int  = 256
+    epochs: int          = 100
+    patience: int        = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
 class EnsembleConfig:
-    """Ensemble model configuration — 14-model stack."""
+    """Ensemble model configuration — 17-model stack."""
     # Weights must sum to 1.0
-    transformer_weight: float  = 0.07   # Global self-attention
-    lstm_weight: float         = 0.06   # BiLSTM + attention
-    tcn_weight: float          = 0.06   # Dilated temporal conv
-    patch_tst_weight: float    = 0.10   # Patch-based SOTA 2023
-    tft_weight: float          = 0.10   # Financial VSN+GRN
-    nhits_weight: float        = 0.06   # Hierarchical macro→micro
-    itransformer_weight: float = 0.10   # Feature-space attention 2024
-    mamba_weight: float        = 0.08   # Selective state space 2023
-    dlinear_weight: float      = 0.04   # Trend/residual decomposition
-    xlstm_weight: float        = 0.11   # Matrix memory LSTM 2024 (NEW)
-    timesnet_weight: float     = 0.09   # 2D temporal variation 2023 (NEW)
-    gradient_boost_weight: float = 0.05 # sklearn HistGradBoost
-    xgboost_weight: float      = 0.04   # LightGBM / XGBoost
-    catboost_weight: float     = 0.04   # Ordered boosting
-    meta_learner_features: int = 42     # 14 models × 3 classes
+    transformer_weight: float  = 0.06   # Global self-attention
+    lstm_weight: float         = 0.05   # BiLSTM + attention
+    tcn_weight: float          = 0.05   # Dilated temporal conv
+    patch_tst_weight: float    = 0.08   # Patch-based SOTA 2023
+    tft_weight: float          = 0.08   # Financial VSN+GRN
+    nhits_weight: float        = 0.05   # Hierarchical macro→micro
+    itransformer_weight: float = 0.08   # Feature-space attention 2024
+    mamba_weight: float        = 0.07   # Selective state space 2023
+    dlinear_weight: float      = 0.03   # Trend/residual decomposition
+    xlstm_weight: float        = 0.08   # Matrix memory LSTM 2024
+    timesnet_weight: float     = 0.06   # 2D temporal variation 2023
+    chronos_weight: float      = 0.09   # Pre-trained foundation model (NEW)
+    timemixer_weight: float    = 0.07   # Multi-scale decomp mixing (NEW)
+    softs_weight: float        = 0.05   # Star aggregate O(N) (NEW)
+    gradient_boost_weight: float = 0.04 # sklearn HistGradBoost
+    xgboost_weight: float      = 0.03   # LightGBM / XGBoost
+    catboost_weight: float     = 0.03   # Ordered boosting
+    meta_learner_features: int = 51     # 17 models × 3 classes
     min_agreement: float       = 0.10
     dynamic_weights: bool      = True
     weight_lookback: int       = 50

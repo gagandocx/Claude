@@ -46,6 +46,7 @@ from config.settings import (
     PatchTSTConfig, TFTConfig, NHiTSConfig,
     ITransformerConfig, MambaConfig, DLinearConfig,
     xLSTMConfig, TimesNetConfig,
+    ChronosConfig, TimeMixerConfig, SOFTSConfig,
     XGBoostConfig, CatBoostConfig,
     EnsembleConfig, DataConfig, MODEL_DIR,
 )
@@ -61,6 +62,9 @@ from models.mamba_model       import MarketMamba
 from models.dlinear_model     import MarketDLinear
 from models.xlstm_model       import MarketXLSTM
 from models.timesnet_model    import MarketTimesNet
+from models.chronos_model     import MarketChronos
+from models.timemixer_model   import MarketTimeMixer
+from models.softs_model       import MarketSOFTS
 from models.ensemble          import EnsembleManager
 
 
@@ -390,6 +394,43 @@ def train_timesnet(X_tr, y_tr, X_val, y_val,
                                "TimesNet")
 
 
+def train_chronos(X_tr, y_tr, X_val, y_val,
+                  config: Optional[ChronosConfig] = None) -> MarketChronos:
+    """
+    Chronos — Amazon pre-trained T5 foundation model.
+    The T5 encoder is FROZEN; only the classification head trains.
+    Install: pip install git+https://github.com/amazon-science/chronos-forecasting.git
+    Falls back to lightweight learned encoder if not installed.
+    """
+    cfg = config or ChronosConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketChronos, cfg, X_tr, y_tr, X_val, y_val, "Chronos")
+
+
+def train_timemixer(X_tr, y_tr, X_val, y_val,
+                    config: Optional[TimeMixerConfig] = None) -> MarketTimeMixer:
+    """
+    TimeMixer — decomposes input at 4 scales (pool=1,2,4,8) and mixes
+    trend + seasonal components bottom-up between scales.
+    """
+    cfg = config or TimeMixerConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketTimeMixer, cfg, X_tr, y_tr, X_val, y_val,
+                               "TimeMixer")
+
+
+def train_softs(X_tr, y_tr, X_val, y_val,
+                config: Optional[SOFTSConfig] = None) -> MarketSOFTS:
+    """
+    SOFTS — Star aggregate: O(N) cross-series interaction via one central
+    'market state' node. More efficient than iTransformer, captures
+    complementary global context.
+    """
+    cfg = config or SOFTSConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketSOFTS, cfg, X_tr, y_tr, X_val, y_val, "SOFTS")
+
+
 # ─────────────────────────────────────────────
 #  FULL TRAINING PIPELINE
 # ─────────────────────────────────────────────
@@ -400,7 +441,7 @@ def train_all():
     predictions, then evaluates and saves all checkpoints.
     """
     logger.info("=" * 70)
-    logger.info("  Python ML Bridge — 14-Model Training Pipeline")
+    logger.info("  Python ML Bridge — 17-Model Training Pipeline")
     logger.info("=" * 70)
     logger.info(f"Device: {device}")
     if device.type == "cuda":
@@ -466,13 +507,25 @@ def train_all():
     dlinear = train_dlinear(X_train, y_train, X_val, y_val,
                             DLinearConfig(input_features=n_feat))
 
-    logger.info("\n--- [10/11 neural] xLSTM (NEW) ---")
+    logger.info("\n--- [10/14 neural] xLSTM ---")
     xlstm = train_xlstm(X_train, y_train, X_val, y_val,
                         xLSTMConfig(input_features=n_feat))
 
-    logger.info("\n--- [11/11 neural] TimesNet (NEW) ---")
+    logger.info("\n--- [11/14 neural] TimesNet ---")
     timesnet = train_timesnet(X_train, y_train, X_val, y_val,
                               TimesNetConfig(input_features=n_feat))
+
+    logger.info("\n--- [12/14 neural] Chronos (NEW — pre-trained) ---")
+    chronos = train_chronos(X_train, y_train, X_val, y_val,
+                            ChronosConfig(input_features=n_feat))
+
+    logger.info("\n--- [13/14 neural] TimeMixer (NEW) ---")
+    timemixer = train_timemixer(X_train, y_train, X_val, y_val,
+                                TimeMixerConfig(input_features=n_feat))
+
+    logger.info("\n--- [14/14 neural] SOFTS (NEW) ---")
+    softs = train_softs(X_train, y_train, X_val, y_val,
+                        SOFTSConfig(input_features=n_feat))
 
     # ── 3. Wire into EnsembleManager ──────────────────────────────────────
     ensemble = EnsembleManager(
@@ -487,18 +540,19 @@ def train_all():
         dlinear_config      = DLinearConfig(input_features=n_feat),
         xlstm_config        = xLSTMConfig(input_features=n_feat),
         timesnet_config     = TimesNetConfig(input_features=n_feat),
+        chronos_config      = ChronosConfig(input_features=n_feat),
+        timemixer_config    = TimeMixerConfig(input_features=n_feat),
+        softs_config        = SOFTSConfig(input_features=n_feat),
     )
-    ensemble.transformer  = transformer
-    ensemble.lstm         = lstm
-    ensemble.tcn          = tcn
-    ensemble.patch_tst    = patch_tst
-    ensemble.tft          = tft
-    ensemble.nhits        = nhits
-    ensemble.itransformer = itransformer
-    ensemble.mamba        = mamba
-    ensemble.dlinear      = dlinear
-    ensemble.xlstm        = xlstm
-    ensemble.timesnet     = timesnet
+    neural_models_map = {
+        "transformer": transformer, "lstm": lstm, "tcn": tcn,
+        "patch_tst": patch_tst, "tft": tft, "nhits": nhits,
+        "itransformer": itransformer, "mamba": mamba, "dlinear": dlinear,
+        "xlstm": xlstm, "timesnet": timesnet,
+        "chronos": chronos, "timemixer": timemixer, "softs": softs,
+    }
+    for attr, model in neural_models_map.items():
+        setattr(ensemble, attr, model)
 
     # ── 4. Tree models ─────────────────────────────────────────────────────
     logger.info("\n--- Gradient Boosting (sklearn) ---")
@@ -512,10 +566,13 @@ def train_all():
     ensemble.fit_catboost(X_train, y_train)
     logger.info(f"  backend={ensemble.catboost_model.backend}")
 
-    # ── 5. 42-dim meta-learner ─────────────────────────────────────────────
-    logger.info("\n--- Fitting Meta-Learner (42-dim stack, 14 × 3) ---")
-    neural_models = [transformer, lstm, tcn, patch_tst, tft, nhits,
-                     itransformer, mamba, dlinear, xlstm, timesnet]
+    # ── 5. 51-dim meta-learner ─────────────────────────────────────────────
+    logger.info("\n--- Fitting Meta-Learner (51-dim stack, 17 × 3) ---")
+    neural_models = [
+        transformer, lstm, tcn, patch_tst, tft, nhits,
+        itransformer, mamba, dlinear, xlstm, timesnet,
+        chronos, timemixer, softs,
+    ]
     for m in neural_models:
         m.eval()
 
@@ -545,8 +602,8 @@ def train_all():
     ]
     all_test   = nn_test + tree_test
     model_lbls = ["Transformer", "LSTM", "TCN", "PatchTST", "TFT", "N-HiTS",
-                  "iTransformer", "Mamba", "DLinear",
-                  "xLSTM*", "TimesNet*",
+                  "iTransformer", "Mamba", "DLinear", "xLSTM", "TimesNet",
+                  "Chronos*", "TimeMixer*", "SOFTS*",
                   "GradBoost", "LightGBM", "CatBoost"]
 
     def acc(p): return np.mean(np.argmax(p, axis=1) == y_test)
@@ -562,7 +619,7 @@ def train_all():
         logger.info(f"  {lbl.replace('*',''):<18} {a:.4f}{flag}")
     logger.info(f"  {'─' * 38}")
     logger.info(f"  Best individual:    {best_ind:.4f}")
-    logger.info(f"  14-model ensemble:  {ens_acc:.4f}  ← target")
+    logger.info(f"  17-model ensemble:  {ens_acc:.4f}  ← target")
     logger.info(f"  Ensemble lift:      {ens_acc - best_ind:+.4f}")
 
     # ── 7. Save checkpoints ─────────────────────────────────────────────────
