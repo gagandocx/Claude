@@ -68,12 +68,12 @@ class TestAutoOptimizerInit:
     def test_default_params(self, optimizer):
         """Test that default parameters are set correctly."""
         params = optimizer.get_current_params()
-        assert params["sl_distance"] == 1.5
+        assert params["sl_distance"] == 0.6
         assert params["min_confidence"] == 0.25
         assert params["momentum_lookback"] == 8
         assert params["rsi_overbought"] == 62
         assert params["rsi_oversold"] == 38
-        assert params["cooldown_seconds"] == 60
+        assert params["cooldown_seconds"] == 2
         assert params["max_positions"] == 1
 
     def test_default_session_multipliers(self, optimizer):
@@ -224,6 +224,8 @@ class TestOptimization:
         """Test cooldown reduces when fast entries are profitable."""
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
+        # Set cooldown to 60 so there's room to reduce
+        opt._params["cooldown_seconds"] = 60
 
         # Fast entries (cooldown <= 60) are profitable
         for _ in range(8):
@@ -232,7 +234,7 @@ class TestOptimization:
             opt._trades.append(_make_trade(-0.5, cooldown_used=150.0))
 
         opt.optimize()
-        # Default is 60, fast entries profitable -> should reduce by 1
+        # Cooldown was 60, fast entries profitable -> should reduce by 1
         assert opt.get_current_params()["cooldown_seconds"] == 59
 
     def test_max_positions_reduces_on_high_drawdown(self, temp_dir):

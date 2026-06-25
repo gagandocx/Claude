@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
-//|  v7.0 - Backtested Optimal: $1.5 SL, $0.30 Trail, 300 T/Day     |
+//|  v7.1 - Ultimate: $0.6 SL, $0.05 Trail, 61.6% WR, PF 4.02      |
 //|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
@@ -13,8 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "7.00"
-// v7.0 - Backtested Optimal: $1.5 SL, $0.30 Trail, 300 T/Day
+#property version   "7.10"
+// v7.1 - Ultimate: $0.6 SL, $0.05 Trail, 61.6% WR, PF 4.02
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -39,13 +39,13 @@ input bool     InpShowDashboard    = true;      // Show dashboard panel
 input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
 
 // --- Dynamic Trailing Stop Parameters ---
-input double   InpBreakevenProfit  = 0.30;     // Profit $ to move SL to breakeven
-input double   InpBEProfitBuffer   = 0.05;     // Extra $ above entry for BE SL (covers spread + small profit)
-input double   InpTrailStart       = 0.30;     // Profit $ to start trailing ($0.50 trail)
-input double   InpTrailTight       = 0.60;     // Profit $ for tight trail ($0.30 trail)
-input double   InpTrailVeryTight   = 1.00;     // Profit $ for very tight trail ($0.20 trail)
+input double   InpBreakevenProfit  = 0.10;     // Profit $ to move SL to breakeven
+input double   InpBEProfitBuffer   = 0.02;     // Extra $ above entry for BE SL (covers spread + small profit)
+input double   InpTrailStart       = 0.10;     // Profit $ to start trailing ($0.05 trail)
+input double   InpTrailTight       = 0.20;     // Profit $ for tight trail ($0.05 trail)
+input double   InpTrailVeryTight   = 0.40;     // Profit $ for very tight trail ($0.02 trail)
 input int      InpMomentumLookback = 30;       // Momentum lookback (seconds)
-input int      InpMaxHoldNoProfit  = 1800;     // Max hold without profit (seconds = 30 min)
+input int      InpMaxHoldNoProfit  = 1200;     // Max hold without profit (seconds = 20 min)
 input double   InpMinProfitTarget  = 1.00;     // Min profit target $ to keep position open
 input double   InpMomentumReverse  = 0.50;     // $ reversal threshold to close on momentum fade
 

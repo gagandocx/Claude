@@ -76,7 +76,7 @@ class AutoOptimizer:
         """Return default parameter values (optimized baselines)."""
         cfg = self.config
         return {
-            "sl_distance": 1.5,  # $1.50 SL for tight M1 gold scalping
+            "sl_distance": 0.6,  # $0.60 SL for tight M1 gold scalping
             "session_multipliers": {
                 "asian": 1.0,
                 "london": 1.2,
@@ -93,7 +93,7 @@ class AutoOptimizer:
                 "medium": 1.0,
                 "wide": 2.0,
             },
-            "cooldown_seconds": 60,
+            "cooldown_seconds": 2,
             "max_positions": 1,
         }
 
