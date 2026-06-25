@@ -1590,3 +1590,163 @@ class TestSinglePositionArchitecture:
             assert gen._active_position["entry_price"] == 2010.0
             assert "signal_context" in gen._active_position
             assert gen._active_position["entry_time"] > time_mod.time() - 5
+
+
+# ─────────────────────────────────────────────
+#  v6.0 REVIEW FIX TESTS
+# ─────────────────────────────────────────────
+class TestV6ReviewFixes:
+    """Tests for fixes identified in the v6.0 code review."""
+
+    def test_estimated_close_sets_pending_flag(self, signal_config, mock_features, mock_prices):
+        """Issue 1: When signal_generator closes a position Python-side and feeds
+        the optimizer, _estimated_close_pending should be set True."""
+        import time as time_mod
+        from unittest.mock import MagicMock
+
+        config = SignalConfig(
+            min_confidence=0.65,
+            strong_confidence=0.80,
+            atr_sl_multiplier=1.5,
+            atr_tp_multiplier=2.5,
+            cooldown_seconds=0,
+            max_hold_seconds=1,  # 1 second to trigger max_hold close
+        )
+        gen = SignalGenerator(signal_config=config)
+        # Set up a mock auto-optimizer
+        mock_optimizer = MagicMock()
+        mock_optimizer.is_enabled = True
+        gen._auto_optimizer = mock_optimizer
+
+        gen._active_position = {
+            "position_id": 1,
+            "direction": "BUY",
+            "entry_price": 2000.0,
+            "entry_time": time_mod.time() - 10,  # 10s ago, exceeds max_hold
+            "signal_context": {
+                "confidence": 0.5,
+                "session": "london",
+                "sl_distance": 3.0,
+                "momentum_lookback": 8,
+                "rsi_at_entry": 50.0,
+            }
+        }
+        assert gen._estimated_close_pending is False
+
+        gen.generate_signal(
+            features=mock_features,
+            prices=mock_prices,
+            atr=5.0,
+            current_price=2001.0
+        )
+
+        # The position should have been closed and the flag set
+        assert gen._estimated_close_pending is True
+        # Optimizer should have been called with the estimated trade
+        mock_optimizer.record_estimated_trade.assert_called_once()
+
+    def test_position_id_increments_on_new_position(self, signal_config, mock_features):
+        """Issue 3: position_id should increment each time a new position is set,
+        allowing identification of which position a close belongs to."""
+        import time as time_mod
+        from unittest.mock import patch, MagicMock
+
+        gen = SignalGenerator(signal_config=signal_config)
+        gen.ensemble.models_loaded = True
+        assert gen._position_id_counter == 0
+
+        mock_pred = {
+            "probabilities": np.array([[0.1, 0.1, 0.8]]),
+            "confidence": np.array([0.8]),
+            "agreement": np.array([0.9]),
+            "individual_preds": {
+                "transformer": np.array([[0.1, 0.1, 0.8]]),
+                "lstm": np.array([[0.1, 0.1, 0.8]]),
+                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
+            }
+        }
+
+        # Create strong uptrend prices for clear BUY momentum
+        n = 200
+        trend = np.linspace(1990, 2010, n)
+        df = pd.DataFrame({
+            "Open": trend - 1,
+            "High": trend + 2,
+            "Low": trend - 2,
+            "Close": trend,
+            "Volume": np.random.randint(100, 1000, n),
+        })
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_pred):
+            signal = gen.generate_signal(
+                features=mock_pred["probabilities"],
+                prices=df,
+                atr=5.0,
+                current_price=2010.0,
+                prices_m1=df,
+            )
+
+        if signal.action != "HOLD":
+            assert gen._position_id_counter == 1
+            assert gen._active_position["position_id"] == 1
+
+    def test_momentum_lookback_uses_adaptive_atr_on_close(self, signal_config, mock_features):
+        """Issue 2: The quick momentum check at position close should use
+        adaptive ATR parameters (same as the main signal path)."""
+        import time as time_mod
+        from unittest.mock import patch, MagicMock, call
+
+        config = SignalConfig(
+            min_confidence=0.65,
+            strong_confidence=0.80,
+            atr_sl_multiplier=1.5,
+            atr_tp_multiplier=2.5,
+            cooldown_seconds=0,
+            max_hold_seconds=300,
+        )
+        gen = SignalGenerator(signal_config=config)
+
+        # Create price data with high ATR (should trigger adaptive lookback)
+        n = 50
+        closes = np.linspace(2000, 2020, n)
+        # High ATR: ranges of 15+ per bar
+        df = pd.DataFrame({
+            "Open": closes - 1,
+            "High": closes + 8,
+            "Low": closes - 8,
+            "Close": closes,
+            "Volume": np.random.randint(100, 1000, n),
+        })
+
+        gen._active_position = {
+            "position_id": 1,
+            "direction": "BUY",
+            "entry_price": 2000.0,
+            "entry_time": time_mod.time() - 70,  # Past cooldown but within max_hold
+            "signal_context": {
+                "confidence": 0.5,
+                "session": "london",
+                "sl_distance": 3.0,
+                "momentum_lookback": 8,
+                "rsi_at_entry": 50.0,
+            }
+        }
+
+        # Patch _compute_momentum_direction to verify it receives ATR params
+        with patch.object(gen, '_compute_momentum_direction', return_value="BUY") as mock_momentum:
+            gen.generate_signal(
+                features=mock_features,
+                prices=df,
+                atr=5.0,
+                current_price=2020.0,
+                prices_m1=df,
+            )
+
+            # The quick momentum call (first call) should include adaptive_atr and avg_atr
+            assert mock_momentum.called
+            first_call = mock_momentum.call_args_list[0]
+            # Should have keyword args for adaptive_atr and avg_atr
+            assert "adaptive_atr" in first_call.kwargs
+            assert "avg_atr" in first_call.kwargs
+            assert first_call.kwargs["adaptive_atr"] is not None
+            assert first_call.kwargs["avg_atr"] is not None

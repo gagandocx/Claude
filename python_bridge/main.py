@@ -610,8 +610,25 @@ class PythonMLBridge:
                         trade_id = str(conf.get("ticket", ""))
                         pnl = float(conf.get("pnl", 0.0))
 
-                        # v6.0: Clear active position on close
-                        self.signal_generator._active_position = None
+                        # v6.0: Clear active position on close, but only if the
+                        # current _active_position corresponds to the position being
+                        # closed. If the signal generator already closed the old
+                        # position Python-side and immediately re-entered (setting a
+                        # new _active_position with a higher position_id), we must NOT
+                        # wipe the new position.
+                        if self.signal_generator._active_position is not None:
+                            if self.signal_generator._estimated_close_pending:
+                                # Python-side already closed the old position and may
+                                # have re-entered. The current _active_position belongs
+                                # to the NEW trade - do not clear it.
+                                self.logger.info(
+                                    "  Skipping position clear: Python-side already "
+                                    "closed the old position (re-entry may have occurred)"
+                                )
+                            else:
+                                # MT5-initiated close (SL/TP hit) - clear the position
+                                self.signal_generator._active_position = None
+                        # else: already None, nothing to clear
 
                         # Fix #1: Call update_from_execution() to remove position
                         # from _open_positions and feed the RL agent its terminal
@@ -646,7 +663,14 @@ class PythonMLBridge:
                             self._trades_since_render += 1
 
                         # Feed trade to auto-optimizer for self-tuning
-                        if self.auto_optimizer:
+                        # v6.0: Skip if signal_generator already recorded an estimated
+                        # trade for this position (prevents double-counting). The Python-
+                        # side position management block feeds estimated P&L when it
+                        # decides to close (momentum reversal / max hold). Only feed
+                        # here if the close was initiated by MT5 (e.g., SL/TP hit)
+                        # without a prior estimated record.
+                        already_estimated = self.signal_generator._estimated_close_pending
+                        if self.auto_optimizer and not already_estimated:
                             trade_context = {
                                 "session": conf.get("session", "unknown"),
                                 "confidence": float(conf.get("confidence", 0.0)),
@@ -662,6 +686,13 @@ class PythonMLBridge:
                                 "exit_time": conf.get("close_time", datetime.now().isoformat()),
                             }
                             self.auto_optimizer.record_trade(trade_context)
+                        elif already_estimated:
+                            self.logger.info(
+                                "  Skipping optimizer feed: estimated trade already "
+                                "recorded for this position (Python-side close)"
+                            )
+                            # Clear the flag - the estimated close has been acknowledged
+                            self.signal_generator._estimated_close_pending = False
                 self.bridge.clear_confirmations()
 
             # 13. Periodic dashboard rendering

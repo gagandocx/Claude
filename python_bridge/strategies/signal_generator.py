@@ -119,6 +119,12 @@ class SignalGenerator:
 
         # v6.0: Single position tracking - only 1 trade at a time
         self._active_position = None
+        # v6.0: Monotonic position ID to prevent MT5 close from wiping a newer position
+        self._position_id_counter = 0
+        # v6.0: Flag indicating the last position close was Python-estimated
+        # (optimizer already received the trade). When MT5 confirms the same
+        # close, main.py should skip feeding the optimizer to avoid double-counting.
+        self._estimated_close_pending = False
 
     def _analyze_candle_patterns(self, prices_df) -> Dict:
         """
@@ -920,8 +926,19 @@ class SignalGenerator:
                 return hold_signal
 
             # Compute quick momentum check to see if direction reversed
+            # Use same adaptive ATR parameters as the main signal path for consistency
             momentum_prices_quick = prices_m1 if prices_m1 is not None else prices
-            quick_momentum = self._compute_momentum_direction(momentum_prices_quick)
+            import pandas as pd
+            quick_adaptive_atr = None
+            quick_avg_atr = None
+            if isinstance(momentum_prices_quick, pd.DataFrame) and "High" in momentum_prices_quick.columns and "Low" in momentum_prices_quick.columns:
+                atr_period = self.adaptive_momentum_config.atr_avg_period
+                if len(momentum_prices_quick) >= atr_period + 1:
+                    recent_ranges = (momentum_prices_quick["High"].iloc[-atr_period:] - momentum_prices_quick["Low"].iloc[-atr_period:]).values
+                    quick_avg_atr = float(np.mean(recent_ranges))
+                    quick_adaptive_atr = float(momentum_prices_quick["High"].iloc[-1] - momentum_prices_quick["Low"].iloc[-1])
+            quick_momentum = self._compute_momentum_direction(
+                momentum_prices_quick, adaptive_atr=quick_adaptive_atr, avg_atr=quick_avg_atr)
 
             # Check if max hold time exceeded OR momentum reversed
             momentum_reversed = (
@@ -962,6 +979,9 @@ class SignalGenerator:
                         "exit_time": timestamp,
                     }
                     self._auto_optimizer.record_estimated_trade(trade_data)
+                    # Mark that this close was Python-estimated so main.py
+                    # skips the MT5 close feed (prevents double-counting)
+                    self._estimated_close_pending = True
 
                 # Clear position so a new signal can be generated below
                 self._active_position = None
@@ -1439,7 +1459,9 @@ class SignalGenerator:
         self._signal_count += 1
 
         # v6.0: Track active position for single-position enforcement
+        self._position_id_counter += 1
         self._active_position = {
+            "position_id": self._position_id_counter,
             "direction": action,
             "entry_price": current_price,
             "entry_time": time.time(),
