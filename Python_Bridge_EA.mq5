@@ -39,9 +39,9 @@ input bool     InpShowDashboard    = true;      // Show dashboard panel
 input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
 
 // --- Dynamic Trailing Stop Parameters ---
-input double   InpBreakevenProfit  = 0.10;     // Profit $ to move SL to breakeven
+input double   InpBreakevenProfit  = 0.70;     // Profit $ to move SL to breakeven
 input double   InpBEProfitBuffer   = 0.02;     // Extra $ above entry for BE SL (covers spread + small profit)
-input double   InpTrailStart       = 0.10;     // Profit $ to start trailing ($0.05 trail)
+input double   InpTrailStart       = 0.70;     // Profit $ to start trailing
 input double   InpTrailTight       = 0.20;     // Profit $ for tight trail ($0.05 trail)
 input double   InpTrailVeryTight   = 0.40;     // Profit $ for very tight trail ($0.02 trail)
 input int      InpMomentumLookback = 30;       // Momentum lookback (seconds)
