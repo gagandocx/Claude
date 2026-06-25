@@ -614,6 +614,28 @@ void ManageOpenPositions()
     int positionsManaged = 0;
     string trailInfo = "";
 
+    // --- 0. DETECT BROKER-CLOSED POSITIONS (SL/TP hit) ---
+    // Loop through tracked tickets and check if they still exist as open positions.
+    // If a tracked ticket is no longer open, the broker closed it (SL/TP hit).
+    for(int t = g_trackedCount - 1; t >= 0; t--)
+    {
+        ulong trackedTicket = g_trackedTickets[t];
+        if(!PositionSelectByTicket(trackedTicket))
+        {
+            // Position no longer exists - broker closed it (SL/TP hit)
+            double entryPriceTracked = g_trackedEntryPrices[t];
+            Print("[PythonBridge] SL/TP HIT DETECTED: Ticket ", trackedTicket,
+                  " no longer open. Entry was ", DoubleToString(entryPriceTracked, digits));
+            // Write CLOSED confirmation so Python clears _active_position
+            // We don't know the exact close price or direction from tracking alone,
+            // so use the last known bid as a proxy
+            double lastBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            string closedAction = (lastBid >= entryPriceTracked) ? "BUY" : "SELL";
+            WriteConfirmation(closedAction, 0, lastBid, 0, 0, "CLOSED");
+            UntrackPosition(trackedTicket);
+        }
+    }
+
     // Update momentum price snapshot every InpMomentumLookback seconds
     if(g_momentumTime == 0 || (currentTime - g_momentumTime) >= InpMomentumLookback)
     {
@@ -661,6 +683,7 @@ void ManageOpenPositions()
                   " held ", holdSeconds, "s with profit $",
                   DoubleToString(profit, 2), " < $", DoubleToString(InpMinProfitTarget, 2));
             g_trade.PositionClose(ticket);
+            WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED");
             UntrackPosition(ticket);
             g_trailStatus = "Time exit: " + IntegerToString(holdSeconds) + "s";
             continue;
@@ -684,6 +707,7 @@ void ManageOpenPositions()
                       " momentum reversed $", DoubleToString(MathAbs(momentumDiff), 2),
                       " against position. Profit: $", DoubleToString(profit, 2));
                 g_trade.PositionClose(ticket);
+                WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED");
                 UntrackPosition(ticket);
                 g_trailStatus = "Momentum exit: $" + DoubleToString(profit, 2);
                 continue;

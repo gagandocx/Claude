@@ -580,6 +580,64 @@ class PythonMLBridge:
                 for conf in confirmations:
                     self.logger.info(f"MT5 Confirmation: {conf}")
 
+                    # v7.1.1: Handle EA-initiated position close (SL/TP hit, trailing stop,
+                    # time exit, or momentum exit). The EA writes status="CLOSED" to sync.
+                    if conf.get("status") == "CLOSED":
+                        self.logger.info(
+                            "Position closed by EA (status=CLOSED), clearing active position"
+                        )
+                        # Compute PnL from active position if available
+                        close_price = float(conf.get("open_price", 0.0))
+                        if self.signal_generator._active_position is not None:
+                            entry_price_pos = self.signal_generator._active_position.get(
+                                "entry_price", 0.0
+                            )
+                            active_dir = self.signal_generator._active_position.get(
+                                "direction", "BUY"
+                            )
+                            if active_dir == "BUY":
+                                pnl_closed = close_price - entry_price_pos
+                            else:
+                                pnl_closed = entry_price_pos - close_price
+                            self.logger.info(
+                                f"  Close PnL estimate: ${pnl_closed:.2f} "
+                                f"(entry={entry_price_pos:.2f}, close={close_price:.2f})"
+                            )
+                            # Feed to auto optimizer if not already estimated Python-side
+                            if self.auto_optimizer and not self.signal_generator._estimated_close_pending:
+                                trade_context = {
+                                    "session": self.signal_generator._active_position.get(
+                                        "signal_context", {}
+                                    ).get("session", "unknown"),
+                                    "confidence": self.signal_generator._active_position.get(
+                                        "signal_context", {}
+                                    ).get("confidence", 0.5),
+                                    "momentum_lookback": self.signal_generator._active_position.get(
+                                        "signal_context", {}
+                                    ).get("momentum_lookback", 8),
+                                    "sl_distance": self.signal_generator._active_position.get(
+                                        "signal_context", {}
+                                    ).get("sl_distance", 5.0),
+                                    "result_pnl": pnl_closed,
+                                    "direction": active_dir,
+                                    "rsi_at_entry": self.signal_generator._active_position.get(
+                                        "signal_context", {}
+                                    ).get("rsi_at_entry", 50.0),
+                                    "trail_tier": "ea_closed",
+                                    "cooldown_used": self.signal_generator.signal_config.cooldown_seconds,
+                                    "max_positions_at_entry": self.signal_generator.signal_config.max_positions,
+                                    "entry_time": datetime.fromtimestamp(
+                                        self.signal_generator._active_position.get("entry_time", time.time())
+                                    ).isoformat(),
+                                    "exit_time": datetime.now().isoformat(),
+                                }
+                                self.auto_optimizer.record_trade(trade_context)
+                        # Clear active position so Python starts looking for next trade
+                        self.signal_generator.clear_active_position()
+                        # Reset estimated close flag
+                        self.signal_generator._estimated_close_pending = False
+                        continue
+
                     # Fix #1: Register new positions when MT5 confirms an entry fill
                     if conf.get("type") == "open" or conf.get("type") == "fill":
                         trade_id = str(conf.get("ticket", ""))

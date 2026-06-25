@@ -1582,6 +1582,16 @@ class SignalGenerator:
             "open_time": datetime.now().isoformat(),
         }
 
+    def clear_active_position(self):
+        """Clear the active position tracking.
+
+        Called when MT5 confirms a position close (SL/TP hit, trailing stop,
+        time exit, or momentum exit). This allows the signal generator to
+        start looking for the next trade immediately.
+        """
+        logger.info("[SignalGen] Clearing active position (EA confirmed close)")
+        self._active_position = None
+
     @property
     def signal_count(self) -> int:
         """Total signals generated."""
