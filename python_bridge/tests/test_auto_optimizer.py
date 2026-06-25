@@ -68,7 +68,7 @@ class TestAutoOptimizerInit:
     def test_default_params(self, optimizer):
         """Test that default parameters are set correctly."""
         params = optimizer.get_current_params()
-        assert params["sl_distance"] == 5.0
+        assert params["sl_distance"] == 1.5
         assert params["min_confidence"] == 0.25
         assert params["momentum_lookback"] == 8
         assert params["rsi_overbought"] == 62

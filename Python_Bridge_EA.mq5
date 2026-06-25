@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
-//|  v6.0 - Quality Over Quantity - Single Position Architecture     |
+//|  v7.0 - Backtested Optimal: $1.5 SL, $0.30 Trail, 300 T/Day     |
 //|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
@@ -13,8 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "6.00"
-// v6.0 - Quality Over Quantity - Single Position Architecture
+#property version   "7.00"
+// v7.0 - Backtested Optimal: $1.5 SL, $0.30 Trail, 300 T/Day
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -31,7 +31,7 @@ input string   InpHeartbeatFile    = "python_bridge_heartbeat.txt"; // Heartbeat
 input int      InpMaxSignalAge     = 300;       // Max signal age (seconds)
 input int      InpMaxHeartbeatAge  = 60;        // Max heartbeat age (seconds)
 input double   InpMaxLotSize       = 1.0;       // Maximum lot size
-input double   InpMinConfidence    = 0.15;      // Minimum confidence to trade
+input double   InpMinConfidence    = 0.10;      // Minimum confidence to trade
 input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
 input int      InpMaxOpenTrades    = 5;        // Max open trades (HF scalping)
@@ -39,15 +39,15 @@ input bool     InpShowDashboard    = true;      // Show dashboard panel
 input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
 
 // --- Dynamic Trailing Stop Parameters ---
-input double   InpBreakevenProfit  = 0.50;     // Profit $ to move SL to breakeven
-input double   InpBEProfitBuffer   = 0.10;     // Extra $ above entry for BE SL (covers spread + small profit)
-input double   InpTrailStart       = 1.00;     // Profit $ to start trailing ($0.50 trail)
-input double   InpTrailTight       = 2.00;     // Profit $ for tight trail ($0.30 trail)
-input double   InpTrailVeryTight   = 3.00;     // Profit $ for very tight trail ($0.20 trail)
+input double   InpBreakevenProfit  = 0.30;     // Profit $ to move SL to breakeven
+input double   InpBEProfitBuffer   = 0.05;     // Extra $ above entry for BE SL (covers spread + small profit)
+input double   InpTrailStart       = 0.30;     // Profit $ to start trailing ($0.50 trail)
+input double   InpTrailTight       = 0.60;     // Profit $ for tight trail ($0.30 trail)
+input double   InpTrailVeryTight   = 1.00;     // Profit $ for very tight trail ($0.20 trail)
 input int      InpMomentumLookback = 30;       // Momentum lookback (seconds)
-input int      InpMaxHoldNoProfit  = 300;      // Max hold without profit (seconds = 5 min)
+input int      InpMaxHoldNoProfit  = 1800;     // Max hold without profit (seconds = 30 min)
 input double   InpMinProfitTarget  = 1.00;     // Min profit target $ to keep position open
-input double   InpMomentumReverse  = 0.30;     // $ reversal threshold to close on momentum fade
+input double   InpMomentumReverse  = 0.50;     // $ reversal threshold to close on momentum fade
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                    |

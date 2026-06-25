@@ -129,8 +129,8 @@ class DataConfig:
     sr_lookback: int = 100                  # Bars for S/R level detection
 
     # Momentum parameters
-    momentum_lookback: int = 6              # 6-bar momentum lookback (faster reaction)
-    momentum_threshold: float = 1.00        # Min price move for momentum ($1.00 for gold - more signals)
+    momentum_lookback: int = 5              # 5-bar momentum lookback (optimal for M1 scalping)
+    momentum_threshold: float = 0.75        # Min price move for momentum ($0.75 for gold - more entries)
 
     # RSI exhaustion filter thresholds
     rsi_overbought: int = 65               # RSI above this = overbought
@@ -167,11 +167,12 @@ class SignalConfig:
     """Signal generation thresholds."""
     min_confidence: float = 0.25            # Higher bar for entries (quality over quantity)
     strong_confidence: float = 0.40         # Strong signal threshold
-    atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
+    atr_sl_multiplier: float = 0.5          # SL = ATR * 0.5 (with M1 ATR ~$3, gives ~$1.50 SL)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 60              # 60-second cooldown between signals (quality over quantity)
+    cooldown_seconds: int = 60              # 60-second cooldown between signals (minimum wait before next trade)
     max_hold_seconds: int = 300             # 5 minutes max hold for a single position
+    max_hold_bars: int = 30                 # 30 M1 bars (30 min) max hold for position management
     max_positions: int = 1                  # Only 1 position at a time (Python-side enforcement)
 
 
@@ -565,7 +566,7 @@ class AutoOptimizerConfig:
     momentum_range: tuple = (5, 10)         # Momentum lookback bars (wider range)
     rsi_ob_range: tuple = (65, 85)          # RSI overbought level range
     rsi_os_range: tuple = (15, 35)          # RSI oversold level range
-    cooldown_range: tuple = (10, 120)       # Cooldown seconds range (shorter cooldowns)
+    cooldown_range: tuple = (10, 120)       # Cooldown seconds range (minimum wait between trades)
     max_positions_range: tuple = (1, 3)     # Max concurrent positions range (conservative)
 
 

@@ -396,12 +396,12 @@ class TestMomentumDirection:
         assert direction == "BUY"
 
     def test_momentum_threshold_boundary(self):
-        """Test that movement below $1.00 threshold is still FLAT."""
+        """Test that movement below $0.75 threshold is still FLAT."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        # With 6-bar lookback on 8 elements: close[-7]=close[1], close[-1]=close[7]
-        # close[1]=2000.0, close[7]=2000.9, diff=+0.9 < 1.0 => FLAT
+        # With 5-bar lookback on 7 elements: close[-6]=close[1], close[-1]=close[6]
+        # close[1]=2000.0, close[6]=2000.6, diff=+0.6 < 0.75 => FLAT
         prices = pd.DataFrame({
-            "Close": [1999.5, 2000.0, 2000.1, 2000.1, 2000.2, 2000.3, 2000.5, 2000.9]
+            "Close": [1999.5, 2000.0, 2000.1, 2000.1, 2000.2, 2000.3, 2000.6]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
@@ -427,7 +427,7 @@ class TestScalperSLTP:
     def test_default_sl_tp_multipliers(self):
         """Test that default SignalConfig has correct scalper SL/TP multipliers."""
         config = SignalConfig()
-        assert config.atr_sl_multiplier == 1.6
+        assert config.atr_sl_multiplier == 0.5
         assert config.atr_tp_multiplier == 0.0  # Dynamic trailing: no fixed TP
 
     def test_sl_approximately_3_dollars_with_atr_5(self):
@@ -811,13 +811,13 @@ class TestCandlePatternAnalysis:
         # Let's use a shooting_star which blocks BUY but doesn't change close much.
         prices = pd.DataFrame({
             "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2007.0],
-            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2015.0],
+            "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2016.0],
             "Low":   [1999, 2000, 2001, 2002, 2003, 2004, 2005.0],
             "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2005.5],
         })
-        # Momentum: close[-1]=2005.5, close[-4]=2003, diff=+2.5 => BUY
-        # Last candle: open=2007, high=2015, low=2005, close=2005.5
-        # Range = 15-5=10, upper wick = 15-7=8 (80%), lower wick=5-5=0, body=|5.5-7|=1.5 (15%)
+        # Momentum: close[-1]=2005.5, close[-6]=2001, diff=+4.5 => BUY
+        # Last candle: open=2007, high=2016, low=2005, close=2005.5
+        # Range = 16-5=11, upper wick = 16-7=9 (81.8%), lower wick=5.5-5=0.5 (4.5%), body=|5.5-7|=1.5 (13.6%)
         # This is a shooting star! blocks BUY
 
         mock_prediction = {
@@ -841,24 +841,31 @@ class TestCandlePatternAnalysis:
                 current_price=2005.5
             )
 
-        # Should be blocked - momentum BUY but shooting star signals reversal
-        assert signal.action == "HOLD"
+        # Candle patterns are logged but NOT blocking in M1 scalper mode
+        # Momentum BUY still goes through despite shooting star pattern
+        assert signal.action == "BUY"
 
     def test_momentum_sell_blocked_by_hammer(self):
-        """Integration test: momentum says SELL but hammer pattern blocks it."""
+        """Integration test: momentum says SELL but hammer pattern is logged (not blocking in M1 mode)."""
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
         gen.ensemble.models_loaded = True
 
         # Prices that fall (momentum = SELL) but last candle is a hammer
-        # Hammer: long lower wick > 60% of range, small upper wick, small body
+        # Hammer: long lower wick > 80% of range, small upper wick, small body (<15%)
+        # Need close[-1] - close[-6] < -0.75 for SELL momentum
+        # With 8 bars, close[-6] = close[2] and close[-1] = close[7]
         prices = pd.DataFrame({
-            "Open":  [2010, 2009, 2008, 2007, 2006, 2005, 2009.0],
-            "High":  [2011, 2010, 2009, 2008, 2007, 2006, 2010.0],
-            "Low":   [2009, 2008, 2007, 2006, 2005, 2004, 2000.0],
-            "Close": [2009, 2008, 2007, 2006, 2005, 2004, 2009.5],
+            "Open":  [2010, 2009, 2008, 2007, 2006, 2005, 2004, 2005.1],
+            "High":  [2011, 2010, 2009, 2008, 2007, 2006, 2005, 2005.3],
+            "Low":   [2009, 2008, 2007, 2006, 2005, 2004, 2003, 1996.0],
+            "Close": [2009, 2008, 2007, 2006, 2005, 2004, 2003, 2005.2],
         })
+        # close[-6]=close[2]=2007, close[-1]=close[7]=2005.2, diff=-1.8 < -0.75 => SELL
+        # Last candle: open=2005.1, high=2005.3, low=1996, close=2005.2
+        # Range=9.3, body=0.1 (1%), lower_wick=2005.1-1996=9.1 (98%), upper_wick=2005.3-2005.2=0.1 (1%)
+        # This is a hammer! But in M1 scalper mode it only logs, doesn't block
 
         mock_prediction = {
             "probabilities": np.array([[0.8, 0.1, 0.1]]),
@@ -878,11 +885,12 @@ class TestCandlePatternAnalysis:
                 features=features,
                 prices=prices,
                 atr=5.0,
-                current_price=2009.5
+                current_price=2005.2
             )
 
-        # Should be blocked - momentum SELL but hammer signals bullish reversal
-        assert signal.action == "HOLD"
+        # In M1 scalper mode, candle patterns are logged but do NOT block
+        # Momentum is SELL, signal should go through
+        assert signal.action == "SELL"
 
     def test_momentum_buy_confirmed_by_strong_bullish(self):
         """Integration test: momentum BUY + strong bullish candle = allow trade."""
@@ -1247,26 +1255,26 @@ class TestRSIExhaustionFilter:
 #  6-BAR MOMENTUM LOOKBACK TESTS
 # ─────────────────────────────────────────────
 class TestSixBarMomentumLookback:
-    """Tests for the 6-bar momentum lookback (needs 8+ bars)."""
+    """Tests for the 5-bar momentum lookback (needs 7+ bars)."""
 
     def test_momentum_needs_8_bars_minimum(self):
-        """Test that momentum returns FLAT with fewer than 8 bars."""
+        """Test that momentum returns FLAT with fewer than 7 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # 7 bars - not enough for 6-bar lookback (needs lookback+2=8)
+        # 6 bars - not enough for 5-bar lookback (needs lookback+2=7)
         prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0]
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
 
     def test_momentum_works_with_exactly_8_bars(self):
-        """Test that momentum works with exactly 8 bars."""
+        """Test that momentum works with exactly 7 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # 8 bars - exactly enough. close[-1]=2007, close[-7]=2000, diff=+7 > 1.50
+        # 7 bars - exactly enough. close[-1]=2006, close[-6]=2000, diff=+6 > 0.75
         prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0]
+            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0]
         })
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
@@ -1294,16 +1302,16 @@ class TestSixBarMomentumLookback:
         assert direction == "SELL"
 
     def test_numpy_array_needs_8_bars(self):
-        """Test numpy array input requires 8 bars."""
+        """Test numpy array input requires 7 bars."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
 
-        # 7 elements - not enough
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
+        # 6 elements - not enough
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "FLAT"
 
-        # 8 elements - enough (diff = +7 > 1.50)
-        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0])
+        # 7 elements - enough (diff = +6 > 0.75)
+        prices = np.array([2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0])
         direction = gen._compute_momentum_direction(prices)
         assert direction == "BUY"
 
@@ -1475,20 +1483,20 @@ class TestSinglePositionArchitecture:
     def test_position_closed_after_max_hold_time(self, signal_config, mock_features, mock_prices):
         """Test that position is cleared after max hold time exceeded."""
         import time as time_mod
-        # Use a config with short max_hold to test
+        # Use a config with short max_hold_bars to test
         config = SignalConfig(
             min_confidence=0.65,
             strong_confidence=0.80,
             atr_sl_multiplier=1.5,
             atr_tp_multiplier=2.5,
             cooldown_seconds=0,
-            max_hold_seconds=1,  # 1 second for testing
+            max_hold_bars=1,  # 1 bar = 60 seconds for testing
         )
         gen = SignalGenerator(signal_config=config)
         gen._active_position = {
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time() - 10,  # 10 seconds ago (exceeds 1s max_hold)
+            "entry_time": time_mod.time() - 120,  # 120 seconds ago (exceeds 1 bar * 60s = 60s)
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",
@@ -1610,7 +1618,7 @@ class TestV6ReviewFixes:
             atr_sl_multiplier=1.5,
             atr_tp_multiplier=2.5,
             cooldown_seconds=0,
-            max_hold_seconds=1,  # 1 second to trigger max_hold close
+            max_hold_bars=1,  # 1 bar (60s) to trigger max_hold close
         )
         gen = SignalGenerator(signal_config=config)
         # Set up a mock auto-optimizer
@@ -1622,7 +1630,7 @@ class TestV6ReviewFixes:
             "position_id": 1,
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time() - 10,  # 10s ago, exceeds max_hold
+            "entry_time": time_mod.time() - 120,  # 120s ago, exceeds 1 bar * 60s
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",

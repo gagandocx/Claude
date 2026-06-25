@@ -945,7 +945,7 @@ class SignalGenerator:
                 (active_dir == "BUY" and quick_momentum == "SELL") or
                 (active_dir == "SELL" and quick_momentum == "BUY")
             )
-            max_hold_exceeded = time_held >= self.signal_config.max_hold_seconds
+            max_hold_exceeded = time_held >= self.signal_config.max_hold_bars * 60
 
             if momentum_reversed or max_hold_exceeded:
                 # Close position: estimate PnL and feed to optimizer
