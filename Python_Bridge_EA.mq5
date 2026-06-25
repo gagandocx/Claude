@@ -49,6 +49,14 @@ input int      InpMaxHoldNoProfit  = 1200;     // Max hold without profit (secon
 input double   InpMinProfitTarget  = 1.00;     // Min profit target $ to keep position open
 input double   InpMomentumReverse  = 0.50;     // $ reversal threshold to close on momentum fade
 
+// --- Trade Execution Settings (editable for live experimentation) ---
+input double   InpMinLotSize       = 0.01;     // Minimum lot size
+input double   InpDefaultLotSize   = 0.01;     // Default lot size (if signal lot is 0)
+input double   InpFixedSL          = 2.00;     // Fixed SL in $ (0=use signal's SL)
+input double   InpTrailDist1       = 0.50;     // Trail distance at Tier 2 ($)
+input double   InpTrailDist2       = 0.30;     // Trail distance at Tier 3 ($)
+input double   InpTrailDist3       = 0.20;     // Trail distance at Tier 4 ($)
+
 //+------------------------------------------------------------------+
 //| Global Variables                                                    |
 //+------------------------------------------------------------------+
@@ -401,8 +409,9 @@ bool ValidateSignal()
     }
 
     // Check lot size
-    if(g_lastLotSize <= 0 || g_lastLotSize > InpMaxLotSize)
+    if(g_lastLotSize < 0 || g_lastLotSize > InpMaxLotSize)
     {
+        // Allow 0 lot size - ExecuteSignal() will use InpDefaultLotSize
         g_status = "Invalid lot size: " + DoubleToString(g_lastLotSize, 2);
         return false;
     }
@@ -447,9 +456,14 @@ void ExecuteSignal()
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
 
-    // Normalize lot size
+    // Normalize lot size - apply InpDefaultLotSize if signal lot is 0 or invalid
+    double rawLotSize = g_lastLotSize;
+    if(rawLotSize <= 0)
+        rawLotSize = InpDefaultLotSize;
+
     double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-    double lotSize = MathFloor(g_lastLotSize / lotStep) * lotStep;
+    double lotSize = MathFloor(rawLotSize / lotStep) * lotStep;
+    lotSize = MathMax(lotSize, InpMinLotSize);
     lotSize = MathMax(lotSize, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
     lotSize = MathMin(lotSize, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
     lotSize = MathMin(lotSize, InpMaxLotSize);
@@ -466,6 +480,9 @@ void ExecuteSignal()
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
         sl = NormalizeDouble(price - g_lastSLPips * pipValue, digits);
+        // Fixed SL override: if InpFixedSL > 0, use fixed $ distance instead of signal SL
+        if(InpFixedSL > 0)
+            sl = NormalizeDouble(price - InpFixedSL, digits);
         if(dynamicTPMode)
             tp = 0;  // No fixed TP - EA manages exit via trailing
         else
@@ -496,6 +513,9 @@ void ExecuteSignal()
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
         sl = NormalizeDouble(price + g_lastSLPips * pipValue, digits);
+        // Fixed SL override: if InpFixedSL > 0, use fixed $ distance instead of signal SL
+        if(InpFixedSL > 0)
+            sl = NormalizeDouble(price + InpFixedSL, digits);
         if(dynamicTPMode)
             tp = 0;  // No fixed TP - EA manages exit via trailing
         else
@@ -707,33 +727,33 @@ void ManageOpenPositions()
 
         if(profit >= InpTrailVeryTight)
         {
-            // Tier 4: Very tight trail ($0.20 behind current price)
-            double trailDist = 0.20;
+            // Tier 4: Very tight trail (InpTrailDist3 behind current price)
+            double trailDist = InpTrailDist3;
             if(posType == POSITION_TYPE_BUY)
                 newSL = NormalizeDouble(currentPrice - trailDist, digits);
             else
                 newSL = NormalizeDouble(currentPrice + trailDist, digits);
-            tierLabel = "T4($0.20)";
+            tierLabel = "T4($" + DoubleToString(InpTrailDist3, 2) + ")";
         }
         else if(profit >= InpTrailTight)
         {
-            // Tier 3: Tight trail ($0.30 behind current price)
-            double trailDist = 0.30;
+            // Tier 3: Tight trail (InpTrailDist2 behind current price)
+            double trailDist = InpTrailDist2;
             if(posType == POSITION_TYPE_BUY)
                 newSL = NormalizeDouble(currentPrice - trailDist, digits);
             else
                 newSL = NormalizeDouble(currentPrice + trailDist, digits);
-            tierLabel = "T3($0.30)";
+            tierLabel = "T3($" + DoubleToString(InpTrailDist2, 2) + ")";
         }
         else if(profit >= InpTrailStart)
         {
-            // Tier 2: Standard trail ($0.50 behind current price)
-            double trailDist = 0.50;
+            // Tier 2: Standard trail (InpTrailDist1 behind current price)
+            double trailDist = InpTrailDist1;
             if(posType == POSITION_TYPE_BUY)
                 newSL = NormalizeDouble(currentPrice - trailDist, digits);
             else
                 newSL = NormalizeDouble(currentPrice + trailDist, digits);
-            tierLabel = "T2($0.50)";
+            tierLabel = "T2($" + DoubleToString(InpTrailDist1, 2) + ")";
         }
         else if(profit >= InpBreakevenProfit)
         {
