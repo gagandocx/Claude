@@ -194,6 +194,14 @@ class PythonMLBridge:
         self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
         self.logger.info(f"  Auto-optimizer: {self.config.enable_auto_optimizer}")
 
+        # Start background confirmation poller for instant position sync
+        self._running = True  # Set before starting thread
+        self._confirmation_thread = threading.Thread(
+            target=self._poll_confirmations, daemon=True, name="ConfirmationPoller"
+        )
+        self._confirmation_thread.start()
+        self.logger.info("  Confirmation poller: 100ms (instant sync)")
+
     def _load_models(self):
         """Load model checkpoints if available."""
         if os.path.exists(MODEL_DIR):
@@ -222,6 +230,59 @@ class PythonMLBridge:
             target=_refresh, daemon=True, name="NewsRefresh"
         )
         self._news_refresh_thread.start()
+
+    def _poll_confirmations(self):
+        """Background thread: polls confirmation file every 100ms for instant position sync."""
+        last_mtime = 0.0
+        while self._running:
+            try:
+                conf_path = self.bridge.confirmation_path
+                if os.path.exists(conf_path):
+                    mtime = os.path.getmtime(conf_path)
+                    if mtime > last_mtime:
+                        last_mtime = mtime
+                        confirmations = self.bridge.read_confirmations()
+                        for conf in confirmations:
+                            status = conf.get("status", "").strip()
+                            if status == "CLOSED":
+                                close_price = float(conf.get("open_price", 0))
+                                active = self.signal_generator._active_position
+                                if active:
+                                    entry_price = active.get("entry_price", close_price)
+                                    direction = active.get("direction", "BUY")
+                                    if direction == "BUY":
+                                        pnl = close_price - entry_price
+                                    else:
+                                        pnl = entry_price - close_price
+                                    self.logger.info(
+                                        f"[INSTANT SYNC] Position closed by EA | "
+                                        f"PnL: ${pnl:.2f} | Direction: {direction}"
+                                    )
+                                    if self.auto_optimizer:
+                                        trade_context = {
+                                            "session": active.get("session", "unknown"),
+                                            "confidence": active.get("confidence", 0.5),
+                                            "momentum_lookback": active.get("momentum_lookback", 8),
+                                            "sl_distance": active.get("sl_distance", 0.6),
+                                            "result_pnl": pnl,
+                                            "direction": direction,
+                                            "rsi_at_entry": active.get("rsi_at_entry", 50.0),
+                                        }
+                                        self.auto_optimizer.record_trade(trade_context)
+                                    self.signal_generator.clear_active_position()
+                                    self.signal_generator._estimated_close_pending = True
+                                else:
+                                    self.logger.info("[INSTANT SYNC] EA closed position (no active tracked)")
+                            elif status == "FILLED":
+                                # Update active position with actual entry price from MT5
+                                actual_price = float(conf.get("open_price", 0))
+                                if self.signal_generator._active_position and actual_price > 0:
+                                    self.signal_generator._active_position["entry_price"] = actual_price
+                                    self.logger.info(f"[INSTANT SYNC] Entry confirmed at ${actual_price:.2f}")
+                        self.bridge.clear_confirmations()
+            except Exception:
+                pass
+            time.sleep(0.1)  # 100ms polling
 
     def run_cycle(self) -> dict:
         """
@@ -574,184 +635,8 @@ class PythonMLBridge:
                 # Show what the system is doing (momentum, session, range mode)
                 self.bridge.write_status("OK", "Scanning - no signal this cycle")
 
-            # 12. Check confirmations from MT5
-            confirmations = self.bridge.read_confirmations()
-            if confirmations:
-                for conf in confirmations:
-                    self.logger.info(f"MT5 Confirmation: {conf}")
-
-                    # v7.1.1: Handle EA-initiated position close (SL/TP hit, trailing stop,
-                    # time exit, or momentum exit). The EA writes status="CLOSED" to sync.
-                    if conf.get("status") == "CLOSED":
-                        self.logger.info(
-                            "Position closed by EA (status=CLOSED), clearing active position"
-                        )
-                        # Compute PnL from active position if available
-                        close_price = float(conf.get("open_price", 0.0))
-                        if self.signal_generator._active_position is not None:
-                            entry_price_pos = self.signal_generator._active_position.get(
-                                "entry_price", 0.0
-                            )
-                            active_dir = self.signal_generator._active_position.get(
-                                "direction", "BUY"
-                            )
-                            if active_dir == "BUY":
-                                pnl_closed = close_price - entry_price_pos
-                            else:
-                                pnl_closed = entry_price_pos - close_price
-                            self.logger.info(
-                                f"  Close PnL estimate: ${pnl_closed:.2f} "
-                                f"(entry={entry_price_pos:.2f}, close={close_price:.2f})"
-                            )
-                            # Feed to auto optimizer if not already estimated Python-side
-                            if self.auto_optimizer and not self.signal_generator._estimated_close_pending:
-                                trade_context = {
-                                    "session": self.signal_generator._active_position.get(
-                                        "signal_context", {}
-                                    ).get("session", "unknown"),
-                                    "confidence": self.signal_generator._active_position.get(
-                                        "signal_context", {}
-                                    ).get("confidence", 0.5),
-                                    "momentum_lookback": self.signal_generator._active_position.get(
-                                        "signal_context", {}
-                                    ).get("momentum_lookback", 8),
-                                    "sl_distance": self.signal_generator._active_position.get(
-                                        "signal_context", {}
-                                    ).get("sl_distance", 5.0),
-                                    "result_pnl": pnl_closed,
-                                    "direction": active_dir,
-                                    "rsi_at_entry": self.signal_generator._active_position.get(
-                                        "signal_context", {}
-                                    ).get("rsi_at_entry", 50.0),
-                                    "trail_tier": "ea_closed",
-                                    "cooldown_used": self.signal_generator.signal_config.cooldown_seconds,
-                                    "max_positions_at_entry": self.signal_generator.signal_config.max_positions,
-                                    "entry_time": datetime.fromtimestamp(
-                                        self.signal_generator._active_position.get("entry_time", time.time())
-                                    ).isoformat(),
-                                    "exit_time": datetime.now().isoformat(),
-                                }
-                                self.auto_optimizer.record_trade(trade_context)
-                        # Clear active position so Python starts looking for next trade
-                        self.signal_generator.clear_active_position()
-                        # Reset estimated close flag
-                        self.signal_generator._estimated_close_pending = False
-                        continue
-
-                    # Fix #1: Register new positions when MT5 confirms an entry fill
-                    if conf.get("type") == "open" or conf.get("type") == "fill":
-                        trade_id = str(conf.get("ticket", ""))
-                        direction = 1 if conf.get("direction", "BUY") == "BUY" else -1
-                        entry_price = float(conf.get("entry_price", current_price))
-                        confidence_val = float(conf.get("confidence", 0.5))
-                        sl_pips_val = float(conf.get("sl_pips", 0.0))
-                        tp_pips_val = float(conf.get("tp_pips", 0.0))
-                        self.signal_generator.register_open_position(
-                            trade_id=trade_id,
-                            direction=direction,
-                            entry_price=entry_price,
-                            confidence=confidence_val,
-                            atr=atr,
-                            sl_pips=sl_pips_val,
-                            tp_pips=tp_pips_val,
-                        )
-                        # v6.0: Update active position with actual fill price from MT5
-                        if self.signal_generator._active_position is not None:
-                            self.signal_generator._active_position["entry_price"] = entry_price
-                        self.logger.info(
-                            f"  Registered position {trade_id} for RL tracking "
-                            f"(dir={direction}, entry={entry_price:.2f})"
-                        )
-
-                    # Handle trade closures: clean up positions, feed RL, record performance
-                    if conf.get("type") == "close":
-                        trade_id = str(conf.get("ticket", ""))
-                        pnl = float(conf.get("pnl", 0.0))
-
-                        # v6.0: Clear active position on close, but only if the
-                        # current _active_position corresponds to the position being
-                        # closed. If the signal generator already closed the old
-                        # position Python-side and immediately re-entered (setting a
-                        # new _active_position with a higher position_id), we must NOT
-                        # wipe the new position.
-                        if self.signal_generator._active_position is not None:
-                            if self.signal_generator._estimated_close_pending:
-                                # Python-side already closed the old position and may
-                                # have re-entered. The current _active_position belongs
-                                # to the NEW trade - do not clear it.
-                                self.logger.info(
-                                    "  Skipping position clear: Python-side already "
-                                    "closed the old position (re-entry may have occurred)"
-                                )
-                            else:
-                                # MT5-initiated close (SL/TP hit) - clear the position
-                                self.signal_generator._active_position = None
-                        # else: already None, nothing to clear
-
-                        # Fix #1: Call update_from_execution() to remove position
-                        # from _open_positions and feed the RL agent its terminal
-                        # reward. Without this, positions accumulate indefinitely
-                        # and the DQN never learns trade outcomes.
-                        self.signal_generator.update_from_execution(
-                            trade_id=trade_id,
-                            pnl=pnl,
-                            predicted_action=0,
-                            actual_outcome=0,
-                        )
-
-                        # Fix #6: Only feed trade closures to PerformanceTracker from
-                        # MT5 confirmations (not from update_from_execution) to prevent
-                        # double-counting. The signal_generator.update_from_execution()
-                        # handles RL learning only, not performance tracking.
-                        if self.performance_tracker:
-                            trade_record = TradeRecord(
-                                trade_id=trade_id,
-                                entry_time=conf.get("open_time", datetime.now().isoformat()),
-                                exit_time=conf.get("close_time", datetime.now().isoformat()),
-                                direction=conf.get("direction", "BUY"),
-                                pnl=pnl,
-                                model=conf.get("model", "ensemble"),
-                                regime=conf.get("regime", "ranging"),
-                                entry_price=float(conf.get("entry_price", 0.0)),
-                                exit_price=float(conf.get("exit_price", 0.0)),
-                                lot_size=float(conf.get("lot_size", 0.0)),
-                                confidence=float(conf.get("confidence", 0.0)),
-                            )
-                            self.performance_tracker.record_trade(trade_record)
-                            self._trades_since_render += 1
-
-                        # Feed trade to auto-optimizer for self-tuning
-                        # v6.0: Skip if signal_generator already recorded an estimated
-                        # trade for this position (prevents double-counting). The Python-
-                        # side position management block feeds estimated P&L when it
-                        # decides to close (momentum reversal / max hold). Only feed
-                        # here if the close was initiated by MT5 (e.g., SL/TP hit)
-                        # without a prior estimated record.
-                        already_estimated = self.signal_generator._estimated_close_pending
-                        if self.auto_optimizer and not already_estimated:
-                            trade_context = {
-                                "session": conf.get("session", "unknown"),
-                                "confidence": float(conf.get("confidence", 0.0)),
-                                "momentum_lookback": conf.get("momentum_lookback", 5),
-                                "sl_distance": float(conf.get("sl_distance", 3.0)),
-                                "result_pnl": pnl,
-                                "direction": conf.get("direction", "BUY"),
-                                "rsi_at_entry": float(conf.get("rsi_at_entry", 50.0)),
-                                "trail_tier": conf.get("trail_tier", "medium"),
-                                "cooldown_used": float(conf.get("cooldown_used", 2.0)),
-                                "max_positions_at_entry": int(conf.get("max_positions_at_entry", 5)),
-                                "entry_time": conf.get("open_time", datetime.now().isoformat()),
-                                "exit_time": conf.get("close_time", datetime.now().isoformat()),
-                            }
-                            self.auto_optimizer.record_trade(trade_context)
-                        elif already_estimated:
-                            self.logger.info(
-                                "  Skipping optimizer feed: estimated trade already "
-                                "recorded for this position (Python-side close)"
-                            )
-                            # Clear the flag - the estimated close has been acknowledged
-                            self.signal_generator._estimated_close_pending = False
-                self.bridge.clear_confirmations()
+            # 12. Confirmations now handled by background _poll_confirmations thread
+            # (100ms polling for instant position sync)
 
             # 13. Periodic dashboard rendering
             if self.dashboard_renderer:

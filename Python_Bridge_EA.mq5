@@ -105,10 +105,10 @@ int OnInit()
     g_trade.SetDeviationInPoints(InpSlippage);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-    // Set up a 10-second timer for mid-bar signal pickup.
-    // This reduces the window where file contention causes stale signals
-    // by reading the signal file more frequently than once per new bar.
-    EventSetTimer(10);
+    // Set up a 1-second timer as backup signal reader.
+    // Primary signal reading happens on every tick (with 1s throttle).
+    // The timer provides a safety net in case tick flow stalls.
+    EventSetTimer(1);
 
     // Dashboard panel uses OBJ_RECTANGLE_LABEL which renders on top by default
     // No CHART_FOREGROUND manipulation needed - trades display normally on chart
@@ -117,7 +117,7 @@ int OnInit()
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
     Print("[PythonBridge] Signal file: ", InpSignalFile);
     Print("[PythonBridge] Min confidence: ", InpMinConfidence);
-    Print("[PythonBridge] Timer: 10s interval for mid-bar signal reading");
+    Print("[PythonBridge] Timer: 1s backup interval for signal reading");
 
     return INIT_SUCCEEDED;
 }
@@ -127,7 +127,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-    // Kill the 10-second timer
+    // Kill the 1-second timer
     EventKillTimer();
 
     // Remove all dashboard graphical objects
@@ -139,8 +139,8 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-//| Timer function - mid-bar signal reading every 10 seconds           |
-//| Provides faster signal pickup to reduce stale signal window        |
+//| Timer function - 1-second backup signal reading                    |
+//| Provides a safety net when tick flow stalls                        |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
@@ -175,40 +175,27 @@ void OnTick()
     // --- Dynamic position management runs on EVERY tick ---
     ManageOpenPositions();
 
-    // --- Signal reading only on new bar (prevent excessive file reads) ---
-    static datetime lastBarTime = 0;
-    datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
-    if(currentBarTime == lastBarTime)
+    // --- Signal reading every 1 second for instant execution ---
+    static datetime lastSignalCheck = 0;
+    datetime now = TimeCurrent();
+    if(now > lastSignalCheck)
     {
-        // Still update dashboard on every tick for real-time trailing info
-        if(InpShowDashboard)
-            UpdateDashboard();
-        return;
-    }
-    lastBarTime = currentBarTime;
+        lastSignalCheck = now;
 
-    // Read signal from Python bridge
-    if(ReadSignalFile())
-    {
-        g_signalsRead++;
-
-        // Validate and execute signal
-        if(ValidateSignal())
+        if(ReadSignalFile())
         {
-            ExecuteSignal();
+            g_signalsRead++;
+            if(ValidateSignal())
+            {
+                ExecuteSignal();
+            }
         }
+
+        ProcessExitSignals();
+        CheckEmergencyCloseAll();
+        ReadStatusFile();
     }
 
-    // Process exit signals from Smart Exit Manager (RL agent)
-    ProcessExitSignals();
-
-    // Emergency close-all: if floating loss exceeds $50, close all EA positions
-    CheckEmergencyCloseAll();
-
-    // Read Python bridge status for dashboard news/warning display
-    ReadStatusFile();
-
-    // Update dashboard
     if(InpShowDashboard)
         UpdateDashboard();
 }
