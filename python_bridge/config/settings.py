@@ -113,18 +113,96 @@ class XGBoostConfig:
 
 
 @dataclass
+class PatchTSTConfig:
+    """PatchTST — patch-based transformer (Nie et al., MIT/IBM 2023)."""
+    input_features: int = 46
+    seq_length: int = 64
+    patch_size: int = 8         # 64 / 8 = 8 patch tokens (vs 64 individual-bar tokens)
+    d_model: int = 128
+    n_heads: int = 4
+    n_layers: int = 3
+    d_ff: int = 256
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class TFTConfig:
+    """Temporal Fusion Transformer (Lim et al., Google 2021)."""
+    input_features: int = 46
+    seq_length: int = 64
+    d_model: int = 64           # TFT hidden size (VSN + GRN + LSTM + MHA all use d_model)
+    num_heads: int = 4
+    lstm_layers: int = 2
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class NHiTSConfig:
+    """N-HiTS — Neural Hierarchical Interpolation (Challu et al., Mila 2022)."""
+    input_features: int = 46
+    seq_length: int = 64
+    hidden_size: int = 256
+    block_output_size: int = 64     # Each block outputs this many features before fusion
+    pool_sizes: list = field(default_factory=lambda: [8, 4, 2, 1])  # Macro → micro
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class CatBoostConfig:
+    """CatBoost — ordered boosting (Prokhorenkova et al., Yandex 2018)."""
+    iterations: int = 500
+    depth: int = 6
+    learning_rate: float = 0.05
+    l2_leaf_reg: float = 3.0
+    random_strength: float = 1.0
+    bagging_temperature: float = 1.0
+    border_count: int = 128         # Number of histogram splits (higher = more accurate)
+    random_seed: int = 42
+    early_stopping_rounds: int = 50
+    verbose: bool = False
+
+
+@dataclass
 class EnsembleConfig:
-    """Ensemble model configuration — 5-model stack."""
+    """Ensemble model configuration — 9-model stack."""
     # Weights must sum to 1.0
-    transformer_weight: float = 0.28        # Global attention patterns
-    lstm_weight: float = 0.24              # Sequential / gating patterns
-    tcn_weight: float = 0.22              # Multi-scale local patterns (NEW)
-    gradient_boost_weight: float = 0.14   # Tabular feature interactions
-    xgboost_weight: float = 0.12          # LightGBM/XGBoost (NEW)
-    meta_learner_features: int = 15       # 5 models × 3 classes
-    min_agreement: float = 0.10           # Very low threshold (bypassed in aggressive mode)
-    dynamic_weights: bool = True          # Adjust weights based on recent accuracy
-    weight_lookback: int = 50             # Number of recent predictions for weight calc
+    transformer_weight: float = 0.12       # Global self-attention
+    lstm_weight: float = 0.10              # Sequential / gating
+    tcn_weight: float = 0.10              # Multi-scale local conv
+    patch_tst_weight: float = 0.15        # Patch-based SOTA Transformer (2023)
+    tft_weight: float = 0.15             # Financial-specific (VSN + GRN + LSTM + MHA)
+    nhits_weight: float = 0.10           # Hierarchical multi-scale (macro→micro)
+    gradient_boost_weight: float = 0.10  # sklearn HistGradBoost baseline
+    xgboost_weight: float = 0.09         # LightGBM / XGBoost
+    catboost_weight: float = 0.09        # CatBoost ordered boosting
+    meta_learner_features: int = 27      # 9 models × 3 classes
+    min_agreement: float = 0.10
+    dynamic_weights: bool = True
+    weight_lookback: int = 50
 
 
 # ─────────────────────────────────────────────
