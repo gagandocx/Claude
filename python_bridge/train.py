@@ -1,9 +1,28 @@
 """
 =============================================================
-  Python ML Bridge - Model Training Script
-  Downloads historical data, trains transformer and LSTM models,
-  trains gradient boosting, fits meta-learner.
-  Supports incremental online learning from new data.
+  Python ML Bridge - Model Training Script  (v3 — 9 models)
+
+  Pipeline:
+    1.  Download + prepare multi-timeframe training data
+    2.  Train Transformer
+    3.  Train LSTM
+    4.  Train TCN
+    5.  Train PatchTST          (NEW)
+    6.  Train TFT               (NEW)
+    7.  Train N-HiTS            (NEW)
+    8.  Train Gradient Boosting (sklearn)
+    9.  Train LightGBM / XGBoost
+    10. Train CatBoost          (NEW)
+    11. Fit 27-dim meta-learner on stacked val predictions
+    12. Evaluate all 9 models + ensemble on held-out test set
+    13. Save all checkpoints
+
+  Install optional backends for best performance:
+    pip install lightgbm    # step 9
+    pip install catboost    # step 10
+
+  Run locally:   python train.py
+  Run on Colab:  !python train.py   (GPU auto-detected)
 =============================================================
 """
 
@@ -12,7 +31,7 @@ import sys
 import time
 import logging
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Type
 
 import numpy as np
 import torch
@@ -23,14 +42,23 @@ from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.settings import (
-    TransformerConfig, LSTMConfig, TCNConfig, EnsembleConfig,
-    XGBoostConfig, DataConfig, MODEL_DIR
+    TransformerConfig, LSTMConfig, TCNConfig,
+    PatchTSTConfig, TFTConfig, NHiTSConfig,
+    ITransformerConfig, MambaConfig, DLinearConfig,
+    XGBoostConfig, CatBoostConfig,
+    EnsembleConfig, DataConfig, MODEL_DIR,
 )
 from data.market_data import MarketDataFetcher
 from models.transformer_model import MarketTransformer
-from models.lstm_model import MarketLSTM
-from models.tcn_model import MarketTCN
-from models.ensemble import EnsembleManager
+from models.lstm_model        import MarketLSTM
+from models.tcn_model         import MarketTCN
+from models.patch_tst         import MarketPatchTST
+from models.tft_model         import MarketTFT
+from models.nhits_model       import MarketNHiTS
+from models.itransformer      import MarketITransformer
+from models.mamba_model       import MarketMamba
+from models.dlinear_model     import MarketDLinear
+from models.ensemble          import EnsembleManager
 
 
 # ─────────────────────────────────────────────
@@ -39,603 +67,469 @@ from models.ensemble import EnsembleManager
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("Training")
 
 # ─────────────────────────────────────────────
-#  GPU SUPPORT - AUTO-DETECT CUDA
+#  DEVICE
 # ─────────────────────────────────────────────
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # ─────────────────────────────────────────────
-#  TRAINING FUNCTIONS
+#  DATA PREPARATION
 # ─────────────────────────────────────────────
-def prepare_data(config: DataConfig = None,
-                 seq_length: int = 64) -> Tuple[np.ndarray, np.ndarray]:
+def prepare_data(
+    config: DataConfig = None, seq_length: int = 64
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Download historical data from multiple timeframes and prepare training sequences.
+    Download historical data from multiple timeframes and prepare sequences.
 
-    Fetches 5y daily + 2y H1 + 60d M15 data to build a large, diverse training
-    set targeting 25,000-30,000+ sequences. Each timeframe is processed independently
-    through compute_features() and prepare_model_input(), then all X/y arrays
-    are concatenated.
+    Fetches 7d/1m + 60d/15m + 2y/1h data → targets 25,000-30,000+ sequences.
+    Each timeframe is feature-engineered independently, then all X/y arrays
+    are concatenated and normalised with shared stats saved for inference.
 
     Returns:
-        Tuple of (X, y) arrays
+        (X, y) — X shape (N, seq_len, features), y shape (N,)
     """
-    config = config or DataConfig()
+    config  = config or DataConfig()
     fetcher = MarketDataFetcher(config)
+    all_X, all_y = [], []
 
-    all_X = []
-    all_y = []
-
-    # Fetch and process each timeframe
     for tf_spec in config.training_periods:
-        period = tf_spec["period"]
-        interval = tf_spec["interval"]
-
-        logger.info(f"Downloading {period} data at {interval} interval...")
+        period, interval = tf_spec["period"], tf_spec["interval"]
+        logger.info(f"Downloading {period} @ {interval}...")
         df = fetcher.fetch_ohlcv(period=period, interval=interval)
         if df.empty:
-            logger.warning(f"No data for period={period}, interval={interval}")
+            logger.warning(f"  No data for {period}/{interval} — skipping")
             continue
 
-        logger.info(f"Downloaded {len(df)} bars for {period}/{interval}")
-
-        logger.info("Computing features...")
         features = fetcher.compute_features(df)
         if features.empty:
-            logger.warning(f"Feature computation failed for {period}/{interval}")
+            logger.warning(f"  Feature computation failed for {period}/{interval}")
             continue
 
-        logger.info(f"Computed {len(features.columns)} features over {len(features)} bars")
-
-        logger.info("Preparing sequences...")
-        # Pass normalize=False so we get raw (unnormalized) feature sequences.
-        # Normalization is applied once after all timeframes are concatenated,
-        # ensuring the saved stats reflect the true raw feature distributions
-        # and match what inference will see.
-        X, y = fetcher.prepare_model_input(features, seq_length=seq_length,
-                                           normalize=False)
+        X, y = fetcher.prepare_model_input(
+            features, seq_length=seq_length, normalize=False
+        )
         if len(X) == 0:
-            logger.warning(f"No sequences generated for {period}/{interval}")
             continue
 
-        logger.info(f"Created {len(X)} sequences from {period}/{interval}")
+        logger.info(f"  {len(X)} sequences from {period}/{interval}")
         all_X.append(X)
         all_y.append(y)
 
     if not all_X:
-        logger.error("No training data available from any timeframe")
+        logger.error("No training data — check internet connection or data config.")
         return np.array([]), np.array([])
 
-    # Concatenate all timeframes
     X = np.vstack(all_X)
     y = np.hstack(all_y)
 
-    # Compute combined normalization stats from the RAW concatenated data.
-    # Since prepare_model_input was called with normalize=False, X contains
-    # unnormalized features. We compute means/stds across all samples and
-    # time steps, normalize X in-place, and save the stats so that inference
-    # applies the same transform to raw features.
-    combined_means = np.mean(X, axis=(0, 1))  # mean across samples and time steps
-    combined_stds = np.std(X, axis=(0, 1)) + 1e-10
-
-    # Normalize X in-place using the combined stats
-    X = (X - combined_means) / combined_stds
-
+    # Normalise once across all timeframes; save stats for live inference
+    means = np.mean(X, axis=(0, 1))
+    stds  = np.std(X, axis=(0, 1)) + 1e-10
+    X     = (X - means) / stds
     fetcher._save_normalization_stats(
         feature_cols=[f"feat_{i}" for i in range(X.shape[2])],
-        means=combined_means,
-        stds=combined_stds,
+        means=means, stds=stds,
     )
-    logger.info("Saved combined normalization stats from all %d sequences", len(X))
 
-    logger.info(f"Total training sequences: {len(X)} (target: 25,000+)")
+    logger.info(f"Total sequences: {len(X)} | Features: {X.shape[2]}")
     logger.info(f"Class distribution: {np.bincount(y)}")
-
     return X, y
 
 
-def train_transformer(X_train: np.ndarray, y_train: np.ndarray,
-                      X_val: np.ndarray, y_val: np.ndarray,
-                      config: Optional[TransformerConfig] = None) -> MarketTransformer:
+# ─────────────────────────────────────────────
+#  GENERIC NEURAL MODEL TRAINER
+# ─────────────────────────────────────────────
+def _train_neural_model(
+    model_class: Type[nn.Module],
+    config,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    label: str,
+) -> nn.Module:
     """
-    Train the transformer model.
+    Shared training loop for ALL 6 neural models.
+
+    All models share the same recipe:
+      AdamW + CosineAnnealingLR + class-weighted CrossEntropy
+      + gradient clipping (max_norm=1.0) + early stopping.
+
+    Each model class must accept `config` as its constructor argument
+    and implement `forward(x) → logits`.
 
     Args:
-        X_train: Training features (N, seq_len, features)
-        y_train: Training labels (N,)
-        X_val: Validation features
-        y_val: Validation labels
-        config: Model configuration
+        model_class : One of MarketTransformer, MarketLSTM, MarketTCN,
+                      MarketPatchTST, MarketTFT, MarketNHiTS
+        config      : Matching config dataclass (input_features pre-set)
+        X_train/val : (N, seq_len, features) arrays
+        y_train/val : (N,) integer labels
+        label       : Display name for logging
 
     Returns:
-        Trained MarketTransformer model (on CPU for portable checkpoints)
+        Trained model on CPU (device-agnostic checkpoint)
     """
-    config = config or TransformerConfig()
-    config.input_features = X_train.shape[2]
+    model = model_class(config).to(device)
 
-    model = MarketTransformer(config)
-    model = model.to(device)
-
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=config.learning_rate,
-                            weight_decay=config.weight_decay)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+    )
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.epochs
     )
 
-    # Class weight balancing (handles imbalanced BUY/HOLD/SELL distribution)
-    class_counts = np.bincount(y_train, minlength=3)
-    total = class_counts.sum()
-    class_weights = torch.FloatTensor([total / (3 * c) if c > 0 else 1.0 for c in class_counts]).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=config.label_smoothing)
-
-    # Select batch size based on device (GPU can handle larger batches)
-    batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
-
-    # Create data loaders
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.LongTensor(y_train)
-    )
-    val_dataset = TensorDataset(
-        torch.FloatTensor(X_val), torch.LongTensor(y_val)
-    )
-
-    # Use pin_memory and num_workers for faster GPU data transfer
-    loader_kwargs = {"num_workers": 4, "pin_memory": True} if device.type == "cuda" else {"num_workers": 0}
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                              shuffle=True, **loader_kwargs)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, **loader_kwargs)
-
-    # Training loop
-    best_val_loss = float("inf")
-    patience_counter = 0
-
-    logger.info(f"Training Transformer: {sum(p.numel() for p in model.parameters())} parameters")
-    logger.info(f"  Device: {device} | Batch size: {batch_size}")
-
-    for epoch in range(config.epochs):
-        # Train
-        model.train()
-        train_loss = 0.0
-        for batch_X, batch_y in train_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            optimizer.zero_grad()
-            output = model(batch_X)
-            loss = criterion(output, batch_y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            train_loss += loss.item()
-
-        train_loss /= len(train_loader)
-
-        # Validate
-        model.eval()
-        val_loss = 0.0
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for batch_X, batch_y in val_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                output = model(batch_X)
-                loss = criterion(output, batch_y)
-                val_loss += loss.item()
-                _, predicted = torch.max(output, 1)
-                total += batch_y.size(0)
-                correct += (predicted == batch_y).sum().item()
-
-        val_loss /= len(val_loader)
-        val_acc = correct / total
-
-        scheduler.step()
-
-        if (epoch + 1) % 10 == 0:
-            logger.info(
-                f"  Epoch {epoch+1}/{config.epochs} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Val Acc: {val_acc:.4f}"
-            )
-
-        # Early stopping
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        else:
-            patience_counter += 1
-            if patience_counter >= config.patience:
-                logger.info(f"  Early stopping at epoch {epoch+1}")
-                break
-
-    # Restore best model on CPU for device-agnostic checkpoints
-    model = model.cpu()
-    if 'best_state' in locals():
-        model.load_state_dict(best_state)
-
-    return model
-
-
-def train_lstm(X_train: np.ndarray, y_train: np.ndarray,
-               X_val: np.ndarray, y_val: np.ndarray,
-               config: Optional[LSTMConfig] = None) -> MarketLSTM:
-    """
-    Train the LSTM model.
-
-    Args:
-        X_train: Training features (N, seq_len, features)
-        y_train: Training labels (N,)
-        X_val: Validation features
-        y_val: Validation labels
-        config: Model configuration
-
-    Returns:
-        Trained MarketLSTM model (on CPU for portable checkpoints)
-    """
-    config = config or LSTMConfig()
-    config.input_features = X_train.shape[2]
-
-    model = MarketLSTM(config)
-    model = model.to(device)
-
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=config.learning_rate,
-                            weight_decay=config.weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config.epochs
-    )
-
-    # Class weight balancing (handles imbalanced BUY/HOLD/SELL distribution)
-    class_counts = np.bincount(y_train, minlength=3)
-    total = class_counts.sum()
-    class_weights = torch.FloatTensor([total / (3 * c) if c > 0 else 1.0 for c in class_counts]).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=config.label_smoothing)
-
-    # Select batch size based on device (GPU can handle larger batches)
-    batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
-
-    # Create data loaders
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.LongTensor(y_train)
-    )
-    val_dataset = TensorDataset(
-        torch.FloatTensor(X_val), torch.LongTensor(y_val)
-    )
-
-    # Use pin_memory and num_workers for faster GPU data transfer
-    loader_kwargs = {"num_workers": 4, "pin_memory": True} if device.type == "cuda" else {"num_workers": 0}
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                              shuffle=True, **loader_kwargs)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, **loader_kwargs)
-
-    # Training loop
-    best_val_loss = float("inf")
-    patience_counter = 0
-
-    logger.info(f"Training LSTM: {sum(p.numel() for p in model.parameters())} parameters")
-    logger.info(f"  Device: {device} | Batch size: {batch_size}")
-
-    for epoch in range(config.epochs):
-        # Train
-        model.train()
-        train_loss = 0.0
-        for batch_X, batch_y in train_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            optimizer.zero_grad()
-            output = model(batch_X)
-            loss = criterion(output, batch_y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            train_loss += loss.item()
-
-        train_loss /= len(train_loader)
-
-        # Validate
-        model.eval()
-        val_loss = 0.0
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for batch_X, batch_y in val_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                output = model(batch_X)
-                loss = criterion(output, batch_y)
-                val_loss += loss.item()
-                _, predicted = torch.max(output, 1)
-                total += batch_y.size(0)
-                correct += (predicted == batch_y).sum().item()
-
-        val_loss /= len(val_loader)
-        val_acc = correct / total
-
-        scheduler.step()
-
-        if (epoch + 1) % 10 == 0:
-            logger.info(
-                f"  Epoch {epoch+1}/{config.epochs} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Val Acc: {val_acc:.4f}"
-            )
-
-        # Early stopping
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        else:
-            patience_counter += 1
-            if patience_counter >= config.patience:
-                logger.info(f"  Early stopping at epoch {epoch+1}")
-                break
-
-    # Restore best model on CPU for device-agnostic checkpoints
-    model = model.cpu()
-    if 'best_state' in locals():
-        model.load_state_dict(best_state)
-
-    return model
-
-
-def train_tcn(X_train: np.ndarray, y_train: np.ndarray,
-              X_val: np.ndarray, y_val: np.ndarray,
-              config: Optional[TCNConfig] = None) -> MarketTCN:
-    """
-    Train the Temporal Convolutional Network.
-
-    Architecture: 6 dilated conv blocks (dilation 1→32), receptive field
-    covers the full 64-bar window. Fully parallelisable — fast on CPU.
-
-    Args:
-        X_train: Training features (N, seq_len, features)
-        y_train: Training labels (N,)
-        X_val:   Validation features
-        y_val:   Validation labels
-        config:  TCN configuration
-
-    Returns:
-        Trained MarketTCN model (on CPU for portable checkpoints)
-    """
-    config = config or TCNConfig()
-    config.input_features = X_train.shape[2]
-
-    model = MarketTCN(config)
-    model = model.to(device)
-
-    optimizer = optim.AdamW(model.parameters(),
-                            lr=config.learning_rate,
-                            weight_decay=config.weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config.epochs
-    )
-
-    # Class-weighted loss to handle BUY/HOLD/SELL imbalance
-    class_counts = np.bincount(y_train, minlength=3)
-    total = class_counts.sum()
-    class_weights = torch.FloatTensor(
-        [total / (3 * c) if c > 0 else 1.0 for c in class_counts]
+    # Class-weighted loss — handles BUY/HOLD/SELL imbalance
+    counts = np.bincount(y_train, minlength=3)
+    total  = counts.sum()
+    cw = torch.FloatTensor(
+        [total / (3 * c) if c > 0 else 1.0 for c in counts]
     ).to(device)
     criterion = nn.CrossEntropyLoss(
-        weight=class_weights, label_smoothing=config.label_smoothing
+        weight=cw, label_smoothing=config.label_smoothing
     )
 
-    batch_size = config.batch_size_gpu if device.type == "cuda" else config.batch_size
-    loader_kwargs = (
-        {"num_workers": 4, "pin_memory": True} if device.type == "cuda"
-        else {"num_workers": 0}
+    batch_size   = config.batch_size_gpu if device.type == "cuda" else config.batch_size
+    loader_kw    = (
+        {"num_workers": 4, "pin_memory": True}
+        if device.type == "cuda" else {"num_workers": 0}
     )
-
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.LongTensor(y_train)
+    train_loader = DataLoader(
+        TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train)),
+        batch_size=batch_size, shuffle=True, **loader_kw,
     )
-    val_dataset = TensorDataset(
-        torch.FloatTensor(X_val), torch.LongTensor(y_val)
+    val_loader = DataLoader(
+        TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val)),
+        batch_size=batch_size, **loader_kw,
     )
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                              shuffle=True, **loader_kwargs)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size,
-                              **loader_kwargs)
-
-    best_val_loss = float("inf")
-    patience_counter = 0
 
     n_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Training TCN: {n_params:,} parameters")
-    logger.info(f"  Device: {device} | Batch size: {batch_size} | "
-                f"Dilation: 1→{2**(config.n_layers-1)}")
+    logger.info(f"Training {label}: {n_params:,} params | device={device} | bs={batch_size}")
+
+    best_val_loss  = float("inf")
+    patience_count = 0
+    best_state     = None
 
     for epoch in range(config.epochs):
-        # ── train ──
+        # ── train ──────────────────────────────────────────────────────────
         model.train()
         train_loss = 0.0
-        for batch_X, batch_y in train_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+        for bx, by in train_loader:
+            bx, by = bx.to(device), by.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(batch_X), batch_y)
+            loss = criterion(model(bx), by)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             train_loss += loss.item()
         train_loss /= len(train_loader)
 
-        # ── validate ──
+        # ── validate ────────────────────────────────────────────────────────
         model.eval()
         val_loss, correct, total = 0.0, 0, 0
         with torch.no_grad():
-            for batch_X, batch_y in val_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                out = model(batch_X)
-                val_loss += criterion(out, batch_y).item()
-                _, pred = torch.max(out, 1)
-                total   += batch_y.size(0)
-                correct += (pred == batch_y).sum().item()
+            for bx, by in val_loader:
+                bx, by = bx.to(device), by.to(device)
+                out     = model(bx)
+                val_loss += criterion(out, by).item()
+                correct  += (out.argmax(1) == by).sum().item()
+                total    += by.size(0)
         val_loss /= len(val_loader)
-        val_acc   = correct / total
-
         scheduler.step()
 
         if (epoch + 1) % 10 == 0:
             logger.info(
-                f"  Epoch {epoch+1}/{config.epochs} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Val Acc: {val_acc:.4f}"
+                f"  [{label}] Epoch {epoch+1}/{config.epochs} | "
+                f"train={train_loss:.4f} val={val_loss:.4f} "
+                f"acc={correct/total:.4f}"
             )
 
-        # ── early stopping ──
+        # ── early stopping ──────────────────────────────────────────────────
         if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
+            best_val_loss  = val_loss
+            patience_count = 0
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         else:
-            patience_counter += 1
-            if patience_counter >= config.patience:
-                logger.info(f"  Early stopping at epoch {epoch+1}")
+            patience_count += 1
+            if patience_count >= config.patience:
+                logger.info(f"  [{label}] Early stop at epoch {epoch+1}")
                 break
 
     model = model.cpu()
-    if "best_state" in locals():
+    if best_state:
         model.load_state_dict(best_state)
-
     return model
 
 
+# ─────────────────────────────────────────────
+#  PER-MODEL WRAPPERS  (thin — just set input_features)
+# ─────────────────────────────────────────────
+def train_transformer(X_tr, y_tr, X_val, y_val,
+                      config: Optional[TransformerConfig] = None) -> MarketTransformer:
+    cfg = config or TransformerConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketTransformer, cfg, X_tr, y_tr, X_val, y_val,
+                               "Transformer")
+
+
+def train_lstm(X_tr, y_tr, X_val, y_val,
+               config: Optional[LSTMConfig] = None) -> MarketLSTM:
+    cfg = config or LSTMConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketLSTM, cfg, X_tr, y_tr, X_val, y_val, "LSTM")
+
+
+def train_tcn(X_tr, y_tr, X_val, y_val,
+              config: Optional[TCNConfig] = None) -> MarketTCN:
+    cfg = config or TCNConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketTCN, cfg, X_tr, y_tr, X_val, y_val, "TCN")
+
+
+def train_patch_tst(X_tr, y_tr, X_val, y_val,
+                    config: Optional[PatchTSTConfig] = None) -> MarketPatchTST:
+    """
+    PatchTST — divides 64-bar window into 8-bar patches, runs Transformer
+    over 8 patch tokens instead of 64 bar tokens. Pre-norm architecture.
+    """
+    cfg = config or PatchTSTConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketPatchTST, cfg, X_tr, y_tr, X_val, y_val,
+                               "PatchTST")
+
+
+def train_tft(X_tr, y_tr, X_val, y_val,
+              config: Optional[TFTConfig] = None) -> MarketTFT:
+    """
+    Temporal Fusion Transformer — Variable Selection Networks learn which
+    of the 46 features matter most at each bar; GRN gates suppress noise.
+    """
+    cfg = config or TFTConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketTFT, cfg, X_tr, y_tr, X_val, y_val, "TFT")
+
+
+def train_nhits(X_tr, y_tr, X_val, y_val,
+                config: Optional[NHiTSConfig] = None) -> MarketNHiTS:
+    """N-HiTS — 4 hierarchical blocks (pool=8/4/2/1), macro→micro decomposition."""
+    cfg = config or NHiTSConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketNHiTS, cfg, X_tr, y_tr, X_val, y_val, "N-HiTS")
+
+
+def train_itransformer(X_tr, y_tr, X_val, y_val,
+                       config: Optional[ITransformerConfig] = None) -> MarketITransformer:
+    """
+    iTransformer — inverts the input so Transformer attention runs over
+    features (RSI, MACD, ATR…) rather than time steps.
+    Captures cross-indicator correlations no other model in the stack models.
+    """
+    cfg = config or ITransformerConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketITransformer, cfg, X_tr, y_tr, X_val, y_val,
+                               "iTransformer")
+
+
+def train_mamba(X_tr, y_tr, X_val, y_val,
+                config: Optional[MambaConfig] = None) -> MarketMamba:
+    """
+    Mamba S6 — pure PyTorch selective state space model.
+    Input-dependent Δ/B/C parameters let the model learn what price
+    history to remember and what to discard at each bar.
+    """
+    cfg = config or MambaConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketMamba, cfg, X_tr, y_tr, X_val, y_val, "Mamba")
+
+
+def train_dlinear(X_tr, y_tr, X_val, y_val,
+                  config: Optional[DLinearConfig] = None) -> MarketDLinear:
+    """
+    DLinear — decomposes sequence into trend + residual components,
+    applies channel-independent linear projection to each.
+    Adds ensemble diversity: captures clean linear signals others miss.
+    """
+    cfg = config or DLinearConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketDLinear, cfg, X_tr, y_tr, X_val, y_val, "DLinear")
+
+
+# ─────────────────────────────────────────────
+#  FULL TRAINING PIPELINE
+# ─────────────────────────────────────────────
 def train_all():
     """
-    Full training pipeline:
-        1. Download and prepare data
-        2. Train Transformer
-        3. Train LSTM
-        4. Train TCN              (NEW)
-        5. Train Gradient Boosting (sklearn)
-        6. Train XGBoost / LightGBM (NEW)
-        7. Fit meta-learner on 15-dim stacked predictions
-        8. Evaluate all 5 models + ensemble on held-out test set
-        9. Save all checkpoints
+    Full 12-model training pipeline. Trains all models sequentially,
+    fits a 36-dim HistGradientBoosting meta-learner on stacked val
+    predictions, then evaluates and saves all checkpoints.
     """
-    logger.info("=" * 60)
-    logger.info("  Python ML Bridge - Full Training Pipeline")
-    logger.info("=" * 60)
-
-    # Log training device info
-    logger.info(f"Training device: {device}")
+    logger.info("=" * 70)
+    logger.info("  Python ML Bridge — 12-Model Training Pipeline")
+    logger.info("=" * 70)
+    logger.info(f"Device: {device}")
     if device.type == "cuda":
         logger.info(f"  GPU: {torch.cuda.get_device_name(0)}")
-        logger.info(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        logger.info(
+            f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB"
+        )
 
-    start_time = time.time()
+    t0 = time.time()
 
-    # 1. Prepare data
+    # ── 1. Data ────────────────────────────────────────────────────────────
     X, y = prepare_data()
     if len(X) == 0:
-        logger.error("No training data available. Exiting.")
+        logger.error("No data — aborting.")
         return
 
-    # Split data
-    X_train, X_temp, y_train, y_temp = train_test_split(
+    X_train, X_tmp, y_train, y_tmp = train_test_split(
         X, y, test_size=0.3, random_state=42, shuffle=False
     )
     X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=0.5, random_state=42, shuffle=False
+        X_tmp, y_tmp, test_size=0.5, random_state=42, shuffle=False
+    )
+    n_feat = X_train.shape[2]
+    logger.info(
+        f"Splits — train={len(X_train):,} val={len(X_val):,} "
+        f"test={len(X_test):,} | features={n_feat}"
     )
 
-    logger.info(f"Data splits: Train={len(X_train)}, Val={len(X_val)}, Test={len(X_test)}")
-    logger.info(f"Input shape: {X_train.shape}")
-    logger.info(f"Class distribution: {np.bincount(y_train)}")
+    # ── 2. Train all 9 neural models ───────────────────────────────────────
+    logger.info("\n--- [1/9 neural] Transformer ---")
+    transformer = train_transformer(X_train, y_train, X_val, y_val,
+                                    TransformerConfig(input_features=n_feat))
 
-    # 2. Train Transformer
-    logger.info("\n--- Training Transformer ---")
-    transformer_config = TransformerConfig(input_features=X_train.shape[2])
-    transformer = train_transformer(X_train, y_train, X_val, y_val, transformer_config)
+    logger.info("\n--- [2/9 neural] LSTM ---")
+    lstm = train_lstm(X_train, y_train, X_val, y_val,
+                      LSTMConfig(input_features=n_feat))
 
-    # 3. Train LSTM
-    logger.info("\n--- Training LSTM ---")
-    lstm_config = LSTMConfig(input_features=X_train.shape[2])
-    lstm = train_lstm(X_train, y_train, X_val, y_val, lstm_config)
+    logger.info("\n--- [3/9 neural] TCN ---")
+    tcn = train_tcn(X_train, y_train, X_val, y_val,
+                    TCNConfig(input_features=n_feat))
 
-    # 4. Train TCN (NEW)
-    logger.info("\n--- Training TCN ---")
-    tcn_config = TCNConfig(input_features=X_train.shape[2])
-    tcn = train_tcn(X_train, y_train, X_val, y_val, tcn_config)
+    logger.info("\n--- [4/9 neural] PatchTST ---")
+    patch_tst = train_patch_tst(X_train, y_train, X_val, y_val,
+                                 PatchTSTConfig(input_features=n_feat))
 
-    # 5. Train Gradient Boosting (sklearn)
-    logger.info("\n--- Training Gradient Boosting (sklearn) ---")
+    logger.info("\n--- [5/9 neural] TFT ---")
+    tft = train_tft(X_train, y_train, X_val, y_val,
+                    TFTConfig(input_features=n_feat))
+
+    logger.info("\n--- [6/9 neural] N-HiTS ---")
+    nhits = train_nhits(X_train, y_train, X_val, y_val,
+                        NHiTSConfig(input_features=n_feat))
+
+    logger.info("\n--- [7/9 neural] iTransformer (NEW) ---")
+    itransformer = train_itransformer(X_train, y_train, X_val, y_val,
+                                      ITransformerConfig(input_features=n_feat))
+
+    logger.info("\n--- [8/9 neural] Mamba (NEW) ---")
+    mamba = train_mamba(X_train, y_train, X_val, y_val,
+                        MambaConfig(input_features=n_feat))
+
+    logger.info("\n--- [9/9 neural] DLinear (NEW) ---")
+    dlinear = train_dlinear(X_train, y_train, X_val, y_val,
+                            DLinearConfig(input_features=n_feat))
+
+    # ── 3. Wire into EnsembleManager ──────────────────────────────────────
     ensemble = EnsembleManager(
-        transformer_config=transformer_config,
-        lstm_config=lstm_config,
-        tcn_config=tcn_config,
+        transformer_config   = TransformerConfig(input_features=n_feat),
+        lstm_config          = LSTMConfig(input_features=n_feat),
+        tcn_config           = TCNConfig(input_features=n_feat),
+        patch_tst_config     = PatchTSTConfig(input_features=n_feat),
+        tft_config           = TFTConfig(input_features=n_feat),
+        nhits_config         = NHiTSConfig(input_features=n_feat),
+        itransformer_config  = ITransformerConfig(input_features=n_feat),
+        mamba_config         = MambaConfig(input_features=n_feat),
+        dlinear_config       = DLinearConfig(input_features=n_feat),
     )
-    ensemble.transformer = transformer
-    ensemble.lstm = lstm
-    ensemble.tcn = tcn
+    ensemble.transformer  = transformer
+    ensemble.lstm         = lstm
+    ensemble.tcn          = tcn
+    ensemble.patch_tst    = patch_tst
+    ensemble.tft          = tft
+    ensemble.nhits        = nhits
+    ensemble.itransformer = itransformer
+    ensemble.mamba        = mamba
+    ensemble.dlinear      = dlinear
+
+    # ── 4. Tree models ─────────────────────────────────────────────────────
+    logger.info("\n--- Gradient Boosting (sklearn) ---")
     ensemble.fit_gradient_boost(X_train, y_train)
-    logger.info("  Gradient Boosting fitted")
 
-    # 6. Train XGBoost / LightGBM (NEW)
-    logger.info("\n--- Training XGBoost / LightGBM ---")
+    logger.info("\n--- LightGBM / XGBoost ---")
     ensemble.fit_xgboost(X_train, y_train)
-    logger.info(f"  XGBoost fitted (backend={ensemble.xgboost_model.backend})")
+    logger.info(f"  backend={ensemble.xgboost_model.backend}")
 
-    # 7. Fit Meta-Learner on 15-dim stacked predictions
-    logger.info("\n--- Fitting Meta-Learner (15-dim stack) ---")
-    transformer.eval()
-    lstm.eval()
-    tcn.eval()
+    logger.info("\n--- CatBoost ---")
+    ensemble.fit_catboost(X_train, y_train)
+    logger.info(f"  backend={ensemble.catboost_model.backend}")
+
+    # ── 5. 36-dim meta-learner ─────────────────────────────────────────────
+    logger.info("\n--- Fitting Meta-Learner (36-dim stack, 12 × 3) ---")
+    neural_models = [transformer, lstm, tcn, patch_tst, tft, nhits,
+                     itransformer, mamba, dlinear]
+    for m in neural_models:
+        m.eval()
+
     with torch.no_grad():
-        t_preds  = transformer.predict(torch.FloatTensor(X_val)).numpy()
-        l_preds  = lstm.predict(torch.FloatTensor(X_val)).numpy()
-        c_preds  = tcn.predict(torch.FloatTensor(X_val)).numpy()
-    gb_preds  = ensemble.predict_gradient_boost(X_val)
-    xgb_preds = ensemble.predict_xgboost(X_val)
-    stacked = np.concatenate([t_preds, l_preds, c_preds, gb_preds, xgb_preds], axis=1)
-    ensemble.fit_meta_learner(stacked, y_val)
-    logger.info("  Meta-learner fitted")
+        Xv = torch.FloatTensor(X_val)
+        nn_val = [m.predict(Xv).numpy() for m in neural_models]
 
-    # 8. Evaluate on test set — all 5 models + ensemble
-    logger.info("\n--- Test Set Evaluation (5 models) ---")
+    tree_val = [
+        ensemble.predict_gradient_boost(X_val),
+        ensemble.predict_xgboost(X_val),
+        ensemble.predict_catboost(X_val),
+    ]
+    stacked_val = np.concatenate(nn_val + tree_val, axis=1)  # (n_val, 36)
+    ensemble.fit_meta_learner(stacked_val, y_val)
+    logger.info("  Meta-learner fitted on 36-dim stacked predictions")
+
+    # ── 6. Evaluate on held-out test set ────────────────────────────────────
+    logger.info("\n--- Test Set Evaluation (12 models) ---")
     with torch.no_grad():
-        t_test   = transformer.predict(torch.FloatTensor(X_test)).numpy()
-        l_test   = lstm.predict(torch.FloatTensor(X_test)).numpy()
-        c_test   = tcn.predict(torch.FloatTensor(X_test)).numpy()
-    gb_test  = ensemble.predict_gradient_boost(X_test)
-    xgb_test = ensemble.predict_xgboost(X_test)
+        Xt = torch.FloatTensor(X_test)
+        nn_test = [m.predict(Xt).numpy() for m in neural_models]
 
-    t_acc   = np.mean(np.argmax(t_test,   axis=1) == y_test)
-    l_acc   = np.mean(np.argmax(l_test,   axis=1) == y_test)
-    c_acc   = np.mean(np.argmax(c_test,   axis=1) == y_test)
-    gb_acc  = np.mean(np.argmax(gb_test,  axis=1) == y_test)
-    xgb_acc = np.mean(np.argmax(xgb_test, axis=1) == y_test)
+    tree_test = [
+        ensemble.predict_gradient_boost(X_test),
+        ensemble.predict_xgboost(X_test),
+        ensemble.predict_catboost(X_test),
+    ]
+    all_test   = nn_test + tree_test
+    model_lbls = ["Transformer", "LSTM", "TCN", "PatchTST", "TFT", "N-HiTS",
+                  "iTransformer*", "Mamba*", "DLinear*",
+                  "GradBoost", "LightGBM", "CatBoost"]
 
-    stacked_test = np.concatenate(
-        [t_test, l_test, c_test, gb_test, xgb_test], axis=1
-    )
-    ensemble_preds = ensemble.meta_learner.predict(stacked_test)
-    ensemble_acc = np.mean(ensemble_preds == y_test)
+    def acc(p): return np.mean(np.argmax(p, axis=1) == y_test)
+    accs     = [acc(p) for p in all_test]
+    best_ind = max(accs)
 
-    logger.info(f"  Transformer accuracy:   {t_acc:.4f}")
-    logger.info(f"  LSTM accuracy:          {l_acc:.4f}")
-    logger.info(f"  TCN accuracy:           {c_acc:.4f}  (NEW)")
-    logger.info(f"  Gradient Boost acc:     {gb_acc:.4f}")
-    logger.info(f"  XGBoost/LightGBM acc:   {xgb_acc:.4f}  (NEW)")
-    logger.info(f"  Ensemble accuracy:      {ensemble_acc:.4f}  ← target metric")
-    logger.info(f"  Best individual:        {max(t_acc, l_acc, c_acc, gb_acc, xgb_acc):.4f}")
-    logger.info(f"  Ensemble lift:          {ensemble_acc - max(t_acc, l_acc, c_acc, gb_acc, xgb_acc):+.4f}")
+    stacked_test = np.concatenate(all_test, axis=1)
+    ens_acc      = np.mean(ensemble.meta_learner.predict(stacked_test) == y_test)
 
-    # 9. Save checkpoints
-    logger.info("\n--- Saving Checkpoints ---")
+    logger.info("")
+    for lbl, a in zip(model_lbls, accs):
+        flag = " ← NEW" if "*" in lbl else ""
+        logger.info(f"  {lbl.replace('*',''):<18} {a:.4f}{flag}")
+    logger.info(f"  {'─' * 38}")
+    logger.info(f"  Best individual:    {best_ind:.4f}")
+    logger.info(f"  12-model ensemble:  {ens_acc:.4f}  ← target")
+    logger.info(f"  Ensemble lift:      {ens_acc - best_ind:+.4f}")
+
+    # ── 7. Save checkpoints ─────────────────────────────────────────────────
+    logger.info(f"\n--- Saving → {MODEL_DIR} ---")
     os.makedirs(MODEL_DIR, exist_ok=True)
     ensemble.save_models(MODEL_DIR)
-    logger.info(f"  Saved to {MODEL_DIR}")
 
-    elapsed = time.time() - start_time
-    logger.info(f"\nTraining completed in {elapsed:.1f} seconds")
-    logger.info("=" * 60)
+    elapsed = time.time() - t0
+    logger.info(f"\nTraining complete in {elapsed/60:.1f} min")
+    logger.info("=" * 70)
 
 
 # ─────────────────────────────────────────────
