@@ -45,6 +45,7 @@ from config.settings import (
     TransformerConfig, LSTMConfig, TCNConfig,
     PatchTSTConfig, TFTConfig, NHiTSConfig,
     ITransformerConfig, MambaConfig, DLinearConfig,
+    xLSTMConfig, TimesNetConfig,
     XGBoostConfig, CatBoostConfig,
     EnsembleConfig, DataConfig, MODEL_DIR,
 )
@@ -58,6 +59,8 @@ from models.nhits_model       import MarketNHiTS
 from models.itransformer      import MarketITransformer
 from models.mamba_model       import MarketMamba
 from models.dlinear_model     import MarketDLinear
+from models.xlstm_model       import MarketXLSTM
+from models.timesnet_model    import MarketTimesNet
 from models.ensemble          import EnsembleManager
 
 
@@ -360,17 +363,44 @@ def train_dlinear(X_tr, y_tr, X_val, y_val,
     return _train_neural_model(MarketDLinear, cfg, X_tr, y_tr, X_val, y_val, "DLinear")
 
 
+def train_xlstm(X_tr, y_tr, X_val, y_val,
+                config: Optional[xLSTMConfig] = None) -> MarketXLSTM:
+    """
+    xLSTM mLSTM — matrix memory cells (d×d per head) with exponential
+    gates stabilised in log-space. The LSTM inventor's 2024 rewrite:
+    no sigmoid saturation, no vanishing gradients, far higher capacity
+    than standard BiLSTM.
+    """
+    cfg = config or xLSTMConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketXLSTM, cfg, X_tr, y_tr, X_val, y_val, "xLSTM")
+
+
+def train_timesnet(X_tr, y_tr, X_val, y_val,
+                   config: Optional[TimesNetConfig] = None) -> MarketTimesNet:
+    """
+    TimesNet — discovers dominant periods via FFT, reshapes each period
+    into a 2D image, applies Inception-style 2D convolutions (horizontal
+    = within-cycle, vertical = same-phase cross-cycle, diagonal = mixed).
+    The only 2D model in the stack.
+    """
+    cfg = config or TimesNetConfig()
+    cfg.input_features = X_tr.shape[2]
+    return _train_neural_model(MarketTimesNet, cfg, X_tr, y_tr, X_val, y_val,
+                               "TimesNet")
+
+
 # ─────────────────────────────────────────────
 #  FULL TRAINING PIPELINE
 # ─────────────────────────────────────────────
 def train_all():
     """
-    Full 12-model training pipeline. Trains all models sequentially,
-    fits a 36-dim HistGradientBoosting meta-learner on stacked val
+    Full 14-model training pipeline. Trains all models sequentially,
+    fits a 42-dim HistGradientBoosting meta-learner on stacked val
     predictions, then evaluates and saves all checkpoints.
     """
     logger.info("=" * 70)
-    logger.info("  Python ML Bridge — 12-Model Training Pipeline")
+    logger.info("  Python ML Bridge — 14-Model Training Pipeline")
     logger.info("=" * 70)
     logger.info(f"Device: {device}")
     if device.type == "cuda":
@@ -399,54 +429,64 @@ def train_all():
         f"test={len(X_test):,} | features={n_feat}"
     )
 
-    # ── 2. Train all 9 neural models ───────────────────────────────────────
-    logger.info("\n--- [1/9 neural] Transformer ---")
+    # ── 2. Train all 11 neural models ──────────────────────────────────────
+    logger.info("\n--- [ 1/11 neural] Transformer ---")
     transformer = train_transformer(X_train, y_train, X_val, y_val,
                                     TransformerConfig(input_features=n_feat))
 
-    logger.info("\n--- [2/9 neural] LSTM ---")
+    logger.info("\n--- [ 2/11 neural] LSTM ---")
     lstm = train_lstm(X_train, y_train, X_val, y_val,
                       LSTMConfig(input_features=n_feat))
 
-    logger.info("\n--- [3/9 neural] TCN ---")
+    logger.info("\n--- [ 3/11 neural] TCN ---")
     tcn = train_tcn(X_train, y_train, X_val, y_val,
                     TCNConfig(input_features=n_feat))
 
-    logger.info("\n--- [4/9 neural] PatchTST ---")
+    logger.info("\n--- [ 4/11 neural] PatchTST ---")
     patch_tst = train_patch_tst(X_train, y_train, X_val, y_val,
                                  PatchTSTConfig(input_features=n_feat))
 
-    logger.info("\n--- [5/9 neural] TFT ---")
+    logger.info("\n--- [ 5/11 neural] TFT ---")
     tft = train_tft(X_train, y_train, X_val, y_val,
                     TFTConfig(input_features=n_feat))
 
-    logger.info("\n--- [6/9 neural] N-HiTS ---")
+    logger.info("\n--- [ 6/11 neural] N-HiTS ---")
     nhits = train_nhits(X_train, y_train, X_val, y_val,
                         NHiTSConfig(input_features=n_feat))
 
-    logger.info("\n--- [7/9 neural] iTransformer (NEW) ---")
+    logger.info("\n--- [ 7/11 neural] iTransformer ---")
     itransformer = train_itransformer(X_train, y_train, X_val, y_val,
                                       ITransformerConfig(input_features=n_feat))
 
-    logger.info("\n--- [8/9 neural] Mamba (NEW) ---")
+    logger.info("\n--- [ 8/11 neural] Mamba ---")
     mamba = train_mamba(X_train, y_train, X_val, y_val,
                         MambaConfig(input_features=n_feat))
 
-    logger.info("\n--- [9/9 neural] DLinear (NEW) ---")
+    logger.info("\n--- [ 9/11 neural] DLinear ---")
     dlinear = train_dlinear(X_train, y_train, X_val, y_val,
                             DLinearConfig(input_features=n_feat))
 
+    logger.info("\n--- [10/11 neural] xLSTM (NEW) ---")
+    xlstm = train_xlstm(X_train, y_train, X_val, y_val,
+                        xLSTMConfig(input_features=n_feat))
+
+    logger.info("\n--- [11/11 neural] TimesNet (NEW) ---")
+    timesnet = train_timesnet(X_train, y_train, X_val, y_val,
+                              TimesNetConfig(input_features=n_feat))
+
     # ── 3. Wire into EnsembleManager ──────────────────────────────────────
     ensemble = EnsembleManager(
-        transformer_config   = TransformerConfig(input_features=n_feat),
-        lstm_config          = LSTMConfig(input_features=n_feat),
-        tcn_config           = TCNConfig(input_features=n_feat),
-        patch_tst_config     = PatchTSTConfig(input_features=n_feat),
-        tft_config           = TFTConfig(input_features=n_feat),
-        nhits_config         = NHiTSConfig(input_features=n_feat),
-        itransformer_config  = ITransformerConfig(input_features=n_feat),
-        mamba_config         = MambaConfig(input_features=n_feat),
-        dlinear_config       = DLinearConfig(input_features=n_feat),
+        transformer_config  = TransformerConfig(input_features=n_feat),
+        lstm_config         = LSTMConfig(input_features=n_feat),
+        tcn_config          = TCNConfig(input_features=n_feat),
+        patch_tst_config    = PatchTSTConfig(input_features=n_feat),
+        tft_config          = TFTConfig(input_features=n_feat),
+        nhits_config        = NHiTSConfig(input_features=n_feat),
+        itransformer_config = ITransformerConfig(input_features=n_feat),
+        mamba_config        = MambaConfig(input_features=n_feat),
+        dlinear_config      = DLinearConfig(input_features=n_feat),
+        xlstm_config        = xLSTMConfig(input_features=n_feat),
+        timesnet_config     = TimesNetConfig(input_features=n_feat),
     )
     ensemble.transformer  = transformer
     ensemble.lstm         = lstm
@@ -457,6 +497,8 @@ def train_all():
     ensemble.itransformer = itransformer
     ensemble.mamba        = mamba
     ensemble.dlinear      = dlinear
+    ensemble.xlstm        = xlstm
+    ensemble.timesnet     = timesnet
 
     # ── 4. Tree models ─────────────────────────────────────────────────────
     logger.info("\n--- Gradient Boosting (sklearn) ---")
@@ -470,10 +512,10 @@ def train_all():
     ensemble.fit_catboost(X_train, y_train)
     logger.info(f"  backend={ensemble.catboost_model.backend}")
 
-    # ── 5. 36-dim meta-learner ─────────────────────────────────────────────
-    logger.info("\n--- Fitting Meta-Learner (36-dim stack, 12 × 3) ---")
+    # ── 5. 42-dim meta-learner ─────────────────────────────────────────────
+    logger.info("\n--- Fitting Meta-Learner (42-dim stack, 14 × 3) ---")
     neural_models = [transformer, lstm, tcn, patch_tst, tft, nhits,
-                     itransformer, mamba, dlinear]
+                     itransformer, mamba, dlinear, xlstm, timesnet]
     for m in neural_models:
         m.eval()
 
@@ -503,7 +545,8 @@ def train_all():
     ]
     all_test   = nn_test + tree_test
     model_lbls = ["Transformer", "LSTM", "TCN", "PatchTST", "TFT", "N-HiTS",
-                  "iTransformer*", "Mamba*", "DLinear*",
+                  "iTransformer", "Mamba", "DLinear",
+                  "xLSTM*", "TimesNet*",
                   "GradBoost", "LightGBM", "CatBoost"]
 
     def acc(p): return np.mean(np.argmax(p, axis=1) == y_test)
@@ -519,7 +562,7 @@ def train_all():
         logger.info(f"  {lbl.replace('*',''):<18} {a:.4f}{flag}")
     logger.info(f"  {'─' * 38}")
     logger.info(f"  Best individual:    {best_ind:.4f}")
-    logger.info(f"  12-model ensemble:  {ens_acc:.4f}  ← target")
+    logger.info(f"  14-model ensemble:  {ens_acc:.4f}  ← target")
     logger.info(f"  Ensemble lift:      {ens_acc - best_ind:+.4f}")
 
     # ── 7. Save checkpoints ─────────────────────────────────────────────────

@@ -246,25 +246,64 @@ class DLinearConfig:
 
 
 @dataclass
+class xLSTMConfig:
+    """xLSTM mLSTM variant — matrix memory LSTM (Hochreiter et al., JKU 2024)."""
+    input_features: int = 46
+    seq_length: int = 64
+    d_model: int = 128
+    n_heads: int = 4            # head_dim = d_model // n_heads = 32
+    n_layers: int = 4           # mLSTM blocks stacked
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 5e-5 # lower LR suits matrix memory updates
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 80
+    patience: int = 12
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class TimesNetConfig:
+    """TimesNet — 2D temporal variation via FFT periods (Wu et al., ICLR 2023)."""
+    input_features: int = 46
+    seq_length: int = 64
+    d_model: int = 64
+    top_k: int = 3              # top-k dominant periods discovered via FFT
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
 class EnsembleConfig:
-    """Ensemble model configuration — 12-model stack."""
+    """Ensemble model configuration — 14-model stack."""
     # Weights must sum to 1.0
-    transformer_weight: float = 0.09    # Global self-attention
-    lstm_weight: float = 0.08           # Sequential / gating
-    tcn_weight: float = 0.08            # Multi-scale dilated conv
-    patch_tst_weight: float = 0.12      # Patch-based SOTA (2023)
-    tft_weight: float = 0.12            # Financial-specific VSN+GRN
-    nhits_weight: float = 0.08          # Hierarchical macro→micro
-    itransformer_weight: float = 0.12   # Feature-space attention (2024)
-    mamba_weight: float = 0.10          # Selective state space (2023)
-    dlinear_weight: float = 0.05        # Decomposition linear (diversity)
-    gradient_boost_weight: float = 0.08 # sklearn HistGradBoost
-    xgboost_weight: float = 0.04        # LightGBM / XGBoost
-    catboost_weight: float = 0.04       # Ordered boosting
-    meta_learner_features: int = 36     # 12 models × 3 classes
-    min_agreement: float = 0.10
-    dynamic_weights: bool = True
-    weight_lookback: int = 50
+    transformer_weight: float  = 0.07   # Global self-attention
+    lstm_weight: float         = 0.06   # BiLSTM + attention
+    tcn_weight: float          = 0.06   # Dilated temporal conv
+    patch_tst_weight: float    = 0.10   # Patch-based SOTA 2023
+    tft_weight: float          = 0.10   # Financial VSN+GRN
+    nhits_weight: float        = 0.06   # Hierarchical macro→micro
+    itransformer_weight: float = 0.10   # Feature-space attention 2024
+    mamba_weight: float        = 0.08   # Selective state space 2023
+    dlinear_weight: float      = 0.04   # Trend/residual decomposition
+    xlstm_weight: float        = 0.11   # Matrix memory LSTM 2024 (NEW)
+    timesnet_weight: float     = 0.09   # 2D temporal variation 2023 (NEW)
+    gradient_boost_weight: float = 0.05 # sklearn HistGradBoost
+    xgboost_weight: float      = 0.04   # LightGBM / XGBoost
+    catboost_weight: float     = 0.04   # Ordered boosting
+    meta_learner_features: int = 42     # 14 models × 3 classes
+    min_agreement: float       = 0.10
+    dynamic_weights: bool      = True
+    weight_lookback: int       = 50
 
 
 # ─────────────────────────────────────────────

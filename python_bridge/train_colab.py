@@ -323,6 +323,7 @@ def train_all_colab():
         TransformerConfig, LSTMConfig, TCNConfig,
         PatchTSTConfig, TFTConfig, NHiTSConfig,
         ITransformerConfig, MambaConfig, DLinearConfig,
+        xLSTMConfig, TimesNetConfig,
     )
     from models.transformer_model import MarketTransformer
     from models.lstm_model         import MarketLSTM
@@ -333,6 +334,8 @@ def train_all_colab():
     from models.itransformer       import MarketITransformer
     from models.mamba_model        import MarketMamba
     from models.dlinear_model      import MarketDLinear
+    from models.xlstm_model        import MarketXLSTM
+    from models.timesnet_model     import MarketTimesNet
     from models.ensemble           import EnsembleManager
 
     NEURAL_MODELS = [
@@ -345,12 +348,17 @@ def train_all_colab():
         ("iTransformer",   MarketITransformer, ITransformerConfig(input_features=n_feat)),
         ("Mamba",          MarketMamba,        MambaConfig(input_features=n_feat)),
         ("DLinear",        MarketDLinear,      DLinearConfig(input_features=n_feat)),
+        ("xLSTM",          MarketXLSTM,        xLSTMConfig(input_features=n_feat)),
+        ("TimesNet",       MarketTimesNet,     TimesNetConfig(input_features=n_feat)),
     ]
+
+    _NEW_MODELS = {"iTransformer", "Mamba", "DLinear", "xLSTM", "TimesNet"}
 
     # ── 2. Train all neural models ───────────────────────────────────────────
     trained = {}
     for label, cls, cfg in NEURAL_MODELS:
-        log.info(f"\n─── {label} ({'NEW' if label in ('iTransformer','Mamba','DLinear') else ''}) ───")
+        tag = " (NEW)" if label in _NEW_MODELS else ""
+        log.info(f"\n─── {label}{tag} ───")
         trained[label] = _train_model(cls, cfg, X_tr, y_tr, X_val, y_val, label)
 
     # ── 3. Wire into EnsembleManager ────────────────────────────────────────
@@ -364,6 +372,8 @@ def train_all_colab():
         itransformer_config = ITransformerConfig(input_features=n_feat),
         mamba_config        = MambaConfig(input_features=n_feat),
         dlinear_config      = DLinearConfig(input_features=n_feat),
+        xlstm_config        = xLSTMConfig(input_features=n_feat),
+        timesnet_config     = TimesNetConfig(input_features=n_feat),
     )
     for label, _, _ in NEURAL_MODELS:
         key = label.lower().replace("-", "").replace(" ", "_")
@@ -382,8 +392,8 @@ def train_all_colab():
     ens.fit_catboost(X_tr, y_tr)
     log.info(f"  backend: {ens.catboost_model.backend}")
 
-    # ── 5. 36-dim meta-learner ───────────────────────────────────────────────
-    log.info("\n─── Fitting Meta-Learner (36-dim stack) ───")
+    # ── 5. 42-dim meta-learner ───────────────────────────────────────────────
+    log.info("\n─── Fitting Meta-Learner (42-dim stack, 14 × 3) ───")
     for m in trained.values():
         m.eval()
     with torch.no_grad():
@@ -394,9 +404,9 @@ def train_all_colab():
         ens.predict_xgboost(X_val),
         ens.predict_catboost(X_val),
     ]
-    stacked_val = np.concatenate(val_preds, axis=1)   # (n_val, 36)
+    stacked_val = np.concatenate(val_preds, axis=1)   # (n_val, 42)
     ens.fit_meta_learner(stacked_val, y_val)
-    log.info("  Meta-learner fitted on 36-dim stacked predictions")
+    log.info("  Meta-learner fitted on 42-dim stacked predictions")
 
     # ── 6. Evaluate ──────────────────────────────────────────────────────────
     log.info("\n─── Test Accuracy (all 12 models) ───")
