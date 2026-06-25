@@ -78,15 +78,53 @@ class LSTMConfig:
 
 
 @dataclass
+class TCNConfig:
+    """Temporal Convolutional Network hyperparameters."""
+    input_features: int = 46        # Number of input features (matches Transformer/LSTM)
+    n_filters: int = 64             # Conv channels throughout the network
+    kernel_size: int = 3            # Dilated kernel size
+    n_layers: int = 6               # Dilation: 1, 2, 4, 8, 16, 32 → covers 64-bar window
+    dropout: float = 0.2
+    num_classes: int = 3            # BUY, SELL, HOLD
+    seq_length: int = 64
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class XGBoostConfig:
+    """LightGBM / XGBoost / HistGradientBoosting configuration."""
+    n_estimators: int = 500
+    max_depth: int = 6
+    learning_rate: float = 0.05
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    min_child_weight: int = 20
+    num_leaves: int = 63            # LightGBM-specific (ignored by other backends)
+    reg_alpha: float = 0.1          # L1 regularisation
+    reg_lambda: float = 0.1         # L2 regularisation
+    random_state: int = 42
+    use_lightgbm: bool = True       # Prefer LightGBM if installed
+
+
+@dataclass
 class EnsembleConfig:
-    """Ensemble model configuration."""
-    transformer_weight: float = 0.40
-    lstm_weight: float = 0.35
-    gradient_boost_weight: float = 0.25
-    meta_learner_features: int = 9  # 3 models x 3 classes
-    min_agreement: float = 0.10     # Very low agreement threshold (bypassed in aggressive mode)
-    dynamic_weights: bool = True    # Adjust weights based on recent accuracy
-    weight_lookback: int = 50       # Number of recent predictions for weight calc
+    """Ensemble model configuration — 5-model stack."""
+    # Weights must sum to 1.0
+    transformer_weight: float = 0.28        # Global attention patterns
+    lstm_weight: float = 0.24              # Sequential / gating patterns
+    tcn_weight: float = 0.22              # Multi-scale local patterns (NEW)
+    gradient_boost_weight: float = 0.14   # Tabular feature interactions
+    xgboost_weight: float = 0.12          # LightGBM/XGBoost (NEW)
+    meta_learner_features: int = 15       # 5 models × 3 classes
+    min_agreement: float = 0.10           # Very low threshold (bypassed in aggressive mode)
+    dynamic_weights: bool = True          # Adjust weights based on recent accuracy
+    weight_lookback: int = 50             # Number of recent predictions for weight calc
 
 
 # ─────────────────────────────────────────────
