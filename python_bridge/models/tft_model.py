@@ -141,16 +141,16 @@ class VariableSelectionNetwork(nn.Module):
         x: (batch, seq_len, n_features)
         returns: selected (batch, seq_len, d_model), weights (batch, seq_len, n_features)
         """
-        B, T, F = x.shape
+        B, T, n_feat = x.shape
 
         # Selection weights — which features matter this timestep
-        weights = F.softmax(self.selection(x), dim=-1)     # (B, T, F)
-        weighted = weights * x                              # (B, T, F)
+        weights  = torch.softmax(self.selection(x), dim=-1)  # (B, T, n_feat)
+        weighted = weights * x                                # (B, T, n_feat)
 
         # Project weighted features to d_model
-        projected = self.feature_proj(weighted)             # (B, T, d_model*F)
+        projected = self.feature_proj(weighted)               # (B, T, d_model*n_feat)
         # Reshape and sum across feature dimension
-        projected = projected.reshape(B, T, F, self.d_model)
+        projected = projected.reshape(B, T, n_feat, self.d_model)
         combined = projected.sum(dim=2)                     # (B, T, d_model)
 
         # GRN post-processing
