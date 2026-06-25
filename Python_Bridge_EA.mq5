@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                          Python ML Bridge - Signal Executor        |
 //|                                                                    |
-//|  v5.3.6 - 24/7 Trading + No Limits + Fast Self-Learning          |
+//|  v6.0 - Quality Over Quantity - Single Position Architecture     |
 //|                                                                    |
 //|  Reads trade signals from the Python ML Bridge CSV file and        |
 //|  executes trades with proper risk management. Writes execution     |
@@ -13,8 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "Python ML Bridge"
-#property version   "5.36"
-// v5.3.6 - 24/7 Trading + No Limits + Fast Self-Learning
+#property version   "6.00"
+// v6.0 - Quality Over Quantity - Single Position Architecture
 #property strict
 
 #include <Trade\Trade.mqh>

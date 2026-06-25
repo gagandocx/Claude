@@ -73,7 +73,7 @@ class TestAutoOptimizerInit:
         assert params["momentum_lookback"] == 8
         assert params["rsi_overbought"] == 62
         assert params["rsi_oversold"] == 38
-        assert params["cooldown_seconds"] == 120
+        assert params["cooldown_seconds"] == 60
         assert params["max_positions"] == 1
 
     def test_default_session_multipliers(self, optimizer):
@@ -133,6 +133,21 @@ class TestTradeRecording:
         optimizer.record_trade(_make_trade(1.0))
         optimizer.record_trade(_make_trade(2.0))
         assert optimizer._trades_since_optimize == 2
+
+    def test_record_estimated_trade(self, optimizer):
+        """Test that record_estimated_trade records trade with estimated trail_tier."""
+        trade = _make_trade(1.5, session="london", confidence=0.7)
+        optimizer.record_estimated_trade(trade)
+        assert optimizer.trade_count == 1
+        assert optimizer._trades[0]["trail_tier"] == "estimated"
+        assert optimizer._trades[0]["result_pnl"] == 1.5
+        assert optimizer._trades[0]["session"] == "london"
+
+    def test_record_estimated_trade_overrides_trail_tier(self, optimizer):
+        """Test that record_estimated_trade always sets trail_tier to 'estimated'."""
+        trade = _make_trade(2.0, trail_tier="tight")
+        optimizer.record_estimated_trade(trade)
+        assert optimizer._trades[0]["trail_tier"] == "estimated"
 
 
 class TestOptimization:
@@ -210,15 +225,15 @@ class TestOptimization:
         config = AutoOptimizerConfig(optimize_frequency=10, min_trades_before_tuning=10)
         opt = AutoOptimizer(config=config, state_dir=temp_dir)
 
-        # Fast entries (cooldown <= 120) are profitable
+        # Fast entries (cooldown <= 60) are profitable
         for _ in range(8):
-            opt._trades.append(_make_trade(1.5, cooldown_used=60.0))
+            opt._trades.append(_make_trade(1.5, cooldown_used=50.0))
         for _ in range(2):
             opt._trades.append(_make_trade(-0.5, cooldown_used=150.0))
 
         opt.optimize()
-        # Default is 120, fast entries profitable -> should reduce by 1
-        assert opt.get_current_params()["cooldown_seconds"] == 119
+        # Default is 60, fast entries profitable -> should reduce by 1
+        assert opt.get_current_params()["cooldown_seconds"] == 59
 
     def test_max_positions_reduces_on_high_drawdown(self, temp_dir):
         """Test max positions reduces when drawdown is high."""

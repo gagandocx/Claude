@@ -170,7 +170,9 @@ class SignalConfig:
     atr_sl_multiplier: float = 1.6          # SL = ATR * multiplier (wider SL for better win rate)
     atr_tp_multiplier: float = 0.0          # TP = 0 -> EA manages exit dynamically (no fixed TP)
     max_signal_age_seconds: int = 300       # Signal expires after 5 minutes
-    cooldown_seconds: int = 10              # 10-second cooldown between signals (maximum trade frequency)
+    cooldown_seconds: int = 60              # 60-second cooldown between signals (quality over quantity)
+    max_hold_seconds: int = 300             # 5 minutes max hold for a single position
+    max_positions: int = 1                  # Only 1 position at a time (Python-side enforcement)
 
 
 # ─────────────────────────────────────────────

@@ -1435,3 +1435,158 @@ class TestM1ATR:
             "Close": [1.5]*5, "Volume": [100]*5
         })
         assert MarketDataFetcher.compute_atr_from_df(df, window=14) == 0.0
+
+
+# ─────────────────────────────────────────────
+#  v6.0 SINGLE POSITION ARCHITECTURE TESTS
+# ─────────────────────────────────────────────
+class TestSinglePositionArchitecture:
+    """Tests for v6.0 single position management."""
+
+    def test_active_position_initialized_to_none(self, signal_config):
+        """Test that _active_position starts as None."""
+        gen = SignalGenerator(signal_config=signal_config)
+        assert gen._active_position is None
+
+    def test_active_position_blocks_new_signals(self, signal_config, mock_features, mock_prices):
+        """Test that an active position causes HOLD signal."""
+        gen = SignalGenerator(signal_config=signal_config)
+        import time as time_mod
+        gen._active_position = {
+            "direction": "BUY",
+            "entry_price": 2000.0,
+            "entry_time": time_mod.time(),  # just entered
+            "signal_context": {
+                "confidence": 0.5,
+                "session": "london",
+                "sl_distance": 3.0,
+                "momentum_lookback": 8,
+                "rsi_at_entry": 50.0,
+            }
+        }
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=mock_prices,
+            atr=5.0,
+            current_price=2001.0
+        )
+        assert signal.action == "HOLD"
+
+    def test_position_closed_after_max_hold_time(self, signal_config, mock_features, mock_prices):
+        """Test that position is cleared after max hold time exceeded."""
+        import time as time_mod
+        # Use a config with short max_hold to test
+        config = SignalConfig(
+            min_confidence=0.65,
+            strong_confidence=0.80,
+            atr_sl_multiplier=1.5,
+            atr_tp_multiplier=2.5,
+            cooldown_seconds=0,
+            max_hold_seconds=1,  # 1 second for testing
+        )
+        gen = SignalGenerator(signal_config=config)
+        gen._active_position = {
+            "direction": "BUY",
+            "entry_price": 2000.0,
+            "entry_time": time_mod.time() - 10,  # 10 seconds ago (exceeds 1s max_hold)
+            "signal_context": {
+                "confidence": 0.5,
+                "session": "london",
+                "sl_distance": 3.0,
+                "momentum_lookback": 8,
+                "rsi_at_entry": 50.0,
+            }
+        }
+        # After max hold exceeded, position should be cleared and new signal attempted
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=mock_prices,
+            atr=5.0,
+            current_price=2001.0
+        )
+        # Position should have been cleared (whether new signal is HOLD or BUY/SELL depends
+        # on model state, but active_position should be None or freshly set)
+        # If models not loaded, it returns HOLD and _active_position remains None
+        # The key check: the old position was closed
+        assert gen._active_position is None or gen._active_position["entry_time"] > time_mod.time() - 5
+
+    def test_range_buy_blocked_when_htf_bearish(self, signal_config, mock_features):
+        """Test that range BUY is blocked when M5 and M15 are both bearish."""
+        gen = SignalGenerator(signal_config=signal_config)
+
+        # Create price data where we're at the bottom of a range (position_in_range <= 0.25)
+        n = 50
+        # Create a flat range from 2000 to 2020, with current price near the bottom
+        closes = np.array([2010.0] * n)
+        closes[-1] = 2002.0  # Near bottom of range (position_in_range ~ 0.1)
+        highs = closes + 10.0  # Range high = 2020
+        lows = closes - 10.0   # Range low = 2000
+
+        df = pd.DataFrame({
+            "Open": closes - 0.5,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+            "Volume": np.random.randint(100, 1000, n),
+        })
+
+        # HTF bias is strongly bearish on both M5 and M15
+        htf_bias = {"5m": -0.8, "15m": -0.7}
+
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=df,
+            atr=5.0,
+            current_price=2002.0,
+            htf_bias=htf_bias,
+            prices_m1=df,
+        )
+        # Should be HOLD because range BUY is blocked by bearish HTF
+        assert signal.action == "HOLD"
+
+    def test_active_position_set_after_signal(self, signal_config, mock_features, mock_prices):
+        """Test that _active_position is populated after a non-HOLD signal."""
+        import time as time_mod
+        gen = SignalGenerator(signal_config=signal_config)
+        # Force models to appear loaded
+        gen.ensemble.models_loaded = True
+
+        # Mock the ensemble to return a valid prediction
+        from unittest.mock import patch, MagicMock
+        mock_pred = {
+            "probabilities": np.array([[0.1, 0.1, 0.8]]),
+            "confidence": np.array([0.8]),
+            "agreement": np.array([0.9]),
+            "individual_preds": {
+                "transformer": np.array([[0.1, 0.1, 0.8]]),
+                "lstm": np.array([[0.1, 0.1, 0.8]]),
+                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
+            }
+        }
+
+        # Create strong uptrend prices for clear BUY momentum
+        n = 200
+        trend = np.linspace(1990, 2010, n)
+        df = pd.DataFrame({
+            "Open": trend - 1,
+            "High": trend + 2,
+            "Low": trend - 2,
+            "Close": trend,
+            "Volume": np.random.randint(100, 1000, n),
+        })
+
+        with patch.object(gen.ensemble, 'predict', return_value=mock_pred):
+            signal = gen.generate_signal(
+                features=mock_features,
+                prices=df,
+                atr=5.0,
+                current_price=2010.0,
+                prices_m1=df,
+            )
+
+        if signal.action != "HOLD":
+            assert gen._active_position is not None
+            assert gen._active_position["direction"] == signal.action
+            assert gen._active_position["entry_price"] == 2010.0
+            assert "signal_context" in gen._active_position
+            assert gen._active_position["entry_time"] > time_mod.time() - 5

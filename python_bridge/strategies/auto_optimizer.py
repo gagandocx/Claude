@@ -93,8 +93,8 @@ class AutoOptimizer:
                 "medium": 1.0,
                 "wide": 2.0,
             },
-            "cooldown_seconds": 10,
-            "max_positions": 3,
+            "cooldown_seconds": 60,
+            "max_positions": 1,
         }
 
     def record_trade(self, trade_context: Dict) -> None:
@@ -138,6 +138,26 @@ class AutoOptimizer:
                      len(self._trades),
                      trade_context.get("result_pnl", 0.0),
                      trade_context.get("session", "unknown"))
+
+    def record_estimated_trade(self, trade_context: Dict) -> None:
+        """
+        Record a Python-estimated trade (P&L computed from price movement).
+
+        This is used by the signal generator when it closes a position
+        based on momentum reversal or max hold time. The trade is tagged
+        with trail_tier='estimated' to distinguish it from MT5-confirmed trades.
+
+        Args:
+            trade_context: Dict with same format as record_trade, including
+                result_pnl computed as (exit_price - entry_price) for BUY
+                or (entry_price - exit_price) for SELL.
+        """
+        # Ensure trail_tier is marked as estimated
+        trade_context["trail_tier"] = "estimated"
+        self.record_trade(trade_context)
+        logger.debug("[AutoOpt] Recorded estimated trade (PnL=%.2f, dir=%s)",
+                     trade_context.get("result_pnl", 0.0),
+                     trade_context.get("direction", "unknown"))
 
     def optimize(self) -> Dict:
         """

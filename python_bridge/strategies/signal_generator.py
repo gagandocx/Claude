@@ -117,6 +117,9 @@ class SignalGenerator:
         self._last_signal_time = 0.0
         self._signal_count = 0
 
+        # v6.0: Single position tracking - only 1 trade at a time
+        self._active_position = None
+
     def _analyze_candle_patterns(self, prices_df) -> Dict:
         """
         Analyze the most recent candle(s) for candlestick patterns that indicate
@@ -904,6 +907,71 @@ class SignalGenerator:
             regime="ranging"
         )
 
+        # ─── v6.0: SINGLE POSITION MANAGEMENT ───────────────────────────
+        # If we already have an active position, manage it before generating new signals
+        if self._active_position is not None:
+            time_held = time.time() - self._active_position["entry_time"]
+            active_dir = self._active_position["direction"]
+
+            # Check if minimum cooldown from entry hasn't passed
+            if time_held < self.signal_config.cooldown_seconds:
+                logger.info("[SignalGen] HOLD - position active, cooldown (%.1fs of %ds)",
+                            time_held, self.signal_config.cooldown_seconds)
+                return hold_signal
+
+            # Compute quick momentum check to see if direction reversed
+            momentum_prices_quick = prices_m1 if prices_m1 is not None else prices
+            quick_momentum = self._compute_momentum_direction(momentum_prices_quick)
+
+            # Check if max hold time exceeded OR momentum reversed
+            momentum_reversed = (
+                (active_dir == "BUY" and quick_momentum == "SELL") or
+                (active_dir == "SELL" and quick_momentum == "BUY")
+            )
+            max_hold_exceeded = time_held >= self.signal_config.max_hold_seconds
+
+            if momentum_reversed or max_hold_exceeded:
+                # Close position: estimate PnL and feed to optimizer
+                entry_price = self._active_position["entry_price"]
+                if active_dir == "BUY":
+                    estimated_pnl = current_price - entry_price
+                else:
+                    estimated_pnl = entry_price - current_price
+
+                reason = "momentum_reversed" if momentum_reversed else "max_hold_exceeded"
+                logger.info("[SignalGen] Closing active position: %s entry=%.2f "
+                            "current=%.2f pnl=%.2f reason=%s",
+                            active_dir, entry_price, current_price, estimated_pnl, reason)
+
+                # Feed estimated PnL to auto-optimizer
+                if self._auto_optimizer and self._auto_optimizer.is_enabled:
+                    ctx = self._active_position.get("signal_context", {})
+                    trade_data = {
+                        "session": ctx.get("session", "unknown"),
+                        "confidence": ctx.get("confidence", 0.5),
+                        "momentum_lookback": ctx.get("momentum_lookback", 8),
+                        "sl_distance": ctx.get("sl_distance", 5.0),
+                        "result_pnl": estimated_pnl,
+                        "direction": active_dir,
+                        "rsi_at_entry": ctx.get("rsi_at_entry", 50.0),
+                        "trail_tier": "estimated",
+                        "cooldown_used": self.signal_config.cooldown_seconds,
+                        "max_positions_at_entry": self.signal_config.max_positions,
+                        "entry_time": datetime.fromtimestamp(
+                            self._active_position["entry_time"]).isoformat(),
+                        "exit_time": timestamp,
+                    }
+                    self._auto_optimizer.record_estimated_trade(trade_data)
+
+                # Clear position so a new signal can be generated below
+                self._active_position = None
+            else:
+                # Position is still valid (same direction, within hold time) - let it ride
+                logger.info("[SignalGen] HOLD - letting %s position ride (%.1fs held, "
+                            "momentum=%s)", active_dir, time_held, quick_momentum)
+                return hold_signal
+        # ─── END v6.0 POSITION MANAGEMENT ────────────────────────────────
+
         # Cooldown check
         elapsed = time.time() - self._last_signal_time
         if elapsed < self.signal_config.cooldown_seconds:
@@ -1038,6 +1106,23 @@ class SignalGenerator:
             if range_signal is None:
                 logger.info("[SignalGen] HOLD - momentum is FLAT (no clear direction, "
                             "no range extremes)")
+                return hold_signal
+
+            # v6.0: HTF VALIDATION for range mode - block range signals against strong HTF trends
+            if range_signal == "range_buy" and htf_bias is not None:
+                if htf_bias.get("5m", 0) < -0.5 and htf_bias.get("15m", 0) < -0.5:
+                    logger.info("[SignalGen] RANGE BUY BLOCKED: M5 (%.2f) and M15 (%.2f) "
+                                "both bearish", htf_bias.get("5m", 0), htf_bias.get("15m", 0))
+                    range_signal = None
+            elif range_signal == "range_sell" and htf_bias is not None:
+                if htf_bias.get("5m", 0) > 0.5 and htf_bias.get("15m", 0) > 0.5:
+                    logger.info("[SignalGen] RANGE SELL BLOCKED: M5 (%.2f) and M15 (%.2f) "
+                                "both bullish", htf_bias.get("5m", 0), htf_bias.get("15m", 0))
+                    range_signal = None
+
+            # After HTF validation, if range signal was blocked, hold
+            if range_signal is None:
+                logger.info("[SignalGen] HOLD - range signal blocked by HTF validation")
                 return hold_signal
 
         # 1a. SESSION FILTER: ALL sessions trade at full confidence - 24/7 no restrictions
@@ -1352,6 +1437,21 @@ class SignalGenerator:
 
         self._last_signal_time = time.time()
         self._signal_count += 1
+
+        # v6.0: Track active position for single-position enforcement
+        self._active_position = {
+            "direction": action,
+            "entry_price": current_price,
+            "entry_time": time.time(),
+            "signal_context": {
+                "confidence": timing_confidence,
+                "session": session,
+                "sl_distance": levels["sl_pips"] * 0.1,
+                "momentum_lookback": self.data_config.momentum_lookback,
+                "rsi_at_entry": current_rsi_for_zone if current_rsi_for_zone else 50.0,
+            }
+        }
+
         logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",
                     signal.action, signal.symbol, signal.confidence,
                     signal.lot_size, signal.regime)

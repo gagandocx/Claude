@@ -20,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-VERSION = "5.3.6"
+VERSION = "6.0"
 
 import numpy as np
 import pandas as pd
@@ -597,6 +597,9 @@ class PythonMLBridge:
                             sl_pips=sl_pips_val,
                             tp_pips=tp_pips_val,
                         )
+                        # v6.0: Update active position with actual fill price from MT5
+                        if self.signal_generator._active_position is not None:
+                            self.signal_generator._active_position["entry_price"] = entry_price
                         self.logger.info(
                             f"  Registered position {trade_id} for RL tracking "
                             f"(dir={direction}, entry={entry_price:.2f})"
@@ -606,6 +609,9 @@ class PythonMLBridge:
                     if conf.get("type") == "close":
                         trade_id = str(conf.get("ticket", ""))
                         pnl = float(conf.get("pnl", 0.0))
+
+                        # v6.0: Clear active position on close
+                        self.signal_generator._active_position = None
 
                         # Fix #1: Call update_from_execution() to remove position
                         # from _open_positions and feed the RL agent its terminal
