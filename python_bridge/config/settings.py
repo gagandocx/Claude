@@ -180,26 +180,88 @@ class CatBoostConfig:
     l2_leaf_reg: float = 3.0
     random_strength: float = 1.0
     bagging_temperature: float = 1.0
-    border_count: int = 128         # Number of histogram splits (higher = more accurate)
+    border_count: int = 128
     random_seed: int = 42
     early_stopping_rounds: int = 50
     verbose: bool = False
 
 
 @dataclass
+class ITransformerConfig:
+    """iTransformer — inverted feature-space attention (Liu et al., ICLR 2024)."""
+    input_features: int = 46
+    seq_length: int = 64        # Used as the embedding dim per feature token
+    d_model: int = 128
+    n_heads: int = 4
+    n_layers: int = 3
+    d_ff: int = 256
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class MambaConfig:
+    """Mamba S6 — selective state space model (Gu & Dao, CMU/Princeton 2023)."""
+    input_features: int = 46
+    seq_length: int = 64
+    d_model: int = 128          # Hidden dimension
+    d_state: int = 16           # SSM state dimension
+    d_conv: int = 4             # Local depthwise conv kernel
+    expand: int = 2             # d_inner = expand × d_model
+    n_layers: int = 4           # Number of Mamba blocks
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 32
+    batch_size_gpu: int = 256
+    epochs: int = 100
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
+class DLinearConfig:
+    """DLinear — decomposition linear model (Zeng et al., AAAI 2023)."""
+    input_features: int = 46
+    seq_length: int = 64
+    kernel_size: int = 25       # Moving-average window for trend extraction
+    hidden_size: int = 128      # MLP classifier hidden size
+    dropout: float = 0.1
+    num_classes: int = 3
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-5
+    batch_size: int = 64        # Simple model — larger batch is fine
+    batch_size_gpu: int = 512
+    epochs: int = 80
+    patience: int = 15
+    label_smoothing: float = 0.1
+
+
+@dataclass
 class EnsembleConfig:
-    """Ensemble model configuration — 9-model stack."""
+    """Ensemble model configuration — 12-model stack."""
     # Weights must sum to 1.0
-    transformer_weight: float = 0.12       # Global self-attention
-    lstm_weight: float = 0.10              # Sequential / gating
-    tcn_weight: float = 0.10              # Multi-scale local conv
-    patch_tst_weight: float = 0.15        # Patch-based SOTA Transformer (2023)
-    tft_weight: float = 0.15             # Financial-specific (VSN + GRN + LSTM + MHA)
-    nhits_weight: float = 0.10           # Hierarchical multi-scale (macro→micro)
-    gradient_boost_weight: float = 0.10  # sklearn HistGradBoost baseline
-    xgboost_weight: float = 0.09         # LightGBM / XGBoost
-    catboost_weight: float = 0.09        # CatBoost ordered boosting
-    meta_learner_features: int = 27      # 9 models × 3 classes
+    transformer_weight: float = 0.09    # Global self-attention
+    lstm_weight: float = 0.08           # Sequential / gating
+    tcn_weight: float = 0.08            # Multi-scale dilated conv
+    patch_tst_weight: float = 0.12      # Patch-based SOTA (2023)
+    tft_weight: float = 0.12            # Financial-specific VSN+GRN
+    nhits_weight: float = 0.08          # Hierarchical macro→micro
+    itransformer_weight: float = 0.12   # Feature-space attention (2024)
+    mamba_weight: float = 0.10          # Selective state space (2023)
+    dlinear_weight: float = 0.05        # Decomposition linear (diversity)
+    gradient_boost_weight: float = 0.08 # sklearn HistGradBoost
+    xgboost_weight: float = 0.04        # LightGBM / XGBoost
+    catboost_weight: float = 0.04       # Ordered boosting
+    meta_learner_features: int = 36     # 12 models × 3 classes
     min_agreement: float = 0.10
     dynamic_weights: bool = True
     weight_lookback: int = 50
