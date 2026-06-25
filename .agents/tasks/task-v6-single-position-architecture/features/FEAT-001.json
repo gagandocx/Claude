@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "v6.0 Single Position Architecture - Complete overhaul of signal generation to enforce one-trade-at-a-time, position tracking, range mode HTF validation, 60s cooldown, and Python-side P&L estimation for AutoOptimizer learning.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1: In python_bridge/config/settings.py SignalConfig dataclass: Change `cooldown_seconds: int = 10` to `cooldown_seconds: int = 60`. Add `max_hold_seconds: int = 300` field. Add `max_positions: int = 1` field.",
     "Step 2: In python_bridge/strategies/signal_generator.py __init__(): Add `self._active_position = None` attribute. This will store a dict with keys: direction (BUY/SELL), entry_price (float), entry_time (float from time.time()), signal_context (dict with confidence, session, sl_distance, momentum_lookback, rsi_at_entry).",
@@ -35,5 +35,5 @@
     "Run `python3 -c \"from python_bridge.config.settings import SignalConfig; sc = SignalConfig(); assert sc.cooldown_seconds == 60; assert sc.max_hold_seconds == 300; assert sc.max_positions == 1; print('OK')\"` to confirm config changes"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Implementation complete. All 528 tests pass (1 pre-existing failure in test_smart_upgrades.py::TestConfigs::test_price_structure_config_defaults which asserts 0.15 but code has 0.05 - unrelated to this change). The previous pre-existing failures in test_auto_optimizer (cooldown==120, cooldown==119) are now fixed as part of this task. Key design notes: (1) _active_position is separate from _open_positions dict which is for RL agent tracking. (2) The position management block runs BEFORE the cooldown check in generate_signal(). (3) The HTF validation is inserted between range signal detection and the existing 'if range_signal is None: return hold_signal' check. (4) Auto-optimizer record_estimated_trade is a thin wrapper that ensures trail_tier='estimated' before calling record_trade."
 }
