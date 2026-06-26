@@ -34,6 +34,7 @@ from config.settings import (
     AutoOptimizerConfig, BrainConfig,
     TickDataConfig, MicrostructureConfig,
     RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig,
+    SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -57,6 +58,9 @@ from data.microstructure import MicrostructureAnalyzer
 from strategies.regime_router import RegimeModelRouter
 from strategies.walk_forward import WalkForwardRetrainer
 from strategies.adversarial_filter import AdversarialFilter
+from data.spread_monitor import SpreadMonitor
+from strategies.correlation_regime import CorrelationRegimeDetector
+from strategies.adaptive_threshold import AdaptiveConfidenceThreshold
 
 
 # ─────────────────────────────────────────────
@@ -208,6 +212,25 @@ class PythonMLBridge:
             if self.config.enable_adversarial_filter else None
         )
 
+        # ── V3 Tier 2 Components ────────────────────────────────────────────
+        # Spread monitor (EA-reported real-time spread gating)
+        self.spread_monitor = (
+            SpreadMonitor(SpreadGateConfig())
+            if self.config.enable_spread_gate else None
+        )
+
+        # Correlation regime detector (DXY/bonds/equities state)
+        self.correlation_regime = (
+            CorrelationRegimeDetector(CorrelationRegimeConfig())
+            if self.config.enable_correlation_regime else None
+        )
+
+        # Adaptive confidence threshold (self-tuning entry gate)
+        self.adaptive_threshold = (
+            AdaptiveConfidenceThreshold(AdaptiveThresholdConfig())
+            if self.config.enable_adaptive_threshold else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -238,6 +261,14 @@ class PythonMLBridge:
         if self.adversarial_filter:
             self.signal_generator.set_adversarial_filter(self.adversarial_filter)
 
+        # ── V3 Tier 2: Wire components into signal generator ────────────────
+        if self.spread_monitor:
+            self.signal_generator.set_spread_monitor(self.spread_monitor)
+        if self.correlation_regime:
+            self.signal_generator.set_correlation_regime(self.correlation_regime)
+        if self.adaptive_threshold:
+            self.signal_generator.set_adaptive_threshold(self.adaptive_threshold)
+
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
@@ -258,6 +289,9 @@ class PythonMLBridge:
         self.logger.info(f"  Adversarial:    {self.config.enable_adversarial_filter}")
         self.logger.info(f"  --- V3 Tier 2 ---")
         self.logger.info(f"  Microstructure: {self.config.enable_microstructure}")
+        self.logger.info(f"  Spread gate:    {self.config.enable_spread_gate}")
+        self.logger.info(f"  Corr regime:    {self.config.enable_correlation_regime}")
+        self.logger.info(f"  Adaptive thr:   {self.config.enable_adaptive_threshold}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -384,6 +418,18 @@ class PythonMLBridge:
                                             won    = pnl > 0,
                                             regime = active.get("regime", "unknown"),
                                         )
+                                    # v8.0 Tier 2: Feed adaptive threshold
+                                    if self.adaptive_threshold:
+                                        try:
+                                            entry_conf = active.get(
+                                                "signal_context", {}).get("confidence", 0.5)
+                                            self.adaptive_threshold.record_trade(
+                                                confidence_at_entry=entry_conf,
+                                                won=(pnl > 0)
+                                            )
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Adaptive threshold record error: {e}")
                                     self.signal_generator.clear_active_position()
                                     self.signal_generator._estimated_close_pending = True
                                 else:
@@ -645,6 +691,42 @@ class PythonMLBridge:
                                     f"({'strong' if usd_str > 0 else 'weak'} - "
                                     f"{'bearish' if usd_str > 0 else 'bullish'} for gold)"
                                 )
+
+                        # v8.0 Tier 2: Feed cross-pair data to CorrelationRegimeDetector
+                        if self.correlation_regime and pair_data:
+                            try:
+                                corr_pair_data = {}
+                                # Gold prices
+                                if current_price > 0:
+                                    corr_pair_data['gold'] = current_price
+                                # DXY prices from pair_data
+                                if 'DXY' in pair_data and not pair_data['DXY'].empty:
+                                    dxy_vals = pair_data['DXY']['Close'].values[-20:]
+                                    corr_pair_data['dxy'] = dxy_vals.tolist()
+                                elif 'DX-Y.NYB' in pair_data and not pair_data['DX-Y.NYB'].empty:
+                                    dxy_vals = pair_data['DX-Y.NYB']['Close'].values[-20:]
+                                    corr_pair_data['dxy'] = dxy_vals.tolist()
+                                # SPY/equities
+                                for key in ['SPY', 'spy', '^GSPC']:
+                                    if key in pair_data and not pair_data[key].empty:
+                                        spy_vals = pair_data[key]['Close'].values[-20:]
+                                        corr_pair_data['spy'] = spy_vals.tolist()
+                                        break
+                                # TNX/bonds
+                                for key in ['TNX', '^TNX', 'bonds']:
+                                    if key in pair_data and not pair_data[key].empty:
+                                        tnx_vals = pair_data[key]['Close'].values[-20:]
+                                        corr_pair_data['tnx'] = tnx_vals.tolist()
+                                        break
+                                if corr_pair_data:
+                                    self.correlation_regime.update(corr_pair_data)
+                                    self.logger.debug(
+                                        f"[CorrelationRegime] Updated: "
+                                        f"regime={self.correlation_regime.get_regime()}"
+                                    )
+                            except Exception as e:
+                                self.logger.debug(f"Correlation regime update error: {e}")
+
                 except Exception as e:
                     self.logger.debug(f"Multi-pair error: {e}")
 

@@ -292,3 +292,108 @@ class MicrostructureAnalyzer:
     def is_low_activity(self) -> bool:
         """Check if current tick rate is in the bottom 20% of recent history."""
         return self.get_tick_rate_percentile() < 0.20
+
+    def get_feature_vector(self, ticks: Optional[List[Dict]] = None) -> np.ndarray:
+        """
+        Return a fixed-size numpy array of microstructure features suitable
+        for concatenation with existing model input features.
+
+        Features (6 elements):
+            [0] tick_rate_normalized: ticks/sec normalized by history percentile
+            [1] bid_ask_bounce_rate: fraction of alternations [0, 1]
+            [2] large_order_flow_normalized: net large flow [-1, 1]
+            [3] spread_velocity: normalized spread change rate
+            [4] volume_acceleration: rate of change of tick volume
+            [5] tick_imbalance_ratio: buy_ticks / total_ticks - 0.5 (centered)
+
+        If ticks data is unavailable or insufficient, returns zeros (safe default).
+
+        Args:
+            ticks: Optional list of tick dicts. If None, returns zeros.
+
+        Returns:
+            np.ndarray of shape (6,) with float32 values.
+        """
+        # Fixed size: always 6 elements
+        vector = np.zeros(6, dtype=np.float32)
+
+        if not ticks or len(ticks) < 5:
+            return vector
+
+        # Compute base features
+        features = self.compute_features(ticks)
+
+        # [0] tick_rate_normalized: use percentile (0-1 range)
+        vector[0] = self.get_tick_rate_percentile()
+
+        # [1] bid_ask_bounce_rate: already in [0, 1]
+        vector[1] = features.get('bid_ask_bounce_rate', 0.0)
+
+        # [2] large_order_flow_normalized: already in [-1, 1]
+        vector[2] = features.get('large_order_flow', 0.0)
+
+        # [3] spread_velocity: clip to [-1, 1] for safety
+        sv = features.get('spread_velocity', 0.0)
+        vector[3] = float(np.clip(sv, -1.0, 1.0))
+
+        # [4] volume_acceleration: rate of change of tick volume
+        vector[4] = self._compute_volume_acceleration(ticks)
+
+        # [5] tick_imbalance_ratio: buy fraction - 0.5 (centered around 0)
+        vector[5] = self._compute_tick_imbalance(ticks)
+
+        return vector
+
+    def _compute_volume_acceleration(self, ticks: List[Dict]) -> float:
+        """
+        Compute volume acceleration (second derivative of cumulative volume).
+
+        Compares volume in the most recent window vs the previous window
+        to detect whether activity is increasing or decreasing.
+
+        Returns:
+            Float in roughly [-1, 1]: positive = accelerating, negative = decelerating
+        """
+        if len(ticks) < 20:
+            return 0.0
+
+        half = len(ticks) // 2
+        first_half_vol = sum(t.get('volume', 0) for t in ticks[:half])
+        second_half_vol = sum(t.get('volume', 0) for t in ticks[half:])
+
+        total = first_half_vol + second_half_vol
+        if total <= 0:
+            return 0.0
+
+        # Normalized acceleration: (recent - old) / total
+        accel = (second_half_vol - first_half_vol) / total
+        return float(np.clip(accel, -1.0, 1.0))
+
+    def _compute_tick_imbalance(self, ticks: List[Dict]) -> float:
+        """
+        Compute tick imbalance ratio (buy fraction - 0.5).
+
+        Counts buy ticks vs total classified ticks. Returns value
+        centered around 0: positive = more buys, negative = more sells.
+
+        Returns:
+            Float in [-0.5, 0.5]
+        """
+        if len(ticks) < 5:
+            return 0.0
+
+        buy_count = 0
+        sell_count = 0
+
+        for tick in ticks[-100:]:  # Use last 100 ticks max
+            if tick.get('is_buy', False):
+                buy_count += 1
+            elif tick.get('is_sell', False):
+                sell_count += 1
+
+        total = buy_count + sell_count
+        if total == 0:
+            return 0.0
+
+        buy_fraction = buy_count / total
+        return float(buy_fraction - 0.5)

@@ -2,7 +2,7 @@
   "id": "FEAT-003",
   "type": "feat",
   "description": "Implement Tier 2 features: Spread/slippage-aware entry gating (EA writes spread, Python reads and gates), microstructure features integration into model input, correlation regime detection (DXY/bonds/equities state), and adaptive confidence threshold that self-tunes based on recent accuracy.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Create python_bridge_v3/data/spread_monitor.py: A SpreadMonitor class that reads SPREAD_FILE CSV (format: timestamp,spread_points,ask,bid written by EA every tick). Methods: get_current_spread() -> float; get_average_spread(window=100) -> float; is_spread_acceptable() -> bool (True if current spread < max_spread_multiplier * average); get_spread_features() -> dict with spread_ratio, spread_percentile, spread_velocity for model input.",
     "Update python_bridge_v3/data/microstructure.py: Add method get_feature_vector() that returns a flat numpy array of all microstructure features suitable for concatenation with existing model input features. Features: [tick_rate_normalized, bid_ask_bounce_rate, large_order_flow_normalized, spread_velocity, volume_acceleration, tick_imbalance_ratio]. Ensure the array length is fixed (pad with zeros if data unavailable).",

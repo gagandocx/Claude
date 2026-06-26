@@ -23,7 +23,9 @@ from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig
                              PriceStructureConfig, FVGConfig, LiquiditySweepConfig,
                              AutoOptimizerConfig, MainConfig,
                              TickDataConfig, MicrostructureConfig,
-                             RegimeRoutingConfig, AdversarialFilterConfig)
+                             RegimeRoutingConfig, AdversarialFilterConfig,
+                             SpreadGateConfig, CorrelationRegimeConfig,
+                             AdaptiveThresholdConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -122,6 +124,11 @@ class SignalGenerator:
         self._regime_router = None
         self._adversarial_filter = None
         self._main_config = None  # Set from main.py for feature flag checks
+
+        # v8.0 Tier 2: Optional components (set from main.py via setters)
+        self._spread_monitor = None
+        self._correlation_regime = None
+        self._adaptive_threshold = None
 
         self._last_signal_time = 0.0
         self._signal_count = 0
@@ -1004,6 +1011,19 @@ class SignalGenerator:
                         # skips the MT5 close feed (prevents double-counting)
                         self._estimated_close_pending = True
 
+                    # v8.0 Tier 2: Feed adaptive threshold with trade outcome
+                    if (self._adaptive_threshold and self._main_config and
+                            self._main_config.enable_adaptive_threshold):
+                        try:
+                            entry_conf = self._active_position.get(
+                                "signal_context", {}).get("confidence", 0.5)
+                            self._adaptive_threshold.record_trade(
+                                confidence_at_entry=entry_conf,
+                                won=(estimated_pnl > 0)
+                            )
+                        except Exception as e:
+                            logger.debug("[SignalGen] Adaptive threshold record error: %s", e)
+
                     # Clear position so a new signal can be generated below
                     self._active_position = None
                 else:
@@ -1082,6 +1102,17 @@ class SignalGenerator:
         if self._check_spread_filter(prices):
             logger.info("[SignalGen] HOLD - spread filter blocked (abnormally wide range)")
             return hold_signal
+
+        # 1b2. v8.0 Tier 2: Spread gate - check EA-reported real-time spread
+        if (self._spread_monitor and self._main_config and
+                self._main_config.enable_spread_gate):
+            try:
+                if not self._spread_monitor.is_spread_acceptable():
+                    logger.info("[SignalGen] HOLD - spread gate: spread too wide "
+                                "(EA-reported real-time spread)")
+                    return hold_signal
+            except Exception as e:
+                logger.debug("[SignalGen] Spread gate error: %s", e)
 
         # 1c. Compute average ATR for adaptive momentum
         import pandas as pd
@@ -1441,6 +1472,19 @@ class SignalGenerator:
             timing_confidence += dxy_adj["sell_adjustment"]
         timing_confidence = max(0.0, min(1.0, timing_confidence))
 
+        # 5e2. v8.0 Tier 2: Correlation regime confidence adjustment
+        if (self._correlation_regime and self._main_config and
+                self._main_config.enable_correlation_regime):
+            try:
+                corr_adj = self._correlation_regime.get_confidence_adjustment(action)
+                if abs(corr_adj) > 0.001:
+                    timing_confidence += corr_adj
+                    logger.info("[SignalGen] Correlation regime (%s): %s adjustment %+.3f",
+                                self._correlation_regime.get_regime(), action, corr_adj)
+                timing_confidence = max(0.0, min(1.0, timing_confidence))
+            except Exception as e:
+                logger.debug("[SignalGen] Correlation regime error: %s", e)
+
         # 5f. FVG (Fair Value Gap) detection
         fvg_info = self._detect_fvg(prices)
         if action == "BUY" and fvg_info["fvg_aligns_buy"]:
@@ -1471,6 +1515,17 @@ class SignalGenerator:
         min_confidence = regime_adjustments.get(
             "confidence_threshold", self.signal_config.min_confidence
         )
+
+        # v8.0 Tier 2: Use adaptive threshold if enabled (replaces fixed value)
+        if (self._adaptive_threshold and self._main_config and
+                self._main_config.enable_adaptive_threshold):
+            try:
+                adaptive_min = self._adaptive_threshold.get_current_threshold()
+                min_confidence = adaptive_min
+                logger.debug("[SignalGen] Using adaptive threshold: %.3f", adaptive_min)
+            except Exception as e:
+                logger.debug("[SignalGen] Adaptive threshold error: %s", e)
+
         if timing_confidence < min_confidence:
             logger.info("[SignalGen] HOLD - timing confidence %.4f < threshold %.4f (regime: %s)",
                         timing_confidence, min_confidence, regime_name)
@@ -1624,6 +1679,18 @@ class SignalGenerator:
     def set_adversarial_filter(self, adv_filter) -> None:
         """Set AdversarialFilter for signal history checking (Tier 1)."""
         self._adversarial_filter = adv_filter
+
+    def set_spread_monitor(self, monitor) -> None:
+        """Set SpreadMonitor for real-time spread gating (Tier 2)."""
+        self._spread_monitor = monitor
+
+    def set_correlation_regime(self, detector) -> None:
+        """Set CorrelationRegimeDetector for cross-market regime (Tier 2)."""
+        self._correlation_regime = detector
+
+    def set_adaptive_threshold(self, threshold) -> None:
+        """Set AdaptiveConfidenceThreshold for dynamic threshold (Tier 2)."""
+        self._adaptive_threshold = threshold
 
     def set_main_config(self, config) -> None:
         """Set MainConfig reference for feature flag checking."""
