@@ -167,6 +167,8 @@ class RegimeAnalyzer:
     @staticmethod
     def _regime_params(regime: str) -> Dict:
         return RegimeAnalyzer._PARAMS.get(regime, RegimeAnalyzer._PARAMS['neutral'])
+
+    def evaluate(self, closes, highs, lows, atr, avg_atr) -> Tuple[str, Dict]:
         if len(closes) < 20:
             return 'neutral', self._PARAMS['neutral']
         ratio = atr / avg_atr if avg_atr > 0 else 1.0
