@@ -963,7 +963,7 @@ class TradingBrain:
             account       = self.account_balance,
             sl_dollars    = sl_dollars,
             edge_mult     = e_mult,
-            regime_mult   = rp['lot_mult'],
+            regime_mult   = rp.get('lot_mult', rp.get('lot', 1.0)),
             session_mult  = t_mult,
             risk_mult     = r_mult,
             vol_mult      = vol_mult,
