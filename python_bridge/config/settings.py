@@ -847,6 +847,74 @@ class AutoOptimizerConfig:
 
 
 # ─────────────────────────────────────────────
+#  TRADING BRAIN
+# ─────────────────────────────────────────────
+@dataclass
+class BrainConfig:
+    """
+    Trading Brain configuration — professional trader / hedge fund intelligence.
+    Controls all 6 evaluation layers that filter and size every trade.
+    """
+    enabled: bool = True
+
+    # ── Account ──────────────────────────────────────────────────────────
+    account_balance: float = 10000.0
+    base_lot:        float = 0.01
+    min_lot:         float = 0.01
+    max_lot:         float = 0.05
+
+    # ── Edge tracker ─────────────────────────────────────────────────────
+    lookback_trades: int   = 30          # trades to analyse for edge quality
+    edge_hot_threshold:    float = 0.62  # win rate above this → HOT → size up
+    edge_cold_threshold:   float = 0.42  # win rate below this → COLD → size down
+    edge_broken_threshold: float = 0.30  # win rate below this → BROKEN → pause
+
+    # ── Position sizing multipliers ───────────────────────────────────────
+    lot_multiplier_hot:      float = 1.5   # edge is HOT
+    lot_multiplier_cold:     float = 0.5   # edge is COLD
+    lot_multiplier_volatile: float = 0.4   # volatile/crash regime
+
+    # ── Risk circuit breakers ─────────────────────────────────────────────
+    daily_loss_limit:         float = 50.0  # USD — stop for the day
+    drawdown_reduce_threshold: float = 0.08  # 8%  drawdown → reduce to 50%
+    drawdown_stop_threshold:   float = 0.15  # 15% drawdown → full stop
+    consecutive_loss_reduce:   int   = 3     # reduce after 3 losses in a row
+    consecutive_loss_stop:     int   = 6     # pause after 6 losses in a row
+
+    # ── Equity curve filter ───────────────────────────────────────────────
+    equity_curve_filter:  bool  = True   # pause if equity curve below MA
+    equity_curve_ma_bars: int   = 10     # MA period for equity curve filter
+
+    # ── Session multipliers ───────────────────────────────────────────────
+    session_overlap_mult:    float = 1.3  # London / NY overlap  (peak)
+    session_london_mult:     float = 1.2  # London session
+    session_ny_mult:         float = 1.0  # New York session
+    session_asian_mult:      float = 0.8  # Asian session
+    session_off_hours_mult:  float = 0.6  # Off hours / late NY
+
+    # ── Dynamic confidence threshold ──────────────────────────────────────
+    base_min_confidence: float = 0.25  # base threshold (same as SignalConfig)
+
+    # ── Logging ───────────────────────────────────────────────────────────
+    status_report_interval: int = 50   # print brain status every N cycles
+
+    # ── Market quality ────────────────────────────────────────────────────
+    max_spread_atr_ratio: float = 0.35  # skip if spread > 35% of ATR
+    min_tick_volume:      float = 10.0  # skip if volume suspiciously low
+    min_atr_points:       float = 0.5   # skip if ATR near zero (stalled)
+
+    # ── SL / TP limits ────────────────────────────────────────────────────
+    min_sl_dollars: float = 0.80   # never set SL tighter than $0.80
+    max_sl_dollars: float = 5.00   # never set SL wider than $5.00
+
+    # ── VaR-based sizing ──────────────────────────────────────────────────
+    risk_per_trade_pct: float = 0.005   # risk 0.5% of account per trade
+
+    # ── Trade quality gate ────────────────────────────────────────────────
+    min_trade_score: float = 30.0  # 0-100; below this → skip regardless
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -864,4 +932,5 @@ class MainConfig:
     enable_auto_retrain: bool = True        # Weekend auto-retraining scheduler
     enable_dashboard: bool = True           # Live performance dashboard
     enable_auto_optimizer: bool = True      # Self-tuning parameter optimizer
+    enable_brain: bool = True               # Trading Brain — professional judgment layer
     paper_trading: bool = True              # Paper trading mode by default

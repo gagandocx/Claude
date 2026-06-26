@@ -31,7 +31,7 @@ from config.settings import (
     TransformerConfig, LSTMConfig, EnsembleConfig,
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
     SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
-    AutoOptimizerConfig,
+    AutoOptimizerConfig, BrainConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -45,6 +45,7 @@ from strategies.regime_detector import RegimeDetector
 from strategies.risk_manager import RiskManager
 from strategies.smart_exits import SmartExitManager, ExitDecision
 from strategies.auto_optimizer import AutoOptimizer
+from strategies.trading_brain import TradingBrain
 from signals.bridge import MT5Bridge
 from training.auto_retrain import AutoRetrainer
 from dashboard.performance_tracker import PerformanceTracker, TradeRecord
@@ -144,6 +145,13 @@ class PythonMLBridge:
             if self.config.enable_auto_optimizer else None
         )
 
+        # Trading Brain — fully autonomous professional trading intelligence
+        self.brain = (
+            TradingBrain(BrainConfig())
+            if self.config.enable_brain else None
+        )
+        self._last_trade_date: str = ""   # for daily brain reset
+
         # Live performance dashboard (prop desk style analytics)
         self.dashboard_config = DashboardConfig()
         self.performance_tracker = (
@@ -193,6 +201,7 @@ class PythonMLBridge:
         self.logger.info(f"  Auto-retrain: {self.config.enable_auto_retrain}")
         self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
         self.logger.info(f"  Auto-optimizer: {self.config.enable_auto_optimizer}")
+        self.logger.info(f"  Trading Brain:  {self.config.enable_brain}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -269,6 +278,13 @@ class PythonMLBridge:
                                             "rsi_at_entry": active.get("rsi_at_entry", 50.0),
                                         }
                                         self.auto_optimizer.record_trade(trade_context)
+                                    # Brain learns from every closed trade
+                                    if self.brain:
+                                        self.brain.record_trade_closed(
+                                            pnl    = pnl,
+                                            won    = pnl > 0,
+                                            regime = active.get("regime", "unknown"),
+                                        )
                                     self.signal_generator.clear_active_position()
                                     self.signal_generator._estimated_close_pending = True
                                 else:
@@ -505,7 +521,55 @@ class PythonMLBridge:
                 prices_m1=df_m1,
             )
 
-            # 10. Write signal to bridge
+            # 10. Brain evaluation — fully autonomous decision layer
+            # The brain overrides lot size, SL, and TP; can veto the signal entirely
+            if self.brain and signal.action != "HOLD":
+                # Gather recent OHLCV for regime detection
+                closes = list(df_m1["Close"].tail(60)) if df_m1 is not None else list(df["Close"].tail(60))
+                highs  = list(df_m1["High"].tail(60))  if df_m1 is not None else list(df["High"].tail(60))
+                lows   = list(df_m1["Low"].tail(60))   if df_m1 is not None else list(df["Low"].tail(60))
+                avg_atr = float(np.mean(self._atr_history)) if self._atr_history else atr
+                atr_dollars = atr * signal.lot_size * 100  # approx $ per pip × lot
+
+                # Daily brain reset at new trading day
+                today = datetime.now().strftime("%Y-%m-%d")
+                if today != self._last_trade_date:
+                    self.brain.reset_daily()
+                    self._last_trade_date = today
+
+                decision = self.brain.evaluate(
+                    signal        = signal,
+                    closes        = closes,
+                    highs         = highs,
+                    lows          = lows,
+                    atr           = atr,
+                    avg_atr       = avg_atr,
+                    spread_points = 10.0,       # approximate; EA reads live spread
+                    tick_volume   = 100.0,       # placeholder
+                    atr_dollars   = max(0.5, atr_dollars),
+                )
+
+                if not decision.should_trade:
+                    # Brain vetoed — skip this signal
+                    self.logger.info(f"[Brain] VETOED: {decision.reasoning.get('final','')}")
+                    signal = type(signal)(
+                        symbol=signal.symbol, action="HOLD",
+                        confidence=0.0, sl_pips=0, tp_pips=0,
+                        lot_size=0.0, regime=decision.regime,
+                    )
+                else:
+                    # Brain approved — apply its sizing, SL, TP
+                    signal.lot_size = decision.lot_size
+                    if decision.sl_dollars > 0:
+                        # Convert $ SL to pips (1 pip XAUUSD ≈ $1 per 0.01 lot)
+                        pip_value = signal.lot_size * 100 if signal.lot_size > 0 else 0.01
+                        signal.sl_pips = int(decision.sl_dollars / max(pip_value, 0.001) * 10)
+                    if decision.tp_dollars > 0:
+                        pip_value = signal.lot_size * 100 if signal.lot_size > 0 else 0.01
+                        signal.tp_pips = int(decision.tp_dollars / max(pip_value, 0.001) * 10)
+                    self.logger.info(decision.log_summary())
+
+            # 10b. Write signal to bridge
             if signal.action != "HOLD":
                 write_ok = self.bridge.write_signal(signal)
                 if not write_ok:
