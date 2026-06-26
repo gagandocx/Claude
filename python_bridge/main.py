@@ -578,7 +578,7 @@ class PythonMLBridge:
                 e_status, _, _, recent_pf   = self.brain.edge.evaluate(self.brain.config)
                 dd_stage = self.brain.dd_recovery.get_stage(self.brain.total_drawdown)
                 mt5_conn = self.bridge.get_mt5_connection_status()
-                mt5_tag  = "✓ MT5" if mt5_conn["connected"] else "✗ MT5 OFFLINE"
+                mt5_tag  = "[LIVE]" if mt5_conn["connected"] else "[OFFLINE]"
                 self.logger.info(
                     f"[Brain] session={t_session}({t_status}) "
                     f"edge={e_status} PF={recent_pf:.2f} "

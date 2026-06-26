@@ -258,7 +258,9 @@ void OnTimer()
         {
             datetime modTime = (datetime)FileGetInteger(pyHB, FILE_MODIFY_DATE);
             FileClose(pyHB);
-            int age = (int)(TimeCurrent() - modTime);
+            // FILE_MODIFY_DATE reflects local filesystem clock; TimeLocal() is the
+            // same clock — using TimeCurrent() (broker time) caused a multi-hour offset.
+            int age = (int)(TimeLocal() - modTime);
             g_pyHeartbeatAge = (age < 0) ? 0 : age;
         }
     }
@@ -1336,8 +1338,11 @@ void UpdateDashboard()
     y += lineHeight;
 
     // ── Last Signal age (live second counter) ────────────────────────
+    // g_lastSignalTime is parsed by StringToTime() from Python's local-time
+    // timestamp, so compare against TimeLocal() — NOT TimeCurrent() (broker
+    // time) which caused the ~7-hour offset shown on the dashboard.
     int    sigAgeSec = (g_lastSignalTime > 0)
-                       ? (int)(TimeCurrent() - g_lastSignalTime) : -1;
+                       ? (int)(TimeLocal() - g_lastSignalTime) : -1;
     string sigAgeStr = (sigAgeSec >= 0)
                        ? IntegerToString(sigAgeSec) + "s ago" : "---";
     color  sigAgeClr = (sigAgeSec >= 0 && sigAgeSec < 5)  ? clrLime
