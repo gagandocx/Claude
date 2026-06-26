@@ -2,7 +2,7 @@
   "id": "FEAT-005",
   "type": "fix",
   "description": "Fix 7 bugs identified in the v3 code review: adversarial filter dead code, tick data reader/writer mismatch, Kelly sizing attribute error, Monte Carlo static balance, adversarial filter dir() scope, spread monitor race (minor/acceptable), and correlation regime data pipeline (add SPY/TNX to fetch).",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Fix adversarial filter in signal_generator.py: Replace `direction=action` with `direction=momentum_direction` since action is not yet defined at that point",
     "Fix adversarial filter dir() scope check in signal_generator.py: Replace `regime_name if 'regime_name' in dir() else 'unknown'` with a proper default variable approach",
@@ -27,5 +27,5 @@
     "Run: cd python_bridge_v3 && python3 -c \"from config.settings import MultiPairConfig; c = MultiPairConfig(); assert 'SPY' in c.yfinance_tickers or 'spy' in [p.lower() for p in c.pairs]; print('MultiPair has SPY')\""
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 6 actionable bugs fixed and verified. Issue #6 (spread monitor historical lines logic) was noted as minor/acceptable in the review - the design works correctly with sequential polls building the buffer over time. Issue #7 (correlation regime data pipeline) was already partially wired in main.py (the code looks for DXY/SPY/TNX keys in pair_data); the fix adds SPY and TNX to the default MultiPairConfig so they actually get fetched. The Monte Carlo now accepts live account_balance via update_state() and main.py passes it from the risk_manager on each trade close. All imports verified clean."
 }
