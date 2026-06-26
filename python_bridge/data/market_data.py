@@ -26,13 +26,22 @@ class MarketDataFetcher:
 
     def __init__(self, config: Optional[DataConfig] = None):
         self.config = config or DataConfig()
-        self._cache = {}
+        self._cache = {}          # key: (ticker, period, interval) -> DataFrame
+        self._cache_time = {}     # key: (ticker, period, interval) -> datetime of last successful fetch
         self._last_fetch = None
+        # Minimum seconds between yfinance requests for the same (ticker, period, interval).
+        # GC=F is rate-limited aggressively; 30s keeps us well under the threshold.
+        self._cache_ttl = 30
 
     def fetch_ohlcv(self, ticker: Optional[str] = None,
                     period: str = "1y", interval: str = "1h") -> pd.DataFrame:
         """
-        Fetch OHLCV data from Yahoo Finance.
+        Fetch OHLCV data from Yahoo Finance with smart caching.
+
+        - Returns cached data immediately if last successful fetch was < 30 s ago
+          (avoids hammering yfinance every 2-second cycle).
+        - On empty response (rate-limited) or exception, falls back to cache
+          so downstream logic always has data and cycles never die.
 
         Args:
             ticker: Yahoo Finance ticker symbol
@@ -43,10 +52,27 @@ class MarketDataFetcher:
             DataFrame with Open, High, Low, Close, Volume columns
         """
         ticker = ticker or self.config.yfinance_ticker
+        cache_key = (ticker, period, interval)
+        now = datetime.now()
+
+        # ── Throttle: return cache if it is fresh enough ──────────────────
+        last_time = self._cache_time.get(cache_key)
+        if last_time is not None:
+            age = (now - last_time).total_seconds()
+            if age < self._cache_ttl:
+                cached = self._cache.get(cache_key)
+                if cached is not None and not cached.empty:
+                    return cached
+
         try:
             data = yf.download(ticker, period=period, interval=interval,
                                progress=False)
             if data.empty:
+                # Rate-limited or temporarily delisted — use stale cache rather
+                # than propagating an empty DataFrame that kills the cycle.
+                cached = self._cache.get(cache_key)
+                if cached is not None and not cached.empty:
+                    return cached
                 return pd.DataFrame()
 
             # Flatten multi-level columns if present
@@ -55,12 +81,16 @@ class MarketDataFetcher:
 
             data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
             data.dropna(inplace=True)
-            self._cache[ticker] = data
-            self._last_fetch = datetime.now()
+            self._cache[cache_key] = data
+            self._cache_time[cache_key] = now
+            self._last_fetch = now
             return data
         except Exception as e:
-            print(f"[MarketData] Error fetching {ticker}: {e}")
-            return self._cache.get(ticker, pd.DataFrame())
+            print(f"[MarketData] Error fetching {ticker} ({interval}/{period}): {e}")
+            cached = self._cache.get(cache_key)
+            if cached is not None and not cached.empty:
+                return cached
+            return pd.DataFrame()
 
     def compute_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """

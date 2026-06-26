@@ -323,8 +323,7 @@ class PythonMLBridge:
                                 tp_price     = conf.get("tp", 0)
                                 if self.signal_generator._active_position and actual_price > 0:
                                     self.signal_generator._active_position["entry_price"] = actual_price
-                                    self.signal_generator._active_position["entry_time"]  = \
-                                        datetime.now().strftime("%H:%M:%S")
+                                    self.signal_generator._active_position["entry_time"]  = time.time()  # float! was strftime string causing TypeError
                                     direction = self.signal_generator._active_position.get("direction","BUY")
                                     # ── Instant entry confirmation ───────────────
                                     self.logger.info("=" * 55)
