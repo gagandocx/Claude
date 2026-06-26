@@ -155,16 +155,18 @@ class TimingEngine:
 class RegimeAnalyzer:
     """8-regime market classification with regime-specific trade parameters."""
     _PARAMS = {
-        'strong_trend_up':   {'sl_atr':1.8,'rr':3.5,'conf_add':-0.06,'lot':1.25,'desc':'Strong uptrend — press momentum'},
-        'strong_trend_down': {'sl_atr':1.8,'rr':3.5,'conf_add':-0.06,'lot':1.25,'desc':'Strong downtrend — press momentum'},
-        'trending_up':       {'sl_atr':1.5,'rr':3.0,'conf_add':-0.03,'lot':1.15,'desc':'Trending up'},
-        'trending_down':     {'sl_atr':1.5,'rr':3.0,'conf_add':-0.03,'lot':1.15,'desc':'Trending down'},
-        'ranging':           {'sl_atr':0.8,'rr':1.5,'conf_add': 0.08,'lot':0.85,'desc':'Ranging — tight setups only'},
-        'volatile':          {'sl_atr':2.0,'rr':2.0,'conf_add': 0.15,'lot':0.45,'desc':'Volatile — small size, best setups'},
-        'crash':             {'sl_atr':0.0,'rr':0.0,'conf_add': 1.00,'lot':0.00,'desc':'CRASH — flat'},
-        'neutral':           {'sl_atr':1.2,'rr':2.5,'conf_add': 0.00,'lot':1.00,'desc':'Neutral'},
+        'strong_trend_up':   {'sl_atr':1.8,'tp_rr':3.5,'conf_add':-0.06,'lot_mult':1.25,'desc':'Strong uptrend — press momentum'},
+        'strong_trend_down': {'sl_atr':1.8,'tp_rr':3.5,'conf_add':-0.06,'lot_mult':1.25,'desc':'Strong downtrend — press momentum'},
+        'trending_up':       {'sl_atr':1.5,'tp_rr':3.0,'conf_add':-0.03,'lot_mult':1.15,'desc':'Trending up'},
+        'trending_down':     {'sl_atr':1.5,'tp_rr':3.0,'conf_add':-0.03,'lot_mult':1.15,'desc':'Trending down'},
+        'ranging':           {'sl_atr':0.8,'tp_rr':1.5,'conf_add': 0.08,'lot_mult':0.85,'desc':'Ranging — tight setups only'},
+        'volatile':          {'sl_atr':2.0,'tp_rr':2.0,'conf_add': 0.15,'lot_mult':0.45,'desc':'Volatile — small size, best setups'},
+        'crash':             {'sl_atr':0.0,'tp_rr':0.0,'conf_add': 1.00,'lot_mult':0.00,'desc':'CRASH — flat'},
+        'neutral':           {'sl_atr':1.2,'tp_rr':2.5,'conf_add': 0.00,'lot_mult':1.00,'desc':'Neutral'},
     }
-    def evaluate(self, closes, highs, lows, atr, avg_atr) -> Tuple[str, Dict]:
+    @staticmethod
+    def _regime_params(regime: str) -> Dict:
+        return RegimeAnalyzer._PARAMS.get(regime, RegimeAnalyzer._PARAMS['neutral'])
         if len(closes) < 20:
             return 'neutral', self._PARAMS['neutral']
         ratio = atr / avg_atr if avg_atr > 0 else 1.0
@@ -755,7 +757,7 @@ class SlTpCalculator:
     def calculate(self, atr_dollars, regime_params, config) -> Tuple[float, float]:
         sl = atr_dollars * regime_params.get('sl_atr', 1.2)
         sl = max(config.min_sl_dollars, min(config.max_sl_dollars, sl))
-        rr = regime_params.get('rr', 2.5)
+        rr = regime_params.get('tp_rr', 2.5)
         return round(sl, 2), round(sl * rr, 2) if rr > 0 else 0.0
 
 
