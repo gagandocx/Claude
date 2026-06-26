@@ -99,13 +99,8 @@ int OnInit()
     g_trade.SetDeviationInPoints(InpSlippage);
     g_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-    // Dashboard panel uses OBJ_RECTANGLE_LABEL with OBJPROP_BACK=false, which
-    // renders in the foreground layer.  MT5 trade execution arrows are drawn in
-    // a special internal layer that always paints ABOVE all graphical objects -
-    // this is a known MetaTrader 5 platform limitation and cannot be worked
-    // around via CHART_FOREGROUND or any other standard MQL5 API.  Do NOT set
-    // CHART_SHOW_TRADE_LEVELS=false here as that removes SL/TP/entry lines
-    // from the entire chart, making trades invisible to the user.
+    // Dashboard panel uses OBJ_RECTANGLE_LABEL which renders on top by default
+    // No CHART_FOREGROUND manipulation needed - trades display normally on chart
 
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
