@@ -523,6 +523,21 @@ class PythonMLBridge:
 
             # 10. Brain evaluation — fully autonomous decision layer
             # The brain overrides lot size, SL, and TP; can veto the signal entirely
+
+            # Brain pulse: log status every cycle so you can see it's always working
+            if self.brain:
+                t_status, t_session, t_mult = self.brain.timing.evaluate(self.brain.config)
+                e_status, _, _, recent_pf   = self.brain.edge.evaluate(self.brain.config)
+                dd_stage = self.brain.dd_recovery.get_stage(self.brain.total_drawdown)
+                self.logger.info(
+                    f"[Brain] session={t_session}({t_status}) "
+                    f"edge={e_status} PF={recent_pf:.2f} "
+                    f"daily=${self.brain.daily_pnl:+.2f} "
+                    f"dd={self.brain.total_drawdown*100:.1f}% "
+                    f"stage={dd_stage['label']} "
+                    f"signal={signal.action}"
+                )
+
             if self.brain and signal.action != "HOLD":
                 # Gather recent OHLCV for regime detection
                 closes = list(df_m1["Close"].tail(60)) if df_m1 is not None else list(df["Close"].tail(60))
