@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create python_bridge_v2/ copy with all 5 upgrades: circuit breaker (groupthink detection), logging rotation + Telegram/Discord notifications, position reconciliation on startup, walk-forward validation harness, and comprehensive unit/integration tests.",
+  "status": "completed",
+  "steps": [
+    "1. Copy python_bridge/ to python_bridge_v2/ and Python_Bridge_EA.mq5 to Python_Bridge_EA_v2.mq5",
+    "2. Implement circuit breaker (GroupthinkCircuitBreaker) tracking model agreement, CAUTION/DANGER levels, and Bayesian groupthink_penalty evidence",
+    "3. Add logging rotation (RotatingFileHandler, 10MB/5 backups) to main.py setup_logging()",
+    "4. Create notifications/notifier.py with Telegram/Discord support (opt-in, disabled by default)",
+    "5. Create strategies/position_reconciler.py that reads EA positions CSV on startup",
+    "6. Add WritePositionsCSV() to Python_Bridge_EA_v2.mq5 (writes all open positions every timer cycle)",
+    "7. Create validation/walk_forward.py with train/validate window sliding, ensemble vs baseline comparison, JSON report output",
+    "8. Integrate all new features into main.py (circuit breaker, notifier, reconciler)",
+    "9. Add groupthink_danger and groupthink_caution to BayesianConfidence _LIKELIHOODS in trading_brain.py",
+    "10. Write 40 comprehensive tests in tests/test_v2_features.py",
+    "11. Create update_and_run_v2.bat",
+    "12. Bump VERSION to 7.2-rc1"
+  ],
+  "acceptance_criteria": [
+    "All 40 new tests pass: python -m pytest tests/test_v2_features.py -q",
+    "Full v2 test suite passes (571 pass, 1 pre-existing failure)",
+    "Original python_bridge/ and Python_Bridge_EA.mq5 are completely untouched (git diff shows no changes)",
+    "VERSION in v2 main.py is 7.2-rc1",
+    "Circuit breaker detects CAUTION at 85%+ agreement for 2 cycles, DANGER at 95%+ for 3 cycles",
+    "Notifications are opt-in (disabled by default)",
+    "Position reconciler reads positions CSV and recovers state on startup",
+    "Walk-forward validator produces JSON report comparing ensemble vs baseline",
+    "update_and_run_v2.bat runs the v2 system"
+  ],
+  "verification": [
+    "cd /projects/sandbox/Claude/python_bridge_v2 && python -m pytest tests/test_v2_features.py -q",
+    "cd /projects/sandbox/Claude && git diff python_bridge/ Python_Bridge_EA.mq5 update_and_run.bat"
+  ],
+  "blocked_reason": null,
+  "findings": "All 40 new tests pass. Full v2 test suite: 571 pass, 1 pre-existing failure (PriceStructureConfig test expects 0.15 penalty but config has 0.05 - same in both v1 and v2). The v2 bridge initializes correctly with all new features. Circuit breaker starts in NORMAL state. Notifier is disabled by default (opt-in). Position reconciler gracefully handles missing files. Walk-forward validator works with sklearn HistGradientBoosting as a fallback when full ensemble is not trained."
+}

@@ -1,0 +1,11 @@
+{
+  "project_type": "Python ML Bridge trading system with MQ5 Expert Advisors for MetaTrader 5",
+  "language": "Python (primary), MQL5 (EA execution)",
+  "build_system": "pip with requirements.txt, no Makefile",
+  "test_framework": "pytest with mock-heavy tests in python_bridge_v2/tests/",
+  "build_command": "cd /projects/sandbox/Claude/python_bridge_v2 && pip install -r requirements.txt",
+  "test_command": "cd /projects/sandbox/Claude/python_bridge_v2 && python -m pytest tests/test_v2_features.py -q",
+  "verification_instructions": "Run pytest on test_v2_features.py. All 40 tests must pass. 1 pre-existing failure in test_smart_upgrades.py is known.",
+  "environment_constraints": "No MT5 terminal available. Validation through pytest only. No Docker.",
+  "key_patterns": "v2 system is a self-contained copy of python_bridge/. All changes are ONLY in python_bridge_v2/ and Python_Bridge_EA_v2.mq5."
+}
