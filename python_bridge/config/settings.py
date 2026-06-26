@@ -450,6 +450,7 @@ class SignalConfig:
     max_hold_seconds: int = 300             # 5 minutes max hold for a single position
     max_hold_bars: int = 20                 # 20 M1 bars (20 min) max hold for position management
     max_positions: int = 1                  # Only 1 position at a time (Python-side enforcement)
+    model_override_threshold: float = 0.60  # Models override momentum when prob > this
 
 
 # ─────────────────────────────────────────────

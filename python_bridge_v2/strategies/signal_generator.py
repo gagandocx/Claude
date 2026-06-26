@@ -1245,19 +1245,31 @@ class SignalGenerator:
         regime_name = regime_info["regime_name"]
         regime_adjustments = self.regime_detector.get_regime_adjustments(regime)
 
-        # 4. Use momentum for DIRECTION, AI confidence for TIMING
-        # The action comes from momentum, not from model probabilities
-        action = momentum_direction  # BUY or SELL from momentum
-
-        # Use overall model confidence as the timing gate
-        # Higher confidence = better timing for entry
-        # We take the max of buy_prob and sell_prob as base confidence
+        # 4. Direction selection: Models override momentum when highly confident
         sell_prob = float(probabilities[0])
         buy_prob = float(probabilities[2])
-        timing_confidence = max(buy_prob, sell_prob, confidence)
 
-        logger.info("[SignalGen] Momentum action: %s, Timing confidence: %.4f",
-                    action, timing_confidence)
+        # When models are highly confident (>threshold), trust the MODEL direction
+        # When models are uncertain, fall back to momentum direction
+        model_override_threshold = self.signal_config.model_override_threshold
+
+        if sell_prob > model_override_threshold and momentum_direction != "SELL":
+            action = "SELL"
+            logger.info("[SignalGen] MODEL OVERRIDE: Models say SELL (%.1f%%) overriding momentum %s",
+                        sell_prob * 100, momentum_direction)
+        elif buy_prob > model_override_threshold and momentum_direction != "BUY":
+            action = "BUY"
+            logger.info("[SignalGen] MODEL OVERRIDE: Models say BUY (%.1f%%) overriding momentum %s",
+                        buy_prob * 100, momentum_direction)
+        else:
+            action = momentum_direction
+
+        # Use the probability for the chosen action direction as timing confidence
+        timing_confidence = sell_prob if action == "SELL" else buy_prob
+        timing_confidence = max(timing_confidence, confidence)
+
+        logger.info("[SignalGen] Action: %s (momentum=%s), Timing confidence: %.4f",
+                    action, momentum_direction, timing_confidence)
 
         # 5. HTF bias - M15/M5 penalty for scalper
         # Penalize if M15 is against momentum (magnitude > 0.5)
