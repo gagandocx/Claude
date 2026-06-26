@@ -478,6 +478,16 @@ class PythonMLBridge:
                                     if self.monte_carlo_risk and self.brain:
                                         try:
                                             ks = self.kelly_sizer.get_current_stats() if self.kelly_sizer else {}
+                                            # Get live equity from risk manager for accurate MC simulation
+                                            live_equity = None
+                                            try:
+                                                rm = self.signal_generator.risk_manager
+                                                if hasattr(rm, '_current_equity'):
+                                                    live_equity = rm._current_equity
+                                                elif hasattr(rm, 'config'):
+                                                    live_equity = rm.config.account_balance
+                                            except Exception:
+                                                pass
                                             self.monte_carlo_risk.update_state(
                                                 drawdown=self.brain.total_drawdown,
                                                 win_rate=ks.get("win_rate", 0.55),
@@ -485,6 +495,7 @@ class PythonMLBridge:
                                                 avg_loss=ks.get("avg_loss", 1.0),
                                                 losing_streak=self.brain.edge.consecutive_losses,
                                                 regime=active.get("regime", "neutral"),
+                                                account_balance=live_equity,
                                             )
                                         except Exception as e:
                                             self.logger.debug(

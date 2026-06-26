@@ -1302,13 +1302,16 @@ class SignalGenerator:
                 logger.debug("[SignalGen] Microstructure error: %s", e)
 
         # v8.0 Tier 1: Adversarial filter - check BEFORE generating signal
+        # Uses momentum_direction (already computed) as the pre-model direction estimate.
+        # Note: 'action' is not yet assigned here (it gets computed after model prediction).
+        adversarial_regime = 'unknown'  # Will be updated after regime detection if available
         if (self._adversarial_filter and self._main_config and
                 self._main_config.enable_adversarial_filter):
             try:
                 skip, reason = self._adversarial_filter.should_skip_signal(
-                    direction=action,
+                    direction=momentum_direction,
                     confidence=0.5,  # Pre-model confidence estimate
-                    regime=regime_name if 'regime_name' in dir() else 'unknown',
+                    regime=adversarial_regime,
                     price_level=current_price,
                 )
                 if skip:
@@ -1638,8 +1641,10 @@ class SignalGenerator:
                 if self._kelly_sizer.is_kelly_valid():
                     stats = self._kelly_sizer.get_current_stats()
                     kelly_lot = self._kelly_sizer.get_optimal_lot(
-                        account_balance=self.risk_manager._account_balance
-                            if hasattr(self.risk_manager, '_account_balance') else 10000.0,
+                        account_balance=self.risk_manager._current_equity
+                            if hasattr(self.risk_manager, '_current_equity') else
+                            (self.risk_manager.config.account_balance
+                             if hasattr(self.risk_manager, 'config') else 10000.0),
                         risk_per_trade=0.02,
                         win_rate=stats["win_rate"],
                         avg_win=stats["avg_win"],

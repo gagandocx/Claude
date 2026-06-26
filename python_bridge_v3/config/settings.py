@@ -591,7 +591,7 @@ class MultiPairConfig:
     additional confirmation and early warnings for XAUUSD moves.
     """
     pairs: List[str] = field(default_factory=lambda: [
-        "XAUUSD", "EURUSD", "GBPUSD", "USDJPY"
+        "XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "SPY", "TNX"
     ])
     # Yahoo Finance ticker mapping for each pair
     yfinance_tickers: dict = field(default_factory=lambda: {
@@ -600,6 +600,8 @@ class MultiPairConfig:
         "GBPUSD": "GBPUSD=X",
         "USDJPY": "JPY=X",
         "DXY": "DX-Y.NYB",
+        "SPY": "SPY",
+        "TNX": "^TNX",
     })
     # Correlation rolling window (bars)
     correlation_window: int = 50

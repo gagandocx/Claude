@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-005",
+  "type": "fix",
+  "description": "Fix 7 bugs identified in the v3 code review: adversarial filter dead code, tick data reader/writer mismatch, Kelly sizing attribute error, Monte Carlo static balance, adversarial filter dir() scope, spread monitor race (minor/acceptable), and correlation regime data pipeline (add SPY/TNX to fetch).",
+  "status": "in_progress",
+  "steps": [
+    "Fix adversarial filter in signal_generator.py: Replace `direction=action` with `direction=momentum_direction` since action is not yet defined at that point",
+    "Fix adversarial filter dir() scope check in signal_generator.py: Replace `regime_name if 'regime_name' in dir() else 'unknown'` with a proper default variable approach",
+    "Fix tick data reader/writer mismatch in tick_data.py: Change poll_tick_file() to read the entire file each time (since EA rewrites the full buffer), replacing the incremental seek-based approach",
+    "Fix Kelly sizing attribute error in signal_generator.py: Replace `self.risk_manager._account_balance` with `self.risk_manager._current_equity`",
+    "Fix Monte Carlo static account balance: Add account_balance parameter to update_state() and wire live equity from main.py trade confirmation callback",
+    "Fix correlation regime data pipeline: Add SPY and TNX to MultiPairConfig default pairs and yfinance_tickers so they are fetched and available for the CorrelationRegimeDetector"
+  ],
+  "acceptance_criteria": [
+    "Adversarial filter uses momentum_direction (not undefined action) for direction parameter",
+    "Adversarial filter uses a pre-initialized variable for regime, not dir() scope check",
+    "Tick data processor reads entire file on each poll (no seek-based incremental reads)",
+    "Kelly sizing accesses self.risk_manager._current_equity for account balance",
+    "Monte Carlo update_state() accepts and uses live account_balance from equity tracking",
+    "MultiPairConfig includes SPY and TNX in the default pairs and yfinance_tickers",
+    "All Python imports still work cleanly"
+  ],
+  "verification": [
+    "Run: cd python_bridge_v3 && python3 -c \"from main import PythonMLBridge; print('Full v3 import OK')\"",
+    "Run: cd python_bridge_v3 && python3 -c \"from data.tick_data import TickDataProcessor; t = TickDataProcessor(); print('Tick data OK')\"",
+    "Run: cd python_bridge_v3 && python3 -c \"from strategies.monte_carlo import MonteCarloRiskSimulator; m = MonteCarloRiskSimulator(); m.update_state(drawdown=0.01, account_balance=50000); print('MC update OK')\"",
+    "Run: cd python_bridge_v3 && python3 -c \"from config.settings import MultiPairConfig; c = MultiPairConfig(); assert 'SPY' in c.yfinance_tickers or 'spy' in [p.lower() for p in c.pairs]; print('MultiPair has SPY')\""
+  ],
+  "blocked_reason": null,
+  "findings": null
+}

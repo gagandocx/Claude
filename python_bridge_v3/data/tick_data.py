@@ -65,7 +65,6 @@ class TickDataProcessor:
 
         # Rolling window of ticks (max_ticks capacity)
         self._ticks: deque = deque(maxlen=self.config.max_ticks)
-        self._last_file_pos: int = 0
         self._last_file_mtime: float = 0.0
         self._last_poll_time: float = 0.0
         self._features_cache: Optional[Dict[str, float]] = None
@@ -78,8 +77,12 @@ class TickDataProcessor:
         """
         Read latest ticks from the CSV file written by MT5 EA.
 
-        Only reads new lines since last poll (incremental read).
-        Handles file rotation gracefully (resets position if file shrunk).
+        The EA rewrites the entire tick buffer (up to 5000 ticks) on each
+        write cycle (~100ms). Therefore, we read the entire file contents
+        on each poll and replace our internal deque. Incremental seek-based
+        reads would be invalid since the EA truncates and rewrites the file.
+
+        Handles file rotation gracefully.
 
         Returns:
             Number of new ticks read
@@ -94,15 +97,9 @@ class TickDataProcessor:
             if mtime <= self._last_file_mtime:
                 return 0
 
-            file_size = os.path.getsize(tick_file)
-
-            # If file is smaller than our last position, it was rotated/truncated
-            if file_size < self._last_file_pos:
-                self._last_file_pos = 0
-
             new_ticks = 0
+            parsed_ticks = []
             with open(tick_file, 'r') as f:
-                f.seek(self._last_file_pos)
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('timestamp'):
@@ -110,16 +107,19 @@ class TickDataProcessor:
 
                     tick = self._parse_tick_line(line)
                     if tick is not None:
-                        self._ticks.append(tick)
+                        parsed_ticks.append(tick)
                         new_ticks += 1
-
-                self._last_file_pos = f.tell()
 
             self._last_file_mtime = mtime
             self._last_poll_time = time.time()
 
-            if new_ticks > 0:
-                logger.debug("[TickData] Read %d new ticks (total: %d)",
+            if parsed_ticks:
+                # Replace entire deque with fresh file contents
+                self._ticks.clear()
+                for tick in parsed_ticks:
+                    self._ticks.append(tick)
+
+                logger.debug("[TickData] Read %d ticks from file (total: %d)",
                              new_ticks, len(self._ticks))
                 # Invalidate features cache
                 self._features_cache = None
@@ -289,7 +289,6 @@ class TickDataProcessor:
     def reset(self):
         """Reset the tick processor state."""
         self._ticks.clear()
-        self._last_file_pos = 0
         self._last_file_mtime = 0.0
         self._features_cache = None
         logger.info("[TickData] State reset")

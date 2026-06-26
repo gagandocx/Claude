@@ -259,7 +259,8 @@ class MonteCarloRiskSimulator:
 
     def update_state(self, drawdown: float = None, win_rate: float = None,
                      avg_win: float = None, avg_loss: float = None,
-                     losing_streak: int = None, regime: str = None):
+                     losing_streak: int = None, regime: str = None,
+                     account_balance: float = None):
         """
         Update the simulator's internal state for the next should_skip_trade call.
 
@@ -270,6 +271,7 @@ class MonteCarloRiskSimulator:
             avg_loss: Average loss in dollars
             losing_streak: Current consecutive losses
             regime: Current market regime
+            account_balance: Live account balance/equity (overrides config default)
         """
         if drawdown is not None:
             self._current_drawdown = drawdown
@@ -283,6 +285,8 @@ class MonteCarloRiskSimulator:
             self._current_losing_streak = losing_streak
         if regime is not None:
             self._current_regime = regime
+        if account_balance is not None:
+            self.brain_config.account_balance = account_balance
 
         # Invalidate cache when state changes
         self._last_result = None
