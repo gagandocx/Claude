@@ -1,35 +1,53 @@
 @echo off
 title EA Update and Run
 color 0A
+setlocal
+
+set REPO=https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm
+set PB=python_bridge
 
 echo ============================================
 echo   EA Update and Run Script
 echo ============================================
 echo.
 
-REM Navigate to the EA folder (edit this path if needed)
 cd /d "%~dp0"
 echo Working directory: %CD%
 echo.
 
-REM Download latest files from GitHub
-echo [1/4] Downloading Trading Brain...
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/strategies/trading_brain.py','python_bridge/strategies/trading_brain.py'); print('  trading_brain.py updated')"
+REM ── Step 1: Self-update this batch file ──────────────────────────────
+echo [0/7] Self-updating script...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/update_and_run.bat','update_and_run.bat')" 2>nul
+echo   update_and_run.bat refreshed
 
-echo [2/4] Downloading settings...
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/config/settings.py','python_bridge/config/settings.py'); print('  settings.py updated')"
+REM ── Step 2: Download all updated Python files ────────────────────────
+echo [1/7] Trading Brain...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/strategies/trading_brain.py','%PB%/strategies/trading_brain.py'); print('  OK')"
 
-echo [3/4] Downloading main.py and model fixes...
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/main.py','python_bridge/main.py'); print('  main.py updated')"
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/models/tft_model.py','python_bridge/models/tft_model.py'); print('  tft_model.py updated')"
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/models/gradient_boost_extra.py','python_bridge/models/gradient_boost_extra.py'); print('  gradient_boost_extra.py updated')"
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/models/catboost_model.py','python_bridge/models/catboost_model.py'); print('  catboost_model.py updated')"
+echo [2/7] Settings...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/config/settings.py','%PB%/config/settings.py'); print('  OK')"
+
+echo [3/7] Main...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/main.py','%PB%/main.py'); print('  OK')"
+
+echo [4/7] TFT model fix...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/tft_model.py','%PB%/models/tft_model.py'); print('  OK')"
+
+echo [5/7] LightGBM model...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/gradient_boost_extra.py','%PB%/models/gradient_boost_extra.py'); print('  OK')"
+
+echo [6/7] CatBoost model...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/catboost_model.py','%PB%/models/catboost_model.py'); print('  OK')"
+
+echo [7/7] Ensemble...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/ensemble.py','%PB%/models/ensemble.py'); print('  OK')"
 
 echo.
-echo [4/4] Starting EA...
+echo All files updated. Starting EA...
 echo ============================================
 echo.
-cd python_bridge
+
+cd %PB%
 python main.py --live
 
 pause
