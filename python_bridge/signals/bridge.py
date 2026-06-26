@@ -51,7 +51,7 @@ STATUS_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_status.txt")
 MT5_HEARTBEAT_FILE = os.path.join(MT5_COMMON_PATH, "mt5_bridge_heartbeat.txt")
 
 # Seconds without a heartbeat before the connection is considered lost
-MT5_HEARTBEAT_TIMEOUT = 10
+MT5_HEARTBEAT_TIMEOUT = 5
 
 
 class MT5Bridge:

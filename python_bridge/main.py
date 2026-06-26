@@ -209,7 +209,7 @@ class PythonMLBridge:
             target=self._poll_confirmations, daemon=True, name="ConfirmationPoller"
         )
         self._confirmation_thread.start()
-        self.logger.info("  Confirmation poller: 50ms (instant sync)")
+        self.logger.info("  Confirmation poller: 10ms (instant sync)")
 
     def _load_models(self):
         """Load model checkpoints if available."""
@@ -243,8 +243,15 @@ class PythonMLBridge:
     def _poll_confirmations(self):
         """Background thread: polls confirmation file every 10ms for instant position sync."""
         last_mtime = 0.0
+        last_heartbeat = 0.0
         while self._running:
             try:
+                # Write heartbeat every 1s from poller thread (faster than main cycle)
+                now = time.time()
+                if now - last_heartbeat >= 1.0:
+                    self.bridge.write_heartbeat()
+                    last_heartbeat = now
+
                 conf_path = self.bridge.confirmation_path
                 if os.path.exists(conf_path):
                     mtime = os.path.getmtime(conf_path)
