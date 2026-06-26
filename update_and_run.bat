@@ -38,6 +38,9 @@ python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/main.p
 echo [4/7] TFT model fix...
 python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/tft_model.py','%PB%/models/tft_model.py'); print('  OK')"
 
+echo [4b] Chronos model fix...
+python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/chronos_model.py','%PB%/models/chronos_model.py'); print('  OK')"
+
 echo [5/7] LightGBM model...
 python -c "import urllib.request; urllib.request.urlretrieve('%REPO%/%PB%/models/gradient_boost_extra.py','%PB%/models/gradient_boost_extra.py'); print('  OK')"
 
