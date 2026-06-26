@@ -25,7 +25,8 @@ from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig
                              TickDataConfig, MicrostructureConfig,
                              RegimeRoutingConfig, AdversarialFilterConfig,
                              SpreadGateConfig, CorrelationRegimeConfig,
-                             AdaptiveThresholdConfig)
+                             AdaptiveThresholdConfig,
+                             DisagreementConfig, KellyConfig, MonteCarloConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -129,6 +130,11 @@ class SignalGenerator:
         self._spread_monitor = None
         self._correlation_regime = None
         self._adaptive_threshold = None
+
+        # v8.0 Tier 3: Optional components (set from main.py via setters)
+        self._disagreement_signal = None
+        self._kelly_sizer = None
+        self._monte_carlo_risk = None
 
         self._last_signal_time = 0.0
         self._signal_count = 0
@@ -1340,6 +1346,43 @@ class SignalGenerator:
                     probabilities[0], probabilities[1], probabilities[2])
         logger.info("[SignalGen] Confidence=%.4f, Agreement=%.4f", confidence, agreement)
 
+        # 2b. v8.0 Tier 3: Compute multi-model disagreement
+        disagreement_level = 0.0
+        if (self._disagreement_signal and self._main_config and
+                self._main_config.enable_disagreement_signal):
+            try:
+                individual_preds = prediction.get("individual_preds", {})
+                if individual_preds:
+                    disagreement_level = self._disagreement_signal.compute_disagreement(
+                        individual_preds
+                    )
+                    if disagreement_level > 0.01:
+                        logger.info("[SignalGen] Disagreement level: %.4f "
+                                    "(threshold=%.2f)",
+                                    disagreement_level,
+                                    self._disagreement_signal.config.strong_disagreement_threshold)
+                    # Get timing signal from disagreement
+                    timing_from_disagree = self._disagreement_signal.get_timing_signal(
+                        disagreement_level
+                    )
+                    if timing_from_disagree == 'wait':
+                        logger.info("[SignalGen] HOLD - disagreement signal says WAIT "
+                                    "(models strongly disagree, volatility spike expected)")
+                        return hold_signal
+            except Exception as e:
+                logger.debug("[SignalGen] Disagreement signal error: %s", e)
+
+        # 2c. v8.0 Tier 3: Monte Carlo pre-trade risk gate
+        if (self._monte_carlo_risk and self._main_config and
+                self._main_config.enable_monte_carlo_risk):
+            try:
+                skip, reason = self._monte_carlo_risk.should_skip_trade()
+                if skip:
+                    logger.info("[SignalGen] HOLD - Monte Carlo risk gate: %s", reason)
+                    return hold_signal
+            except Exception as e:
+                logger.debug("[SignalGen] Monte Carlo error: %s", e)
+
         # 3. Detect regime
         import pandas as pd
         regime_info = self.regime_detector.detect_regime(
@@ -1575,17 +1618,75 @@ class SignalGenerator:
         position_mult = regime_adjustments.get("position_size_mult", 1.0)
         # Apply session multiplier to position sizing
         position_mult *= session_multiplier
-        lot_size = self.risk_manager.calculate_position_size(
-            confidence=timing_confidence,
-            atr=atr,
-            win_rate=self.risk_manager.get_win_rate(),
-            avg_win_loss_ratio=self.risk_manager.get_avg_win_loss_ratio(),
-            regime_mult=position_mult
-        )
+
+        # v8.0 Tier 3: Apply disagreement-based position reduction
+        if (self._disagreement_signal and self._main_config and
+                self._main_config.enable_disagreement_signal and disagreement_level > 0.01):
+            disagree_mult = self._disagreement_signal.get_position_adjustment(
+                disagreement_level
+            )
+            if disagree_mult < 1.0:
+                position_mult *= disagree_mult
+                logger.info("[SignalGen] Disagreement position adjustment: %.2f "
+                            "(disagreement=%.3f)", disagree_mult, disagreement_level)
+
+        # v8.0 Tier 3: Kelly criterion position sizing (replaces fixed sizing if valid)
+        kelly_lot = None
+        if (self._kelly_sizer and self._main_config and
+                self._main_config.enable_kelly_sizing):
+            try:
+                if self._kelly_sizer.is_kelly_valid():
+                    stats = self._kelly_sizer.get_current_stats()
+                    kelly_lot = self._kelly_sizer.get_optimal_lot(
+                        account_balance=self.risk_manager._account_balance
+                            if hasattr(self.risk_manager, '_account_balance') else 10000.0,
+                        risk_per_trade=0.02,
+                        win_rate=stats["win_rate"],
+                        avg_win=stats["avg_win"],
+                        avg_loss=stats["avg_loss"],
+                        current_atr=atr,
+                    )
+                    # Apply position multiplier to Kelly lot too
+                    kelly_lot *= position_mult
+                    kelly_lot = round(max(0.01, min(kelly_lot, 1.0)), 2)
+                    logger.info("[SignalGen] Kelly lot: %.2f (full_kelly=%.4f, "
+                                "frac=%.4f, wr=%.3f)",
+                                kelly_lot, stats["full_kelly"],
+                                stats["fractional_kelly"], stats["win_rate"])
+            except Exception as e:
+                logger.debug("[SignalGen] Kelly sizing error: %s", e)
+
+        if kelly_lot is not None and kelly_lot > 0:
+            lot_size = kelly_lot
+        else:
+            lot_size = self.risk_manager.calculate_position_size(
+                confidence=timing_confidence,
+                atr=atr,
+                win_rate=self.risk_manager.get_win_rate(),
+                avg_win_loss_ratio=self.risk_manager.get_avg_win_loss_ratio(),
+                regime_mult=position_mult
+            )
 
         if lot_size <= 0:
             logger.info("[SignalGen] HOLD - calculated lot_size is 0")
             return hold_signal
+
+        # v8.0 Tier 3: Widen TP when volatility spike is predicted from disagreement
+        if (self._disagreement_signal and self._main_config and
+                self._main_config.enable_disagreement_signal and disagreement_level > 0.01):
+            try:
+                spike_prob, atr_mult = self._disagreement_signal.predict_volatility_spike(
+                    disagreement_level, atr
+                )
+                if spike_prob > 0.6 and levels["tp_pips"] < 9999:
+                    # Widen TP on expected high vol
+                    old_tp = levels["tp_pips"]
+                    levels["tp_pips"] = levels["tp_pips"] * atr_mult
+                    logger.info("[SignalGen] Disagreement TP widening: %.1f -> %.1f "
+                                "(spike_prob=%.2f, atr_mult=%.2f)",
+                                old_tp, levels["tp_pips"], spike_prob, atr_mult)
+            except Exception as e:
+                logger.debug("[SignalGen] Disagreement TP adjustment error: %s", e)
 
         # 11. Determine which model contributed most
         individual = prediction["individual_preds"]
@@ -1691,6 +1792,18 @@ class SignalGenerator:
     def set_adaptive_threshold(self, threshold) -> None:
         """Set AdaptiveConfidenceThreshold for dynamic threshold (Tier 2)."""
         self._adaptive_threshold = threshold
+
+    def set_disagreement_signal(self, signal) -> None:
+        """Set DisagreementSignal for multi-model disagreement (Tier 3)."""
+        self._disagreement_signal = signal
+
+    def set_kelly_sizer(self, sizer) -> None:
+        """Set KellySizer for Kelly criterion position sizing (Tier 3)."""
+        self._kelly_sizer = sizer
+
+    def set_monte_carlo_risk(self, simulator) -> None:
+        """Set MonteCarloRiskSimulator for MC risk gating (Tier 3)."""
+        self._monte_carlo_risk = simulator
 
     def set_main_config(self, config) -> None:
         """Set MainConfig reference for feature flag checking."""

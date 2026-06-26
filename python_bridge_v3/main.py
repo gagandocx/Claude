@@ -35,6 +35,7 @@ from config.settings import (
     TickDataConfig, MicrostructureConfig,
     RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig,
     SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig,
+    DisagreementConfig, KellyConfig, MonteCarloConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -61,6 +62,9 @@ from strategies.adversarial_filter import AdversarialFilter
 from data.spread_monitor import SpreadMonitor
 from strategies.correlation_regime import CorrelationRegimeDetector
 from strategies.adaptive_threshold import AdaptiveConfidenceThreshold
+from strategies.disagreement_signal import DisagreementSignal
+from strategies.kelly_sizing import KellySizer
+from strategies.monte_carlo import MonteCarloRiskSimulator
 
 
 # ─────────────────────────────────────────────
@@ -231,6 +235,25 @@ class PythonMLBridge:
             if self.config.enable_adaptive_threshold else None
         )
 
+        # ── V3 Tier 3 Components ────────────────────────────────────────────
+        # Multi-model disagreement signal (volatility prediction)
+        self.disagreement_signal = (
+            DisagreementSignal(DisagreementConfig())
+            if self.config.enable_disagreement_signal else None
+        )
+
+        # Kelly criterion position sizing
+        self.kelly_sizer = (
+            KellySizer(KellyConfig())
+            if self.config.enable_kelly_sizing else None
+        )
+
+        # Monte Carlo risk simulation
+        self.monte_carlo_risk = (
+            MonteCarloRiskSimulator(MonteCarloConfig(), BrainConfig())
+            if self.config.enable_monte_carlo_risk else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -269,6 +292,14 @@ class PythonMLBridge:
         if self.adaptive_threshold:
             self.signal_generator.set_adaptive_threshold(self.adaptive_threshold)
 
+        # ── V3 Tier 3: Wire components into signal generator ────────────────
+        if self.disagreement_signal:
+            self.signal_generator.set_disagreement_signal(self.disagreement_signal)
+        if self.kelly_sizer:
+            self.signal_generator.set_kelly_sizer(self.kelly_sizer)
+        if self.monte_carlo_risk:
+            self.signal_generator.set_monte_carlo_risk(self.monte_carlo_risk)
+
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
@@ -292,6 +323,10 @@ class PythonMLBridge:
         self.logger.info(f"  Spread gate:    {self.config.enable_spread_gate}")
         self.logger.info(f"  Corr regime:    {self.config.enable_correlation_regime}")
         self.logger.info(f"  Adaptive thr:   {self.config.enable_adaptive_threshold}")
+        self.logger.info(f"  --- V3 Tier 3 ---")
+        self.logger.info(f"  Disagreement:   {self.config.enable_disagreement_signal}")
+        self.logger.info(f"  Kelly sizing:   {self.config.enable_kelly_sizing}")
+        self.logger.info(f"  Monte Carlo:    {self.config.enable_monte_carlo_risk}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -430,6 +465,30 @@ class PythonMLBridge:
                                         except Exception as e:
                                             self.logger.debug(
                                                 f"Adaptive threshold record error: {e}")
+                                    # v8.0 Tier 3: Feed Kelly sizer with trade outcome
+                                    if self.kelly_sizer:
+                                        try:
+                                            self.kelly_sizer.record_trade(
+                                                pnl=pnl, won=(pnl > 0)
+                                            )
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Kelly record error: {e}")
+                                    # v8.0 Tier 3: Update Monte Carlo state
+                                    if self.monte_carlo_risk and self.brain:
+                                        try:
+                                            ks = self.kelly_sizer.get_current_stats() if self.kelly_sizer else {}
+                                            self.monte_carlo_risk.update_state(
+                                                drawdown=self.brain.total_drawdown,
+                                                win_rate=ks.get("win_rate", 0.55),
+                                                avg_win=ks.get("avg_win", 2.0),
+                                                avg_loss=ks.get("avg_loss", 1.0),
+                                                losing_streak=self.brain.edge.consecutive_losses,
+                                                regime=active.get("regime", "neutral"),
+                                            )
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Monte Carlo update error: {e}")
                                     self.signal_generator.clear_active_position()
                                     self.signal_generator._estimated_close_pending = True
                                 else:

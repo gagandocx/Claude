@@ -31,7 +31,7 @@ SIGNAL_HEADERS = [
 ]
 
 # Exit signal file for position management commands
-EXIT_SIGNAL_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_exit.csv")
+EXIT_SIGNAL_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_v3_exit.csv")
 
 EXIT_SIGNAL_HEADERS = [
     "timestamp", "ticket", "action", "lot_pct", "new_sl", "reason"
@@ -43,12 +43,12 @@ CONFIRMATION_HEADERS = [
 ]
 
 # Status file for communicating bridge state to MT5 dashboard
-STATUS_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_status.txt")
+STATUS_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_v3_status.txt")
 
 # MT5-side heartbeat: the EA writes this every 2 s so Python can verify the
 # MT5 terminal is alive. Distinct from python_bridge_heartbeat.txt which goes
 # the other direction (Python → MT5).
-MT5_HEARTBEAT_FILE = os.path.join(MT5_COMMON_PATH, "mt5_bridge_heartbeat.txt")
+MT5_HEARTBEAT_FILE = os.path.join(MT5_COMMON_PATH, "mt5_bridge_v3_heartbeat.txt")
 
 # Seconds without a heartbeat before the connection is considered lost
 MT5_HEARTBEAT_TIMEOUT = 5
@@ -83,7 +83,7 @@ class MT5Bridge:
             self.heartbeat_path = heartbeat_path
         else:
             self.heartbeat_path = os.path.join(
-                os.path.dirname(self.signal_path), "python_bridge_heartbeat.txt"
+                os.path.dirname(self.signal_path), "python_bridge_v3_heartbeat.txt"
             )
         self._ensure_directories()
 
@@ -397,7 +397,7 @@ class MT5Bridge:
         logger = logging.getLogger("PythonBridge")
         settings_path = os.path.join(
             os.path.dirname(self.signal_path),
-            "python_bridge_brain_settings.csv"
+            "python_bridge_v3_brain_settings.csv"
         )
         try:
             directory = os.path.dirname(settings_path) or "."
@@ -637,3 +637,61 @@ class MT5Bridge:
         except Exception as e:
             result["status_str"] = f"DISCONNECTED (err: {e})"
         return result
+
+    def read_tick_data(self, max_rows: int = 5000) -> List[Dict]:
+        """
+        Read tick data CSV written by the MT5 EA.
+
+        The EA writes python_bridge_v3_tick_data.csv with format:
+            timestamp,bid,ask,volume,flags
+
+        Args:
+            max_rows: Maximum number of rows to read (most recent)
+
+        Returns:
+            List of tick data dicts, most recent last.
+        """
+        tick_path = os.path.join(
+            os.path.dirname(self.signal_path), "python_bridge_v3_tick_data.csv"
+        )
+        if not os.path.exists(tick_path):
+            return []
+
+        try:
+            ticks = []
+            with open(tick_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    ticks.append(dict(row))
+            # Return only last max_rows
+            return ticks[-max_rows:] if len(ticks) > max_rows else ticks
+        except Exception as e:
+            logging.getLogger("PythonBridge").debug(
+                f"[Bridge] Error reading tick data: {e}")
+            return []
+
+    def read_spread_data(self) -> Optional[Dict]:
+        """
+        Read current spread data CSV written by the MT5 EA.
+
+        The EA overwrites python_bridge_v3_spread.csv each tick with:
+            timestamp,spread_points,ask,bid
+
+        Returns:
+            Dict with spread data or None if file doesn't exist/error.
+        """
+        spread_path = os.path.join(
+            os.path.dirname(self.signal_path), "python_bridge_v3_spread.csv"
+        )
+        if not os.path.exists(spread_path):
+            return None
+
+        try:
+            with open(spread_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    return dict(row)
+        except Exception as e:
+            logging.getLogger("PythonBridge").debug(
+                f"[Bridge] Error reading spread data: {e}")
+        return None

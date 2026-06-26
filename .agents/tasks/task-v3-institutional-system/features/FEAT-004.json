@@ -2,7 +2,7 @@
   "id": "FEAT-004",
   "type": "feat",
   "description": "Implement Tier 3 features: Multi-model disagreement as volatility signal, Kelly criterion position sizing, Monte Carlo risk simulation. Also create the v3 MQL5 EA (Python_Bridge_EA_v3.mq5) that writes tick data + spread CSV files for Python to read.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Create python_bridge_v3/strategies/disagreement_signal.py: A DisagreementSignal class. Methods: compute_disagreement(individual_predictions: dict) -> float (0.0=total agreement, 1.0=maximum disagreement); predict_volatility_spike(disagreement: float, current_atr: float) -> (spike_probability: float, expected_atr_multiplier: float); get_position_adjustment(disagreement: float) -> float (multiplier for lot size: 1.0 at low disagreement, 0.5 at high disagreement); get_timing_signal(disagreement: float) -> str ('enter_now', 'wait', 'reduce_size'). The class tracks disagreement history and correlates with subsequent realized volatility to calibrate its predictions.",
     "Create python_bridge_v3/strategies/kelly_sizing.py: A KellySizer class implementing the Kelly criterion for optimal position sizing. Methods: compute_kelly_fraction(win_rate: float, avg_win: float, avg_loss: float) -> float (the full Kelly fraction); get_optimal_lot(account_balance: float, risk_per_trade: float, win_rate: float, avg_win: float, avg_loss: float, current_atr: float) -> float (lot size using fractional Kelly with safety factor); is_kelly_valid() -> bool (True only if we have enough trades and win_rate > 50%). Uses Brain's tracked win_rate and avg_win/avg_loss ratio. Apply fractional Kelly (default 0.25x full Kelly) for safety. Clamp to min/max lot from config.",
