@@ -235,7 +235,7 @@ class GradBoostExtra:
         self._backend = data["backend"]
         self._model = data["model"]
         self.fitted = data["fitted"]
-        logger.info(f"GradBoostExtra loaded ← {path}  (backend={self._backend})")
+        logger.info(f"GradBoostExtra loaded from {path}  (backend={self._backend})")
 
     # ── diagnostics ──────────────────────────────────────────────────────────
 
