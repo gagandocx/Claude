@@ -366,11 +366,14 @@ class MT5Bridge:
     def write_heartbeat(self):
         """Write a heartbeat file to indicate the bridge is running."""
         try:
-            with open(self.heartbeat_path, "w") as f:
+            tmp_path = self.heartbeat_path + ".tmp"
+            with open(tmp_path, "w") as f:
                 f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("Python ML Bridge Active\n")
+            os.replace(tmp_path, self.heartbeat_path)
         except Exception as e:
-            print(f"[Bridge] Error writing heartbeat: {e}")
+            # Non-fatal: heartbeat is informational, don't block trading
+            pass
 
     def write_brain_settings(self, settings: dict) -> bool:
         """
