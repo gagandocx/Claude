@@ -632,9 +632,9 @@ class PythonMLBridge:
                     # Brain vetoed — skip this signal
                     self.logger.info(f"[Brain] VETOED: {decision.reasoning.get('final','')}")
                     signal = type(signal)(
-                        symbol=signal.symbol, action="HOLD",
+                        timestamp=signal.timestamp, symbol=signal.symbol, action="HOLD",
                         confidence=0.0, sl_pips=0, tp_pips=0,
-                        lot_size=0.0, regime=decision.regime,
+                        lot_size=0.0, model_name=signal.model_name, regime=decision.regime,
                     )
                 else:
                     # Brain approved — apply its sizing, SL, TP

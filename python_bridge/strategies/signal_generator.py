@@ -921,8 +921,8 @@ class SignalGenerator:
 
             # STALENESS CHECK: If position held far longer than max_hold, the close
             # confirmation was likely missed. Auto-clear to prevent permanent "HOLD" state.
-            # Use 3x max_hold_bars as the staleness timeout (generous buffer) with 5min floor.
-            staleness_timeout = max(self.signal_config.max_hold_bars * 60 * 3, 300)
+            # Use 1x max_hold_bars (in seconds) with 2min floor — generous for HF scalping.
+            staleness_timeout = max(self.signal_config.max_hold_bars * 60, 120)
             if time_held > staleness_timeout:
                 logger.warning(
                     "[SignalGen] STALE POSITION CLEARED: %s held %.0fs (timeout=%ds). "
