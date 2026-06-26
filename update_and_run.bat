@@ -38,6 +38,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/models/ensemble.py','python_bridge/models/ensemble.py'); print('  ensemble.py OK')"
 
 echo.
+echo All files updated. Applying patches...
+python -c "f=open('python_bridge/strategies/trading_brain.py','r',encoding='utf-8').read(); f=f.replace('rp[\"rr\"]','rp.get(\"tp_rr\",rp.get(\"rr\",0.0))'); open('python_bridge/strategies/trading_brain.py','w',encoding='utf-8').write(f)"
 echo Starting EA...
 echo ============================================
 echo.
