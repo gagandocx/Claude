@@ -217,7 +217,7 @@ class TestConfirmations:
             writer.writerow(CONFIRMATION_HEADERS)
             writer.writerow([
                 "2024-01-15 14:30:05", "12345", "XAUUSD", "BUY",
-                "0.10", "2050.50", "2043.00", "2062.75", "FILLED"
+                "0.10", "2050.50", "2043.00", "2062.75", "FILLED", "0.00"
             ])
 
         confirmations = bridge.read_confirmations()

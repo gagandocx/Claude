@@ -39,7 +39,7 @@ EXIT_SIGNAL_HEADERS = [
 
 CONFIRMATION_HEADERS = [
     "timestamp", "ticket", "symbol", "action", "lot_size",
-    "open_price", "sl", "tp", "status"
+    "open_price", "sl", "tp", "status", "profit"
 ]
 
 # Status file for communicating bridge state to MT5 dashboard

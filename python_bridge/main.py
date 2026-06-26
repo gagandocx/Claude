@@ -241,7 +241,7 @@ class PythonMLBridge:
         self._news_refresh_thread.start()
 
     def _poll_confirmations(self):
-        """Background thread: polls confirmation file every 100ms for instant position sync."""
+        """Background thread: polls confirmation file every 10ms for instant position sync."""
         last_mtime = 0.0
         while self._running:
             try:
@@ -256,17 +256,28 @@ class PythonMLBridge:
                             if status == "CLOSED":
                                 close_price = float(conf.get("open_price", 0))
                                 ticket      = conf.get("ticket", "?")
-                                close_time  = conf.get("close_time", "")
+                                close_time  = conf.get("timestamp", "")
+                                lot_conf    = float(conf.get("lot_size", 0))
+                                # Read actual profit from MT5 (accurate P&L in account currency)
+                                mt5_profit  = conf.get("profit", "")
                                 active = self.signal_generator._active_position
                                 if active:
                                     entry_price = active.get("entry_price", close_price)
                                     direction   = active.get("direction", "BUY")
-                                    lot         = active.get("lot_size", 0.01)
+                                    lot         = lot_conf if lot_conf > 0 else active.get("lot_size", 0.01)
                                     entry_time  = active.get("entry_time", "")
-                                    if direction == "BUY":
-                                        pnl = close_price - entry_price
+
+                                    # Use MT5's actual profit if available (most accurate)
+                                    if mt5_profit and mt5_profit.strip() and float(mt5_profit) != 0:
+                                        pnl = float(mt5_profit)
                                     else:
-                                        pnl = entry_price - close_price
+                                        # Fallback: calculate from prices
+                                        # For XAUUSD: profit = (close-entry) * lots * 100 (contract size)
+                                        if direction == "BUY":
+                                            pnl = (close_price - entry_price) * lot * 100
+                                        else:
+                                            pnl = (entry_price - close_price) * lot * 100
+
                                     won = pnl > 0
                                     result_str = "WIN" if won else "LOSS"
                                     # ── Full instant trade confirmation ──────────
@@ -313,12 +324,15 @@ class PythonMLBridge:
                                     self.signal_generator.clear_active_position()
                                     self.signal_generator._estimated_close_pending = True
                                 else:
-                                    self.logger.info("[INSTANT SYNC] EA closed position (no active tracked)")
+                                    self.logger.info(
+                                        f"[INSTANT SYNC] EA closed position #{ticket} "
+                                        f"P&L=${float(mt5_profit) if mt5_profit and mt5_profit.strip() else 0:.2f} "
+                                        f"(no active tracked)")
                             elif status == "FILLED":
                                 # Update active position with actual entry price from MT5
                                 actual_price = float(conf.get("open_price", 0))
                                 ticket       = conf.get("ticket", "?")
-                                lot_filled   = conf.get("volume", "?")
+                                lot_filled   = conf.get("lot_size", "?")
                                 sl_price     = conf.get("sl", 0)
                                 tp_price     = conf.get("tp", 0)
                                 if self.signal_generator._active_position and actual_price > 0:
@@ -342,7 +356,7 @@ class PythonMLBridge:
             except Exception as e:
                 # Log the error so missed confirmations are visible (not silently swallowed)
                 self.logger.debug(f"[ConfPoller] Error processing confirmation: {e}")
-            time.sleep(0.05)  # 50ms polling — instant trade sync
+            time.sleep(0.01)  # 10ms polling — near-instant trade sync
 
     def run_cycle(self) -> dict:
         """

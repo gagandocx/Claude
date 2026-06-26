@@ -725,7 +725,8 @@ void ManageOpenPositions()
 //| Write execution confirmation for Python to read                    |
 //+------------------------------------------------------------------+
 void WriteConfirmation(string action, double lots, double price,
-                       double sl, double tp, string status)
+                       double sl, double tp, string status,
+                       ulong ticketNum = 0, double profit = 0.0)
 {
     int fileHandle = FileOpen(InpConfirmFile, FILE_WRITE | FILE_CSV | FILE_COMMON,
                               ',', CP_UTF8);
@@ -735,20 +736,27 @@ void WriteConfirmation(string action, double lots, double price,
         return;
     }
 
-    // Write header
+    // Write header (includes profit field for accurate PnL reporting)
     FileWrite(fileHandle, "timestamp", "ticket", "symbol", "action",
-              "lot_size", "open_price", "sl", "tp", "status");
+              "lot_size", "open_price", "sl", "tp", "status", "profit");
+
+    // Use provided ticket, or fall back to g_trade.ResultDeal() for FILLED
+    string ticketStr;
+    if(ticketNum > 0)
+        ticketStr = IntegerToString(ticketNum);
+    else
+        ticketStr = IntegerToString(g_trade.ResultDeal());
 
     // Write data
-    string ticket = IntegerToString(g_trade.ResultOrder());
     FileWrite(fileHandle,
               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-              ticket, _Symbol, action,
+              ticketStr, _Symbol, action,
               DoubleToString(lots, 2),
               DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               DoubleToString(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               DoubleToString(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
-              status);
+              status,
+              DoubleToString(profit, 2));
 
     FileClose(fileHandle);
 }

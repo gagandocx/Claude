@@ -919,77 +919,89 @@ class SignalGenerator:
             time_held = time.time() - self._active_position["entry_time"]
             active_dir = self._active_position["direction"]
 
-            # Check if minimum cooldown from entry hasn't passed
-            if time_held < self.signal_config.cooldown_seconds:
-                logger.info("[SignalGen] HOLD - position active, cooldown (%.1fs of %ds)",
-                            time_held, self.signal_config.cooldown_seconds)
-                return hold_signal
-
-            # Compute quick momentum check to see if direction reversed
-            # Use same adaptive ATR parameters as the main signal path for consistency
-            momentum_prices_quick = prices_m1 if prices_m1 is not None else prices
-            import pandas as pd
-            quick_adaptive_atr = None
-            quick_avg_atr = None
-            if isinstance(momentum_prices_quick, pd.DataFrame) and "High" in momentum_prices_quick.columns and "Low" in momentum_prices_quick.columns:
-                atr_period = self.adaptive_momentum_config.atr_avg_period
-                if len(momentum_prices_quick) >= atr_period + 1:
-                    recent_ranges = (momentum_prices_quick["High"].iloc[-atr_period:] - momentum_prices_quick["Low"].iloc[-atr_period:]).values
-                    quick_avg_atr = float(np.mean(recent_ranges))
-                    quick_adaptive_atr = float(momentum_prices_quick["High"].iloc[-1] - momentum_prices_quick["Low"].iloc[-1])
-            quick_momentum = self._compute_momentum_direction(
-                momentum_prices_quick, adaptive_atr=quick_adaptive_atr, avg_atr=quick_avg_atr)
-
-            # Check if max hold time exceeded OR momentum reversed
-            momentum_reversed = (
-                (active_dir == "BUY" and quick_momentum == "SELL") or
-                (active_dir == "SELL" and quick_momentum == "BUY")
-            )
-            max_hold_exceeded = time_held >= self.signal_config.max_hold_bars * 60
-
-            if momentum_reversed or max_hold_exceeded:
-                # Close position: estimate PnL and feed to optimizer
-                entry_price = self._active_position["entry_price"]
-                if active_dir == "BUY":
-                    estimated_pnl = current_price - entry_price
-                else:
-                    estimated_pnl = entry_price - current_price
-
-                reason = "momentum_reversed" if momentum_reversed else "max_hold_exceeded"
-                logger.info("[SignalGen] Closing active position: %s entry=%.2f "
-                            "current=%.2f pnl=%.2f reason=%s",
-                            active_dir, entry_price, current_price, estimated_pnl, reason)
-
-                # Feed estimated PnL to auto-optimizer
-                if self._auto_optimizer and self._auto_optimizer.is_enabled:
-                    ctx = self._active_position.get("signal_context", {})
-                    trade_data = {
-                        "session": ctx.get("session", "unknown"),
-                        "confidence": ctx.get("confidence", 0.5),
-                        "momentum_lookback": ctx.get("momentum_lookback", 8),
-                        "sl_distance": ctx.get("sl_distance", 5.0),
-                        "result_pnl": estimated_pnl,
-                        "direction": active_dir,
-                        "rsi_at_entry": ctx.get("rsi_at_entry", 50.0),
-                        "trail_tier": "estimated",
-                        "cooldown_used": self.signal_config.cooldown_seconds,
-                        "max_positions_at_entry": self.signal_config.max_positions,
-                        "entry_time": datetime.fromtimestamp(
-                            self._active_position["entry_time"]).isoformat(),
-                        "exit_time": timestamp,
-                    }
-                    self._auto_optimizer.record_estimated_trade(trade_data)
-                    # Mark that this close was Python-estimated so main.py
-                    # skips the MT5 close feed (prevents double-counting)
-                    self._estimated_close_pending = True
-
-                # Clear position so a new signal can be generated below
+            # STALENESS CHECK: If position held far longer than max_hold, the close
+            # confirmation was likely missed. Auto-clear to prevent permanent "HOLD" state.
+            # Use 3x max_hold_bars as the staleness timeout (generous buffer) with 5min floor.
+            staleness_timeout = max(self.signal_config.max_hold_bars * 60 * 3, 300)
+            if time_held > staleness_timeout:
+                logger.warning(
+                    "[SignalGen] STALE POSITION CLEARED: %s held %.0fs (timeout=%ds). "
+                    "Close confirmation likely missed - clearing to resume trading.",
+                    active_dir, time_held, staleness_timeout)
                 self._active_position = None
+                # Fall through to generate new signals
             else:
-                # Position is still valid (same direction, within hold time) - let it ride
-                logger.info("[SignalGen] HOLD - letting %s position ride (%.1fs held, "
-                            "momentum=%s)", active_dir, time_held, quick_momentum)
-                return hold_signal
+                # Check if minimum cooldown from entry hasn't passed
+                if time_held < self.signal_config.cooldown_seconds:
+                    logger.info("[SignalGen] HOLD - position active, cooldown (%.1fs of %ds)",
+                                time_held, self.signal_config.cooldown_seconds)
+                    return hold_signal
+
+                # Compute quick momentum check to see if direction reversed
+                # Use same adaptive ATR parameters as the main signal path for consistency
+                momentum_prices_quick = prices_m1 if prices_m1 is not None else prices
+                import pandas as pd
+                quick_adaptive_atr = None
+                quick_avg_atr = None
+                if isinstance(momentum_prices_quick, pd.DataFrame) and "High" in momentum_prices_quick.columns and "Low" in momentum_prices_quick.columns:
+                    atr_period = self.adaptive_momentum_config.atr_avg_period
+                    if len(momentum_prices_quick) >= atr_period + 1:
+                        recent_ranges = (momentum_prices_quick["High"].iloc[-atr_period:] - momentum_prices_quick["Low"].iloc[-atr_period:]).values
+                        quick_avg_atr = float(np.mean(recent_ranges))
+                        quick_adaptive_atr = float(momentum_prices_quick["High"].iloc[-1] - momentum_prices_quick["Low"].iloc[-1])
+                quick_momentum = self._compute_momentum_direction(
+                    momentum_prices_quick, adaptive_atr=quick_adaptive_atr, avg_atr=quick_avg_atr)
+
+                # Check if max hold time exceeded OR momentum reversed
+                momentum_reversed = (
+                    (active_dir == "BUY" and quick_momentum == "SELL") or
+                    (active_dir == "SELL" and quick_momentum == "BUY")
+                )
+                max_hold_exceeded = time_held >= self.signal_config.max_hold_bars * 60
+
+                if momentum_reversed or max_hold_exceeded:
+                    # Close position: estimate PnL and feed to optimizer
+                    entry_price = self._active_position["entry_price"]
+                    if active_dir == "BUY":
+                        estimated_pnl = current_price - entry_price
+                    else:
+                        estimated_pnl = entry_price - current_price
+
+                    reason = "momentum_reversed" if momentum_reversed else "max_hold_exceeded"
+                    logger.info("[SignalGen] Closing active position: %s entry=%.2f "
+                                "current=%.2f pnl=%.2f reason=%s",
+                                active_dir, entry_price, current_price, estimated_pnl, reason)
+
+                    # Feed estimated PnL to auto-optimizer
+                    if self._auto_optimizer and self._auto_optimizer.is_enabled:
+                        ctx = self._active_position.get("signal_context", {})
+                        trade_data = {
+                            "session": ctx.get("session", "unknown"),
+                            "confidence": ctx.get("confidence", 0.5),
+                            "momentum_lookback": ctx.get("momentum_lookback", 8),
+                            "sl_distance": ctx.get("sl_distance", 5.0),
+                            "result_pnl": estimated_pnl,
+                            "direction": active_dir,
+                            "rsi_at_entry": ctx.get("rsi_at_entry", 50.0),
+                            "trail_tier": "estimated",
+                            "cooldown_used": self.signal_config.cooldown_seconds,
+                            "max_positions_at_entry": self.signal_config.max_positions,
+                            "entry_time": datetime.fromtimestamp(
+                                self._active_position["entry_time"]).isoformat(),
+                            "exit_time": timestamp,
+                        }
+                        self._auto_optimizer.record_estimated_trade(trade_data)
+                        # Mark that this close was Python-estimated so main.py
+                        # skips the MT5 close feed (prevents double-counting)
+                        self._estimated_close_pending = True
+
+                    # Clear position so a new signal can be generated below
+                    self._active_position = None
+                else:
+                    # Position is still valid (same direction, within hold time) - let it ride
+                    logger.info("[SignalGen] HOLD - letting %s position ride (%.1fs held, "
+                                "momentum=%s)", active_dir, time_held, quick_momentum)
+                    return hold_signal
         # ─── END v6.0 POSITION MANAGEMENT ────────────────────────────────
 
         # Cooldown check

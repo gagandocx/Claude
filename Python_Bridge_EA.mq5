@@ -112,6 +112,7 @@ int      g_pyHeartbeatAge    = -1;
 ulong          g_trackedTickets[MAX_TRACKED_POSITIONS];
 datetime       g_trackedEntryTimes[MAX_TRACKED_POSITIONS];
 double         g_trackedEntryPrices[MAX_TRACKED_POSITIONS];
+double         g_trackedVolumes[MAX_TRACKED_POSITIONS];
 int            g_trackedCount = 0;
 
 // Momentum price snapshot for direction detection
@@ -612,8 +613,10 @@ void ExecuteSignal()
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
             WriteConfirmation("BUY", lotSize, price, sl, tp, "FILLED");
-            // Track position for dynamic trailing
-            TrackNewPosition(g_trade.ResultOrder(), price);
+            // Track position for dynamic trailing (use ResultDeal as position ticket)
+            ulong posTicket = g_trade.ResultDeal();
+            if(posTicket == 0) posTicket = g_trade.ResultOrder();
+            TrackNewPosition(posTicket, price, lotSize);
         }
         else
         {
@@ -646,8 +649,10 @@ void ExecuteSignal()
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
             WriteConfirmation("SELL", lotSize, price, sl, tp, "FILLED");
-            // Track position for dynamic trailing
-            TrackNewPosition(g_trade.ResultOrder(), price);
+            // Track position for dynamic trailing (use ResultDeal as position ticket)
+            ulong posTicket = g_trade.ResultDeal();
+            if(posTicket == 0) posTicket = g_trade.ResultOrder();
+            TrackNewPosition(posTicket, price, lotSize);
         }
         else
         {
@@ -662,16 +667,18 @@ void ExecuteSignal()
 //+------------------------------------------------------------------+
 //| Track a new position for dynamic trailing management               |
 //+------------------------------------------------------------------+
-void TrackNewPosition(ulong ticket, double entryPrice)
+void TrackNewPosition(ulong ticket, double entryPrice, double volume = 0.01)
 {
     if(g_trackedCount < MAX_TRACKED_POSITIONS)
     {
         g_trackedTickets[g_trackedCount] = ticket;
         g_trackedEntryTimes[g_trackedCount] = TimeCurrent();
         g_trackedEntryPrices[g_trackedCount] = entryPrice;
+        g_trackedVolumes[g_trackedCount] = volume;
         g_trackedCount++;
         Print("[PythonBridge] Tracking position ticket=", ticket,
-              " entry=", DoubleToString(entryPrice, 2));
+              " entry=", DoubleToString(entryPrice, 2),
+              " vol=", DoubleToString(volume, 2));
     }
 }
 
@@ -690,6 +697,7 @@ void UntrackPosition(ulong ticket)
                 g_trackedTickets[j] = g_trackedTickets[j + 1];
                 g_trackedEntryTimes[j] = g_trackedEntryTimes[j + 1];
                 g_trackedEntryPrices[j] = g_trackedEntryPrices[j + 1];
+                g_trackedVolumes[j] = g_trackedVolumes[j + 1];
             }
             g_trackedCount--;
             return;
@@ -746,14 +754,56 @@ void ManageOpenPositions()
         {
             // Position no longer exists - broker closed it (SL/TP hit)
             double entryPriceTracked = g_trackedEntryPrices[t];
+            double trackedVol = g_trackedVolumes[t];
+
+            // Look up the actual close deal from history for accurate price/profit
+            double closePrice = 0.0;
+            double closedProfit = 0.0;
+            double closedVolume = trackedVol;
+            string closedAction = "BUY";  // default, will be overridden
+
+            // Search deal history for the close deal of this position
+            if(HistorySelect(TimeCurrent() - 300, TimeCurrent()))  // last 5 minutes
+            {
+                for(int d = HistoryDealsTotal() - 1; d >= 0; d--)
+                {
+                    ulong dealTicket = HistoryDealGetTicket(d);
+                    if(dealTicket == 0) continue;
+                    // Match by position ID (the position ticket links to deals)
+                    long dealPosId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+                    if((ulong)dealPosId == trackedTicket &&
+                       HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+                    {
+                        closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+                        closedProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                                     + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                                     + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                        closedVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+                        // Determine direction from the original position type
+                        long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+                        // DEAL_TYPE_SELL means closing a BUY position, DEAL_TYPE_BUY means closing a SELL
+                        closedAction = (dealType == DEAL_TYPE_SELL) ? "BUY" : "SELL";
+                        break;
+                    }
+                }
+            }
+
+            // Fallback if deal history lookup failed
+            if(closePrice == 0.0)
+            {
+                closePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+                closedAction = (closePrice >= entryPriceTracked) ? "BUY" : "SELL";
+            }
+
             Print("[PythonBridge] SL/TP HIT DETECTED: Ticket ", trackedTicket,
-                  " no longer open. Entry was ", DoubleToString(entryPriceTracked, digits));
-            // Write CLOSED confirmation so Python clears _active_position
-            // We don't know the exact close price or direction from tracking alone,
-            // so use the last known bid as a proxy
-            double lastBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            string closedAction = (lastBid >= entryPriceTracked) ? "BUY" : "SELL";
-            WriteConfirmation(closedAction, 0, lastBid, 0, 0, "CLOSED");
+                  " Entry=", DoubleToString(entryPriceTracked, digits),
+                  " Close=", DoubleToString(closePrice, digits),
+                  " P&L=$", DoubleToString(closedProfit, 2),
+                  " Vol=", DoubleToString(closedVolume, 2));
+
+            // Write CLOSED confirmation with actual data from deal history
+            WriteConfirmation(closedAction, closedVolume, closePrice, 0, 0, "CLOSED",
+                              trackedTicket, closedProfit);
             UntrackPosition(trackedTicket);
         }
     }
@@ -805,7 +855,7 @@ void ManageOpenPositions()
                   " held ", holdSeconds, "s with profit $",
                   DoubleToString(profit, 2), " < $", DoubleToString(InpMinProfitTarget, 2));
             g_trade.PositionClose(ticket);
-            WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED");
+            WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED", ticket, profit);
             UntrackPosition(ticket);
             g_trailStatus = "Time exit: " + IntegerToString(holdSeconds) + "s";
             continue;
@@ -829,7 +879,7 @@ void ManageOpenPositions()
                       " momentum reversed $", DoubleToString(MathAbs(momentumDiff), 2),
                       " against position. Profit: $", DoubleToString(profit, 2));
                 g_trade.PositionClose(ticket);
-                WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED");
+                WriteConfirmation(posType == POSITION_TYPE_BUY ? "BUY" : "SELL", volume, currentPrice, currentSL, 0, "CLOSED", ticket, profit);
                 UntrackPosition(ticket);
                 g_trailStatus = "Momentum exit: $" + DoubleToString(profit, 2);
                 continue;
@@ -939,7 +989,8 @@ void ManageOpenPositions()
 //| Write execution confirmation for Python to read                    |
 //+------------------------------------------------------------------+
 void WriteConfirmation(string action, double lots, double price,
-                       double sl, double tp, string status)
+                       double sl, double tp, string status,
+                       ulong ticketNum = 0, double profit = 0.0)
 {
     int fileHandle = FileOpen(InpConfirmFile, FILE_WRITE | FILE_CSV | FILE_COMMON,
                               ',', CP_UTF8);
@@ -949,20 +1000,27 @@ void WriteConfirmation(string action, double lots, double price,
         return;
     }
 
-    // Write header
+    // Write header (includes profit field for accurate PnL reporting)
     FileWrite(fileHandle, "timestamp", "ticket", "symbol", "action",
-              "lot_size", "open_price", "sl", "tp", "status");
+              "lot_size", "open_price", "sl", "tp", "status", "profit");
+
+    // Use provided ticket, or fall back to g_trade.ResultOrder() for FILLED
+    string ticketStr;
+    if(ticketNum > 0)
+        ticketStr = IntegerToString(ticketNum);
+    else
+        ticketStr = IntegerToString(g_trade.ResultDeal());
 
     // Write data
-    string ticket = IntegerToString(g_trade.ResultOrder());
     FileWrite(fileHandle,
               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-              ticket, _Symbol, action,
+              ticketStr, _Symbol, action,
               DoubleToString(lots, 2),
               DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               DoubleToString(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               DoubleToString(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
-              status);
+              status,
+              DoubleToString(profit, 2));
 
     FileClose(fileHandle);
 }
