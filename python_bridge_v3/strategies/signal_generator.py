@@ -21,7 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR,
                              SessionConfig, SpreadFilterConfig, AdaptiveMomentumConfig,
                              PriceStructureConfig, FVGConfig, LiquiditySweepConfig,
-                             AutoOptimizerConfig)
+                             AutoOptimizerConfig, MainConfig,
+                             TickDataConfig, MicrostructureConfig,
+                             RegimeRoutingConfig, AdversarialFilterConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -113,6 +115,13 @@ class SignalGenerator:
 
         # Optional auto-optimizer reference (set from main.py)
         self._auto_optimizer = None
+
+        # v8.0 Tier 1: Optional components (set from main.py via setters)
+        self._tick_data_processor = None
+        self._microstructure_analyzer = None
+        self._regime_router = None
+        self._adversarial_filter = None
+        self._main_config = None  # Set from main.py for feature flag checks
 
         self._last_signal_time = 0.0
         self._signal_count = 0
@@ -1220,8 +1229,74 @@ class SignalGenerator:
                     "CONFIRMS momentum" if candle_bias != "neutral" else "neutral/no block")
 
         # 2. Get ensemble prediction for TIMING (confidence gate)
+        # v8.0 Tier 1: Integrate tick data features into feature vector
+        tick_features_dict = {}
+        if (self._tick_data_processor and self._main_config and
+                self._main_config.enable_tick_data):
+            try:
+                self._tick_data_processor.poll_tick_file()
+                tick_features_dict = self._tick_data_processor.compute_tick_features()
+                if any(v != 0.0 for v in tick_features_dict.values()):
+                    logger.debug("[SignalGen] Tick features: imbalance=%.3f, "
+                                 "delta=%.3f, flow=%.2f, large=%.3f",
+                                 tick_features_dict.get('bid_ask_imbalance', 0),
+                                 tick_features_dict.get('volume_delta', 0),
+                                 tick_features_dict.get('trade_flow_intensity', 0),
+                                 tick_features_dict.get('large_trade_detection', 0))
+            except Exception as e:
+                logger.debug("[SignalGen] Tick data error: %s", e)
+
+        # v8.0 Tier 2: Microstructure features from tick data
+        micro_features_dict = {}
+        if (self._microstructure_analyzer and self._main_config and
+                self._main_config.enable_microstructure and self._tick_data_processor):
+            try:
+                recent_ticks = self._tick_data_processor.get_recent_ticks(200)
+                if recent_ticks:
+                    micro_features_dict = self._microstructure_analyzer.compute_features(recent_ticks)
+                    if any(v != 0.0 for v in micro_features_dict.values()):
+                        logger.debug("[SignalGen] Microstructure: tick_rate=%.2f, "
+                                     "bounce=%.3f, large_flow=%.3f, spread_vel=%.4f",
+                                     micro_features_dict.get('tick_rate', 0),
+                                     micro_features_dict.get('bid_ask_bounce_rate', 0),
+                                     micro_features_dict.get('large_order_flow', 0),
+                                     micro_features_dict.get('spread_velocity', 0))
+            except Exception as e:
+                logger.debug("[SignalGen] Microstructure error: %s", e)
+
+        # v8.0 Tier 1: Adversarial filter - check BEFORE generating signal
+        if (self._adversarial_filter and self._main_config and
+                self._main_config.enable_adversarial_filter):
+            try:
+                skip, reason = self._adversarial_filter.should_skip_signal(
+                    direction=action,
+                    confidence=0.5,  # Pre-model confidence estimate
+                    regime=regime_name if 'regime_name' in dir() else 'unknown',
+                    price_level=current_price,
+                )
+                if skip:
+                    logger.info("[SignalGen] HOLD - adversarial filter: %s", reason)
+                    return hold_signal
+            except Exception as e:
+                logger.debug("[SignalGen] Adversarial pre-check error: %s", e)
+
+        # v8.0 Tier 1: Use regime router for prediction if available
         try:
-            prediction = self.ensemble.predict(features)
+            if (self._regime_router and self._main_config and
+                    self._main_config.enable_regime_routing):
+                # Detect regime first for routing
+                import pandas as pd
+                pre_regime_info = self.regime_detector.detect_regime(
+                    prices if prices is not None else pd.DataFrame({"Close": [current_price]}),
+                    adx=adx_series,
+                    vix=vix_level
+                )
+                pre_regime_name = pre_regime_info["regime_name"]
+                prediction = self._regime_router.route_prediction(
+                    features, pre_regime_name, self.ensemble
+                )
+            else:
+                prediction = self.ensemble.predict(features)
         except Exception as e:
             logger.error("[SignalGen] Model prediction error: %s", e)
             return hold_signal
@@ -1502,6 +1577,22 @@ class SignalGenerator:
                     signal.action, signal.symbol, signal.confidence,
                     signal.lot_size, signal.regime)
 
+        # v8.0 Tier 1: Record signal for adversarial filter
+        if (self._adversarial_filter and self._main_config and
+                self._main_config.enable_adversarial_filter):
+            try:
+                adv_signal_id = self._adversarial_filter.record_signal(
+                    direction=action,
+                    confidence=timing_confidence,
+                    regime=regime_name,
+                    price_level=current_price,
+                )
+                # Store signal_id in active position for later outcome recording
+                if self._active_position:
+                    self._active_position['adversarial_signal_id'] = adv_signal_id
+            except Exception as e:
+                logger.debug("[SignalGen] Adversarial record error: %s", e)
+
         return signal
 
     def set_performance_tracker(self, tracker) -> None:
@@ -1517,6 +1608,26 @@ class SignalGenerator:
         Called from main.py during initialization.
         """
         self._auto_optimizer = optimizer
+
+    def set_tick_data_processor(self, processor) -> None:
+        """Set TickDataProcessor for order flow features (Tier 1)."""
+        self._tick_data_processor = processor
+
+    def set_microstructure_analyzer(self, analyzer) -> None:
+        """Set MicrostructureAnalyzer for tick microstructure features (Tier 2)."""
+        self._microstructure_analyzer = analyzer
+
+    def set_regime_router(self, router) -> None:
+        """Set RegimeModelRouter for regime-specific predictions (Tier 1)."""
+        self._regime_router = router
+
+    def set_adversarial_filter(self, adv_filter) -> None:
+        """Set AdversarialFilter for signal history checking (Tier 1)."""
+        self._adversarial_filter = adv_filter
+
+    def set_main_config(self, config) -> None:
+        """Set MainConfig reference for feature flag checking."""
+        self._main_config = config
 
     def update_from_execution(self, trade_id: str, pnl: float,
                               predicted_action: int, actual_outcome: int):

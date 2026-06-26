@@ -32,6 +32,8 @@ from config.settings import (
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
     SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
     AutoOptimizerConfig, BrainConfig,
+    TickDataConfig, MicrostructureConfig,
+    RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -50,6 +52,11 @@ from signals.bridge import MT5Bridge
 from training.auto_retrain import AutoRetrainer
 from dashboard.performance_tracker import PerformanceTracker, TradeRecord
 from dashboard.dashboard_renderer import DashboardRenderer
+from data.tick_data import TickDataProcessor
+from data.microstructure import MicrostructureAnalyzer
+from strategies.regime_router import RegimeModelRouter
+from strategies.walk_forward import WalkForwardRetrainer
+from strategies.adversarial_filter import AdversarialFilter
 
 
 # ─────────────────────────────────────────────
@@ -170,6 +177,37 @@ class PythonMLBridge:
         self._dashboard_last_render = 0.0
         self._trades_since_render = 0
 
+        # ── V3 Tier 1 Components ────────────────────────────────────────────
+        # Tick data processor (order flow features)
+        self.tick_data_processor = (
+            TickDataProcessor(TickDataConfig())
+            if self.config.enable_tick_data else None
+        )
+
+        # Microstructure analyzer (tick-level features)
+        self.microstructure_analyzer = (
+            MicrostructureAnalyzer(MicrostructureConfig())
+            if self.config.enable_microstructure else None
+        )
+
+        # Regime-specific model router
+        self.regime_router = (
+            RegimeModelRouter(RegimeRoutingConfig())
+            if self.config.enable_regime_routing else None
+        )
+
+        # Walk-forward retrainer (weekly automated retraining)
+        self.walk_forward_retrainer = (
+            WalkForwardRetrainer(WalkForwardConfig())
+            if self.config.enable_walk_forward else None
+        )
+
+        # Adversarial signal filter
+        self.adversarial_filter = (
+            AdversarialFilter(AdversarialFilterConfig())
+            if self.config.enable_adversarial_filter else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -189,6 +227,17 @@ class PythonMLBridge:
         if self.auto_optimizer:
             self.signal_generator.set_auto_optimizer(self.auto_optimizer)
 
+        # ── V3 Tier 1: Wire components into signal generator ────────────────
+        self.signal_generator.set_main_config(self.config)
+        if self.tick_data_processor:
+            self.signal_generator.set_tick_data_processor(self.tick_data_processor)
+        if self.microstructure_analyzer:
+            self.signal_generator.set_microstructure_analyzer(self.microstructure_analyzer)
+        if self.regime_router:
+            self.signal_generator.set_regime_router(self.regime_router)
+        if self.adversarial_filter:
+            self.signal_generator.set_adversarial_filter(self.adversarial_filter)
+
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
@@ -202,6 +251,13 @@ class PythonMLBridge:
         self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
         self.logger.info(f"  Auto-optimizer: {self.config.enable_auto_optimizer}")
         self.logger.info(f"  Trading Brain:  {self.config.enable_brain}")
+        self.logger.info(f"  --- V3 Tier 1 ---")
+        self.logger.info(f"  Tick data:      {self.config.enable_tick_data}")
+        self.logger.info(f"  Regime routing: {self.config.enable_regime_routing}")
+        self.logger.info(f"  Walk-forward:   {self.config.enable_walk_forward}")
+        self.logger.info(f"  Adversarial:    {self.config.enable_adversarial_filter}")
+        self.logger.info(f"  --- V3 Tier 2 ---")
+        self.logger.info(f"  Microstructure: {self.config.enable_microstructure}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -396,6 +452,21 @@ class PythonMLBridge:
                     )
                     if retrain_result.get("deployed"):
                         self._load_models()  # Reload newly trained models
+
+            # 0b. V3 WALK-FORWARD RETRAIN CHECK - Weekly automated retraining
+            if self.walk_forward_retrainer:
+                if self.walk_forward_retrainer.schedule_weekly():
+                    self.logger.info(
+                        "[WalkForward] Weekly retraining triggered..."
+                    )
+                    wf_result = self.walk_forward_retrainer.retrain_with_validation(
+                        self.signal_generator.ensemble
+                    )
+                    self.logger.info(
+                        f"[WalkForward] Result: {wf_result.get('reason', '')}"
+                    )
+                    if wf_result.get("deployed"):
+                        self._load_models()
 
             # 0. NEWS FILTER - Professional traders never trade through major events
             # Uses cached calendar data (refreshed in background thread) to avoid

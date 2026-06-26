@@ -266,6 +266,61 @@ class EnsembleManager:
         agreement_norm = np.clip((agreement - chance) / (1.0 - chance), 0.0, 1.0)
         return max_prob * (1.0 - entropy_norm) * (0.5 + 0.5 * agreement_norm)
 
+    # ── regime weight override ────────────────────────────────────────────
+
+    def set_regime_weights(self, weights: np.ndarray) -> None:
+        """
+        Temporarily override model weights with regime-specific values.
+
+        Used by RegimeModelRouter to apply regime-optimized weights
+        before calling predict(). Weights persist until next call to
+        set_regime_weights() or update_weights().
+
+        Args:
+            weights: np.ndarray of shape (17,) summing to ~1.0
+        """
+        if len(weights) != _NUM_MODELS:
+            logger.warning("[Ensemble] set_regime_weights: expected %d weights, got %d",
+                           _NUM_MODELS, len(weights))
+            return
+        # Normalize to ensure valid distribution
+        total = weights.sum()
+        if total > 0:
+            self.weights = weights / total
+        else:
+            self.weights = np.ones(_NUM_MODELS) / _NUM_MODELS
+        logger.debug("[Ensemble] Regime weights set. Top 3: %s",
+                     sorted(zip(_MODEL_NAMES, self.weights),
+                            key=lambda x: x[1], reverse=True)[:3])
+
+    def get_individual_predictions(self, x: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Get all 17 model predictions without combining them.
+
+        Returns raw probability arrays from each model. Used by:
+        - RegimeModelRouter for selective model weighting
+        - DisagreementSignal for volatility detection
+        - Any component needing per-model outputs
+
+        Args:
+            x: Input features array (batch, seq_len, features)
+
+        Returns:
+            Dict mapping model name -> probability array (batch, 3)
+        """
+        all_probs = [
+            self.predict_transformer(x), self.predict_lstm(x),
+            self.predict_tcn(x),         self.predict_patch_tst(x),
+            self.predict_tft(x),         self.predict_nhits(x),
+            self.predict_itransformer(x),self.predict_mamba(x),
+            self.predict_dlinear(x),     self.predict_xlstm(x),
+            self.predict_timesnet(x),    self.predict_chronos(x),
+            self.predict_timemixer(x),   self.predict_softs(x),
+            self.predict_gradient_boost(x),
+            self.predict_xgboost(x),     self.predict_catboost(x),
+        ]
+        return dict(zip(_MODEL_NAMES, all_probs))
+
     # ── dynamic weights ───────────────────────────────────────────────────
 
     def update_weights(self, true_label: int, predictions: Dict[str, int]) -> None:
