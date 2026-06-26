@@ -659,6 +659,9 @@ class EdgeTracker:
         self._peak: float = 0.0
         self._hour_pnl: Dict[int, deque] = defaultdict(lambda: deque(maxlen=20))
         self._regime_pnl: Dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+        # ── Probe trade recovery state ────────────────────────────────────
+        self._broken_since: Optional[float] = None    # timestamp when BROKEN started
+        self._last_probe_time: Optional[float] = None # timestamp of last probe trade
 
     def record(self, pnl, won, hour=-1, regime='unknown'):
         self.trades.append({'pnl':pnl,'won':won,'hour':hour,'regime':regime})
@@ -670,7 +673,9 @@ class EdgeTracker:
 
     def evaluate(self, config) -> Tuple[str, float, float, float]:
         n = len(self.trades)
-        if n < 5: return 'NORMAL', 1.0, 0.0, 1.5
+        if n < 5:
+            self._broken_since = None
+            return 'NORMAL', 1.0, 0.0, 1.5
         wins = sum(1 for t in self.trades if t['won'])
         wr = wins / n
         gw = sum(t['pnl'] for t in self.trades if t['pnl']>0)
@@ -682,12 +687,36 @@ class EdgeTracker:
         km = max(0.25, min(2.5, 1.0 + kelly*2.5))
         ec = self._equity_above_ma()
         if wr >= config.edge_hot_threshold and pf >= 1.8 and ec:
+            self._broken_since = None
             return 'HOT',    min(km, config.lot_multiplier_hot), -0.04, pf
         if wr < config.edge_broken_threshold or pf < 0.75:
+            # Track when edge first went BROKEN
+            if self._broken_since is None:
+                self._broken_since = time.time()
             return 'BROKEN', 0.0, 0.20, pf
+        # Not BROKEN anymore -- reset
+        self._broken_since = None
         if wr < config.edge_cold_threshold or pf < 1.05:
             return 'COLD',   config.lot_multiplier_cold, 0.08, pf
         return 'NORMAL', km, 0.0, pf
+
+    def should_allow_probe(self, config) -> bool:
+        """Check if a probe trade should be allowed to help recover from BROKEN edge."""
+        now = time.time()
+        if self._broken_since is None:
+            return False
+        broken_duration = now - self._broken_since
+        if broken_duration < config.probe_min_broken_seconds:
+            return False
+        if self._last_probe_time is not None:
+            since_last_probe = now - self._last_probe_time
+            if since_last_probe < config.probe_interval_seconds:
+                return False
+        return True
+
+    def record_probe(self):
+        """Mark that a probe trade was allowed."""
+        self._last_probe_time = time.time()
 
     def _equity_above_ma(self, p=10):
         if len(self._equity)<p: return True
@@ -889,6 +918,29 @@ class TradingBrain:
         e_status, e_mult, conf_adj_edge, recent_pf = self.edge.evaluate(self.config)
         r['L5_edge'] = f'{e_status} PF={recent_pf:.2f} ×{e_mult:.2f}'
         if e_status == 'BROKEN':
+            # ── Probe trade recovery mechanism ────────────────────────────
+            if self.edge.should_allow_probe(self.config):
+                broken_minutes = (time.time() - self.edge._broken_since) / 60.0
+                logger.info(
+                    f"[Brain] PROBE TRADE: Edge BROKEN for {broken_minutes:.0f}m, "
+                    f"allowing 1 probe trade (min lot) to recover"
+                )
+                self.edge.record_probe()
+                # Calculate SL/TP from regime params for protection
+                _, rp_probe = self.regime_eng.evaluate(closes, highs, lows, atr, avg_atr)
+                sl_dollars, tp_dollars = self.sl_tp.calculate(atr_dollars, rp_probe, self.config)
+                r['L5_edge'] += ' [PROBE TRADE]'
+                r['final'] = f'Probe trade: edge BROKEN {broken_minutes:.0f}m, min lot recovery'
+                decision = BrainDecision(
+                    action='TRADE', direction=signal.action,
+                    lot_size=self.config.min_lot, sl_dollars=sl_dollars,
+                    tp_dollars=tp_dollars, min_confidence=0.0,
+                    regime=regime, session=t_session, edge_status=e_status,
+                    risk_level='PROBE', win_probability=0.0, trade_score=0.0,
+                    reasoning=r,
+                )
+                self._write_settings(decision)
+                return decision
             return self._skip(f'Edge BROKEN PF={recent_pf:.2f}', regime, t_session, e_status, 'STOPPED', r)
 
         # ── L6: Risk / drawdown stage ─────────────────────────────────────

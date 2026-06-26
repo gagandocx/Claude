@@ -869,6 +869,10 @@ class BrainConfig:
     edge_cold_threshold:   float = 0.42  # win rate below this → COLD → size down
     edge_broken_threshold: float = 0.30  # win rate below this → BROKEN → pause
 
+    # ── Probe trade (BROKEN edge recovery) ────────────────────────────────
+    probe_interval_seconds:    int = 300   # allow 1 probe trade every N seconds
+    probe_min_broken_seconds:  int = 300   # edge must be BROKEN for N seconds before probing
+
     # ── Position sizing multipliers ───────────────────────────────────────
     lot_multiplier_hot:      float = 1.5   # edge is HOT
     lot_multiplier_cold:     float = 0.5   # edge is COLD
