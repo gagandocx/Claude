@@ -173,13 +173,13 @@ int OnInit()
     // The timer provides a safety net in case tick flow stalls.
     EventSetTimer(1);
 
-    // Make dashboard panel fully opaque: render chart (candles, trade arrows,
-    // grid) BEHIND graphical objects so nothing bleeds through the panel
-    ChartSetInteger(0, CHART_FOREGROUND, false);
-    // Hide horizontal trade level lines (entry/SL/TP dashes) that render above
-    // objects in their own layer - trade info is shown on the dashboard instead
-    ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, false);
-    ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
+    // Dashboard panel uses OBJ_RECTANGLE_LABEL with OBJPROP_BACK=false, which
+    // renders in the foreground layer.  MT5 trade execution arrows are drawn in
+    // a special internal layer that always paints ABOVE all graphical objects -
+    // this is a known MetaTrader 5 platform limitation and cannot be worked
+    // around via CHART_FOREGROUND or any other standard MQL5 API.  Do NOT set
+    // CHART_SHOW_TRADE_LEVELS=false here as that removes SL/TP/entry lines
+    // from the entire chart, making trades invisible to the user.
 
     g_status = "Ready - Waiting for signals";
     Print("[PythonBridge] EA initialized. Magic=", InpMagicNumber);
@@ -202,10 +202,6 @@ void OnDeinit(const int reason)
     ObjectsDeleteAll(0, "PB_");
     Comment("");
 
-    // Restore default chart rendering when EA is removed
-    ChartSetInteger(0, CHART_FOREGROUND, true);
-    ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, true);
-    ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, true);
     ChartRedraw(0);
     Print("[PythonBridge] EA removed. Trades executed: ", g_tradesExecuted);
 }
