@@ -958,7 +958,7 @@ class TradingBrain:
 
         # ── SL / TP ───────────────────────────────────────────────────────
         sl_dollars, tp_dollars = self.sl_tp.calculate(atr_dollars, rp, self.config)
-        r['sl_tp'] = f'SL=${sl_dollars:.2f} TP=${tp_dollars:.2f} RR={rp["rr"]:.1f}'
+        r['sl_tp'] = f'SL=${sl_dollars:.2f} TP=${tp_dollars:.2f} RR={rp.get("tp_rr", rp.get("rr", 0.0)):.1f}'
 
         # ── Position sizing ───────────────────────────────────────────────
         final_lot = self.sizer.calculate(
