@@ -996,7 +996,7 @@ class TradingBrain:
             edge_status=e_status, risk_level=r_status,
             win_probability=win_prob, trade_score=score, reasoning=r,
         )
-        logger.info(decision.log_summary())
+        # Note: main.py logs decision.log_summary() — no duplicate log here
         if self._cycle % self.config.status_report_interval == 0:
             logger.info(self.status_report())
         return decision
