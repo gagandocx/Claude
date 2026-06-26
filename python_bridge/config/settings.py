@@ -912,6 +912,7 @@ class BrainConfig:
 
     # ── Trade quality gate ────────────────────────────────────────────────
     min_trade_score: float = 30.0  # 0-100; below this → skip regardless
+    min_win_probability: float = 0.52  # Bayesian posterior minimum to trade
 
 
 # ─────────────────────────────────────────────
