@@ -255,18 +255,43 @@ class PythonMLBridge:
                             status = conf.get("status", "").strip()
                             if status == "CLOSED":
                                 close_price = float(conf.get("open_price", 0))
+                                ticket      = conf.get("ticket", "?")
+                                close_time  = conf.get("close_time", "")
                                 active = self.signal_generator._active_position
                                 if active:
                                     entry_price = active.get("entry_price", close_price)
-                                    direction = active.get("direction", "BUY")
+                                    direction   = active.get("direction", "BUY")
+                                    lot         = active.get("lot_size", 0.01)
+                                    entry_time  = active.get("entry_time", "")
                                     if direction == "BUY":
                                         pnl = close_price - entry_price
                                     else:
                                         pnl = entry_price - close_price
+                                    won = pnl > 0
+                                    result_str = "WIN" if won else "LOSS"
+                                    # ── Full instant trade confirmation ──────────
+                                    self.logger.info("=" * 55)
                                     self.logger.info(
-                                        f"[INSTANT SYNC] Position closed by EA | "
-                                        f"PnL: ${pnl:.2f} | Direction: {direction}"
+                                        f"[TRADE CLOSED] #{ticket} | {result_str}"
                                     )
+                                    self.logger.info(
+                                        f"  Direction : {direction} {lot} lot"
+                                    )
+                                    self.logger.info(
+                                        f"  Entry     : ${entry_price:.2f}  @  {entry_time}"
+                                    )
+                                    self.logger.info(
+                                        f"  Exit      : ${close_price:.2f}  @  {close_time}"
+                                    )
+                                    self.logger.info(
+                                        f"  P&L       : ${pnl:+.2f}  "
+                                        f"{'(+' + str(round(pnl,2)) + ')' if won else '(' + str(round(pnl,2)) + ')'}"
+                                    )
+                                    if self.brain:
+                                        self.logger.info(
+                                            f"  Daily P&L : ${self.brain.daily_pnl + pnl:+.2f}"
+                                        )
+                                    self.logger.info("=" * 55)
                                     if self.auto_optimizer:
                                         trade_context = {
                                             "session": active.get("session", "unknown"),
@@ -292,13 +317,32 @@ class PythonMLBridge:
                             elif status == "FILLED":
                                 # Update active position with actual entry price from MT5
                                 actual_price = float(conf.get("open_price", 0))
+                                ticket       = conf.get("ticket", "?")
+                                lot_filled   = conf.get("volume", "?")
+                                sl_price     = conf.get("sl", 0)
+                                tp_price     = conf.get("tp", 0)
                                 if self.signal_generator._active_position and actual_price > 0:
                                     self.signal_generator._active_position["entry_price"] = actual_price
-                                    self.logger.info(f"[INSTANT SYNC] Entry confirmed at ${actual_price:.2f}")
+                                    self.signal_generator._active_position["entry_time"]  = \
+                                        datetime.now().strftime("%H:%M:%S")
+                                    direction = self.signal_generator._active_position.get("direction","BUY")
+                                    # ── Instant entry confirmation ───────────────
+                                    self.logger.info("=" * 55)
+                                    self.logger.info(
+                                        f"[TRADE OPENED] #{ticket} | {direction}"
+                                    )
+                                    self.logger.info(f"  Entry : ${actual_price:.2f}")
+                                    if sl_price:
+                                        self.logger.info(f"  SL    : ${float(sl_price):.2f}")
+                                    if tp_price:
+                                        self.logger.info(f"  TP    : ${float(tp_price):.2f}")
+                                    if lot_filled:
+                                        self.logger.info(f"  Lot   : {lot_filled}")
+                                    self.logger.info("=" * 55)
                         self.bridge.clear_confirmations()
             except Exception:
                 pass
-            time.sleep(0.1)  # 100ms polling
+            time.sleep(0.05)  # 50ms polling — instant trade sync
 
     def run_cycle(self) -> dict:
         """
@@ -408,6 +452,7 @@ class PythonMLBridge:
                         "OK", f"Post-news: low vol, resuming"
                     )
 
+            # 1-8: Data fetch and compute
             # 1. Fetch market data
             df = self.data_fetcher.fetch_ohlcv(interval="1h", period="3mo")
             if df.empty:

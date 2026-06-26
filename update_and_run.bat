@@ -3,6 +3,11 @@ title EA Update and Run
 color 0A
 setlocal
 
+REM ── Instant output — no buffering, full UTF-8 ──────────────────────────────
+SET PYTHONUNBUFFERED=1
+SET PYTHONIOENCODING=utf-8
+CHCP 65001 > nul
+
 set REPO=https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm
 set PB=python_bridge
 
@@ -52,6 +57,6 @@ python -c "import sys; sys.path.insert(0,'python_bridge'); from strategies.tradi
 echo.
 
 cd %PB%
-python main.py --live
+python -u main.py --live
 
 pause

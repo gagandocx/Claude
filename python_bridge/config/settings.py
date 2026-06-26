@@ -921,7 +921,7 @@ class BrainConfig:
 @dataclass
 class MainConfig:
     """Main loop configuration."""
-    interval_seconds: int = 10              # Ultra-fast 10-second cycle for HF scalping
+    interval_seconds: int = 2               # 2-second cycle — instant signal re-evaluation
     log_level: str = "INFO"
     enable_sentiment: bool = True
     enable_alternative_data: bool = True
