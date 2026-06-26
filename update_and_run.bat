@@ -44,6 +44,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/signals/bridge.py','python_bridge/signals/bridge.py'); print('  bridge.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/Python_Bridge_EA.mq5','Python_Bridge_EA.mq5'); print('  Python_Bridge_EA.mq5 OK  <-- recompile in MetaEditor if updated')"
+
 echo.
 echo All files updated. Applying patches...
 python -c "f=open('python_bridge/strategies/trading_brain.py','r',encoding='utf-8').read(); f=f.replace('rp[\"rr\"]','rp.get(\"tp_rr\",rp.get(\"rr\",0.0))'); open('python_bridge/strategies/trading_brain.py','w',encoding='utf-8').write(f)"
