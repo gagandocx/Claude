@@ -100,6 +100,11 @@ double   g_brain_trail_start  = 0;     // replaces InpTrailStart (0=use input)
 int      g_brain_session_active = 1;   // 0 = brain says pause trading this session
 datetime g_brain_last_read    = 0;     // last time brain settings were loaded
 
+// ── Python bridge connection tracking ────────────────────────────────────────
+// Updated every second in OnTimer so OnTick/UpdateDashboard never touch a file.
+// -1 = heartbeat file never seen, 0+ = seconds since last Python heartbeat write.
+int      g_pyHeartbeatAge    = -1;
+
 
 // --- Dynamic Trailing SL: Position tracking ---
 // Store entry time for each position (indexed by ticket)
@@ -236,6 +241,25 @@ void OnTimer()
             FileWriteString(hbFile,
                 TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n");
             FileClose(hbFile);
+        }
+    }
+
+    // ── Cache Python heartbeat age for tick-safe dashboard reads ───────
+    // OnTimer runs every 1 s — we do the file open here once per second
+    // so UpdateDashboard (called every tick) reads g_pyHeartbeatAge with
+    // zero file I/O and therefore no lag or stutter on fast markets.
+    {
+        int pyHB = FileOpen(InpHeartbeatFile, FILE_READ | FILE_TXT | FILE_COMMON);
+        if(pyHB == INVALID_HANDLE)
+        {
+            g_pyHeartbeatAge = -1;   // file never written — Python not started
+        }
+        else
+        {
+            datetime modTime = (datetime)FileGetInteger(pyHB, FILE_MODIFY_DATE);
+            FileClose(pyHB);
+            int age = (int)(TimeCurrent() - modTime);
+            g_pyHeartbeatAge = (age < 0) ? 0 : age;
         }
     }
 
@@ -1244,7 +1268,7 @@ void UpdateDashboard()
     int panelX      = 10;
     int panelY      = 30;
     int panelWidth  = 330;
-    int panelHeight = 420;
+    int panelHeight = 550;   // expanded for CONNECTION section (auto-resizes at end)
     int lineHeight  = 18;
     int leftMargin  = 20;
     int valueCol    = 155;
@@ -1281,6 +1305,78 @@ void UpdateDashboard()
     DashboardLabel("tf_lbl", panelX + leftMargin, y, "Timeframe:", clrLabel);
     DashboardLabel("tf_val", panelX + valueCol, y, EnumToString(Period()), clrValue);
     y += lineHeight + 6;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // --- CONNECTION (live — updates every tick from cached globals) ---
+    // ═══════════════════════════════════════════════════════════════════
+    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 106, C'15,25,15', 255);
+    DashboardLabel("sep_conn", panelX + leftMargin, y, "--- CONNECTION ---", clrHeader, 9);
+    y += lineHeight;
+
+    // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
+    string pyConnStr;
+    color  pyConnClr;
+    if(g_pyHeartbeatAge < 0)
+    {
+        pyConnStr = "● OFFLINE  (Python not started)";
+        pyConnClr = clrRed;
+    }
+    else if(g_pyHeartbeatAge <= InpMaxHeartbeatAge)
+    {
+        pyConnStr = "● LIVE    " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnClr = clrLime;
+    }
+    else
+    {
+        pyConnStr = "● OFFLINE  " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnClr = clrRed;
+    }
+    DashboardLabel("conn_py_lbl", panelX + leftMargin, y, "Python Bridge:", clrLabel);
+    DashboardLabel("conn_py_val", panelX + valueCol,   y, pyConnStr, pyConnClr);
+    y += lineHeight;
+
+    // ── Last Signal age (live second counter) ────────────────────────
+    int    sigAgeSec = (g_lastSignalTime > 0)
+                       ? (int)(TimeCurrent() - g_lastSignalTime) : -1;
+    string sigAgeStr = (sigAgeSec >= 0)
+                       ? IntegerToString(sigAgeSec) + "s ago" : "---";
+    color  sigAgeClr = (sigAgeSec >= 0 && sigAgeSec < 5)  ? clrLime
+                     : (sigAgeSec >= 0 && sigAgeSec < 30)  ? clrWhite
+                     :                                        clrSilver;
+    DashboardLabel("conn_sig_lbl", panelX + leftMargin, y, "Last Signal:", clrLabel);
+    DashboardLabel("conn_sig_val", panelX + valueCol,   y, sigAgeStr, sigAgeClr);
+    y += lineHeight;
+
+    // ── Brain: SL override ───────────────────────────────────────────
+    string brainSlStr  = (g_brain_sl > 0)
+                         ? "$" + DoubleToString(g_brain_sl, 2) + "  (brain)"
+                         : "input  ($" + DoubleToString(InpFixedSL, 2) + ")";
+    color  brainSlClr  = (g_brain_sl > 0) ? clrGold : clrSilver;
+    DashboardLabel("conn_sl_lbl", panelX + leftMargin, y, "Brain SL:", clrLabel);
+    DashboardLabel("conn_sl_val", panelX + valueCol,   y, brainSlStr, brainSlClr);
+    y += lineHeight;
+
+    // ── Brain: Lot multiplier ────────────────────────────────────────
+    string brainLotStr;
+    color  brainLotClr;
+    if(g_brain_lot_mult > 1.05)
+        { brainLotStr = "x" + DoubleToString(g_brain_lot_mult,2) + "  HOT ▲";  brainLotClr = clrLime;   }
+    else if(g_brain_lot_mult < 0.95)
+        { brainLotStr = "x" + DoubleToString(g_brain_lot_mult,2) + "  COLD ▼"; brainLotClr = clrRed;    }
+    else
+        { brainLotStr = "x1.00  neutral";                                       brainLotClr = clrSilver; }
+    DashboardLabel("conn_lot_lbl", panelX + leftMargin, y, "Brain Lot:", clrLabel);
+    DashboardLabel("conn_lot_val", panelX + valueCol,   y, brainLotStr, brainLotClr);
+    y += lineHeight;
+
+    // ── Brain: State (ACTIVE / PAUSED) ───────────────────────────────
+    string brainStateStr = (g_brain_session_active == 0) ? "● PAUSED  (drawdown/poor session)"
+                                                         : "● ACTIVE";
+    color  brainStateClr = (g_brain_session_active == 0) ? clrRed : clrLime;
+    DashboardLabel("conn_bst_lbl", panelX + leftMargin, y, "Brain State:", clrLabel);
+    DashboardLabel("conn_bst_val", panelX + valueCol,   y, brainStateStr, brainStateClr);
+    y += lineHeight + 6;
+    // ═══════════════════════════════════════════════════════════════════
 
     // --- Separator ---
     DashboardLabel("sep1", panelX + leftMargin, y, "--- SIGNAL ---", clrHeader, 9);
