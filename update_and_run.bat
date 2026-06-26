@@ -1,4 +1,5 @@
 @echo off
+color 0A
 title EA Update and Run
 SET PYTHONUNBUFFERED=1
 SET PYTHONIOENCODING=utf-8
@@ -38,6 +39,10 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/models/ensemble.py','python_bridge/models/ensemble.py'); print('  ensemble.py OK')"
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/data/market_data.py','python_bridge/data/market_data.py'); print('  market_data.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/data/multi_timeframe.py','python_bridge/data/multi_timeframe.py'); print('  multi_timeframe.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge/signals/bridge.py','python_bridge/signals/bridge.py'); print('  bridge.py OK')"
 
 echo.
 echo All files updated. Applying patches...

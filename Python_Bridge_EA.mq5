@@ -222,6 +222,23 @@ void OnTimer()
     // Read Python bridge status for dashboard news/warning display
     ReadStatusFile();
 
+    // ── MT5 heartbeat for Python connection detection ──────────────────
+    // Python reads this file every cycle to show [MT5 CONNECTED/DISCONNECTED].
+    // Throttled to once per 2 s to match Python's write_heartbeat() cadence.
+    static datetime g_lastMT5HB = 0;
+    if(TimeCurrent() - g_lastMT5HB >= 2)
+    {
+        g_lastMT5HB = TimeCurrent();
+        int hbFile = FileOpen("mt5_bridge_heartbeat.txt",
+                              FILE_WRITE | FILE_TXT | FILE_COMMON);
+        if(hbFile != INVALID_HANDLE)
+        {
+            FileWriteString(hbFile,
+                TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n");
+            FileClose(hbFile);
+        }
+    }
+
     // Update dashboard
     if(InpShowDashboard)
         UpdateDashboard();

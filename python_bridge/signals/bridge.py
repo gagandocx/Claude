@@ -10,6 +10,8 @@
 
 import os
 import csv
+import io
+import shutil
 import time
 import logging
 import tempfile
@@ -42,6 +44,14 @@ CONFIRMATION_HEADERS = [
 
 # Status file for communicating bridge state to MT5 dashboard
 STATUS_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_status.txt")
+
+# MT5-side heartbeat: the EA writes this every 2 s so Python can verify the
+# MT5 terminal is alive. Distinct from python_bridge_heartbeat.txt which goes
+# the other direction (Python → MT5).
+MT5_HEARTBEAT_FILE = os.path.join(MT5_COMMON_PATH, "mt5_bridge_heartbeat.txt")
+
+# Seconds without a heartbeat before the connection is considered lost
+MT5_HEARTBEAT_TIMEOUT = 10
 
 
 class MT5Bridge:
@@ -251,40 +261,72 @@ class MT5Bridge:
 
     def read_confirmations(self) -> List[Dict]:
         """
-        Read execution confirmations from MT5.
+        Read execution confirmations from MT5 — bulletproof copy-then-read.
 
-        Handles UTF-16LE BOM encoding that MT5 may write when using
-        FileOpen with FILE_UNICODE flag.
+        Problem: MT5 writes confirm.csv with an exclusive file lock.
+        Opening the file directly from Python while MT5 is writing causes
+        PermissionError, which (when swallowed) means Python never sees the
+        CLOSED confirmation and thinks the position is still open.
+
+        Fix:
+          1. Copy the file to a temp location (5 x 10ms retries on lock).
+          2. Read from the temp copy — no lock conflict possible.
+          3. Delete the temp copy in the finally block.
+
+        Handles UTF-16LE BOM encoding that MT5 writes when using FILE_UNICODE.
 
         Returns:
-            List of confirmation dicts
+            List of confirmation dicts, empty list on any failure.
         """
+        logger = logging.getLogger("PythonBridge")
         if not os.path.exists(self.confirmation_path):
             return []
 
-        confirmations = []
+        tmp_path = None
         try:
-            # Detect encoding: MT5 may write UTF-16LE with BOM
-            with open(self.confirmation_path, "rb") as f:
+            directory = os.path.dirname(self.confirmation_path) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix="conf_r_", dir=directory
+            )
+            os.close(fd)
+
+            # ── Copy with retries: MT5 may hold an exclusive write lock ──
+            copied = False
+            for attempt in range(5):
+                try:
+                    shutil.copy2(self.confirmation_path, tmp_path)
+                    copied = True
+                    break
+                except (PermissionError, OSError):
+                    if attempt < 4:
+                        time.sleep(0.01)   # 10ms — MT5 releases quickly
+            if not copied:
+                logger.debug("[Bridge] read_confirmations: could not copy "
+                             "(MT5 lock held) — will retry next poll")
+                return []
+
+            # ── Detect encoding (MT5 may write UTF-16LE with BOM) ─────────
+            with open(tmp_path, "rb") as f:
                 raw = f.read(2)
-            if raw == b'\xff\xfe':
-                encoding = 'utf-16-le'
-            else:
-                encoding = 'utf-8'
+            encoding = "utf-16-le" if raw == b"\xff\xfe" else "utf-8"
 
-            with open(self.confirmation_path, "r", encoding=encoding) as f:
-                # Skip BOM character if present
+            with open(tmp_path, "r", encoding=encoding) as f:
                 content = f.read()
-                if content and content[0] == '\ufeff':
-                    content = content[1:]
-                import io
-                reader = csv.DictReader(io.StringIO(content))
-                for row in reader:
-                    confirmations.append(dict(row))
-        except Exception as e:
-            print(f"[Bridge] Error reading confirmations: {e}")
+            if content and content[0] == "\ufeff":
+                content = content[1:]
 
-        return confirmations
+            reader = csv.DictReader(io.StringIO(content))
+            return [dict(row) for row in reader]
+
+        except Exception as e:
+            logger.debug(f"[Bridge] read_confirmations error: {e}")
+            return []
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def clear_signal(self):
         """Clear the signal file after MT5 has read it."""
@@ -562,3 +604,33 @@ class MT5Bridge:
             status["signal_fresh"] = self.is_signal_fresh()
 
         return status
+
+    def get_mt5_connection_status(self) -> Dict:
+        """
+        Check whether the MT5 terminal is alive by reading its heartbeat file.
+
+        The EA writes ``mt5_bridge_heartbeat.txt`` to the Common Files folder
+        every 2 seconds (via OnTimer).  Python reads the timestamp inside and
+        compares it to now.
+
+        Returns dict with keys:
+            connected   : bool  — True if heartbeat is < MT5_HEARTBEAT_TIMEOUT s old
+            last_seen_s : float — seconds since last heartbeat (None if never seen)
+            status_str  : str   — human-readable label for logging
+        """
+        result = {"connected": False, "last_seen_s": None, "status_str": "DISCONNECTED"}
+        try:
+            if not os.path.exists(MT5_HEARTBEAT_FILE):
+                result["status_str"] = "DISCONNECTED (no heartbeat file)"
+                return result
+
+            age = time.time() - os.path.getmtime(MT5_HEARTBEAT_FILE)
+            result["last_seen_s"] = round(age, 1)
+            if age <= MT5_HEARTBEAT_TIMEOUT:
+                result["connected"] = True
+                result["status_str"] = f"CONNECTED ({age:.1f}s ago)"
+            else:
+                result["status_str"] = f"DISCONNECTED ({age:.0f}s ago)"
+        except Exception as e:
+            result["status_str"] = f"DISCONNECTED (err: {e})"
+        return result

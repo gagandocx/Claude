@@ -339,8 +339,9 @@ class PythonMLBridge:
                                         self.logger.info(f"  Lot   : {lot_filled}")
                                     self.logger.info("=" * 55)
                         self.bridge.clear_confirmations()
-            except Exception:
-                pass
+            except Exception as e:
+                # Log the error so missed confirmations are visible (not silently swallowed)
+                self.logger.debug(f"[ConfPoller] Error processing confirmation: {e}")
             time.sleep(0.05)  # 50ms polling — instant trade sync
 
     def run_cycle(self) -> dict:
@@ -477,8 +478,11 @@ class PythonMLBridge:
                 return result
 
             # 3. Get latest sequence for prediction
+            # Pass the already-fetched df so get_latest_features doesn't make
+            # a second yfinance request with period=1y (was the source of the
+            # extra GC=F rate-limit errors logged as period=1y).
             seq_length = 64
-            feature_input = self.data_fetcher.get_latest_features(seq_length)
+            feature_input = self.data_fetcher.get_latest_features(seq_length, df=df)
             if feature_input is None:
                 result["error"] = "Could not prepare model input"
                 return result
@@ -573,13 +577,15 @@ class PythonMLBridge:
                 t_status, t_session, t_mult = self.brain.timing.evaluate(self.brain.config)
                 e_status, _, _, recent_pf   = self.brain.edge.evaluate(self.brain.config)
                 dd_stage = self.brain.dd_recovery.get_stage(self.brain.total_drawdown)
+                mt5_conn = self.bridge.get_mt5_connection_status()
+                mt5_tag  = "✓ MT5" if mt5_conn["connected"] else "✗ MT5 OFFLINE"
                 self.logger.info(
                     f"[Brain] session={t_session}({t_status}) "
                     f"edge={e_status} PF={recent_pf:.2f} "
                     f"daily=${self.brain.daily_pnl:+.2f} "
                     f"dd={self.brain.total_drawdown*100:.1f}% "
                     f"stage={dd_stage['label']} "
-                    f"signal={signal.action}"
+                    f"signal={signal.action} | {mt5_tag} ({mt5_conn['status_str']})"
                 )
 
             if self.brain and signal.action != "HOLD":

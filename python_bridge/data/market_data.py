@@ -7,6 +7,7 @@
 =============================================================
 """
 
+import logging
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -19,6 +20,21 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import DataConfig, MultiPairConfig, MODEL_DIR
+
+# ── Silence yfinance's own ERROR/WARNING spam (rate-limit noise, delisted msgs).
+# yfinance propagates to the root logger which then appears in our log as ERROR.
+# We still get our own "[MarketData]" fallback messages at DEBUG level.
+for _yf_logger in ("yfinance", "yfinance.base", "yfinance.utils",
+                   "yfinance.download", "yfinance.scrapers.history"):
+    logging.getLogger(_yf_logger).setLevel(logging.CRITICAL)
+
+# Fallback ticker chain: if primary ticker is rate-limited / empty, try these.
+# GC=F (COMEX gold futures) and XAUUSD=X (spot) trade within $1-2 of each other
+# so swapping them for technical-analysis purposes is safe.
+_TICKER_FALLBACKS = {
+    "GC=F":     ["XAUUSD=X"],
+    "XAUUSD=X": ["GC=F"],
+}
 
 
 class MarketDataFetcher:
@@ -36,16 +52,17 @@ class MarketDataFetcher:
     def fetch_ohlcv(self, ticker: Optional[str] = None,
                     period: str = "1y", interval: str = "1h") -> pd.DataFrame:
         """
-        Fetch OHLCV data from Yahoo Finance with smart caching.
+        Fetch OHLCV data from Yahoo Finance with smart caching + fallback tickers.
 
-        - Returns cached data immediately if last successful fetch was < 30 s ago
-          (avoids hammering yfinance every 2-second cycle).
-        - On empty response (rate-limited) or exception, falls back to cache
-          so downstream logic always has data and cycles never die.
+        Reliability guarantees:
+        - 30-second per-key throttle: won't hammer yfinance every 2-second cycle
+        - Fallback ticker chain: GC=F → XAUUSD=X (and vice versa) on empty response
+        - Stale-cache fallback: any failure returns last good data so cycles never die
+        - Cache key is (ticker, period, interval) so H1 and M1 data never collide
 
         Args:
-            ticker: Yahoo Finance ticker symbol
-            period: Data period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y)
+            ticker:   Yahoo Finance ticker symbol (defaults to config)
+            period:   Data period string (1d, 5d, 1mo, 3mo, 6mo, 1y …)
             interval: Bar interval (1m, 5m, 15m, 1h, 1d)
 
         Returns:
@@ -55,7 +72,7 @@ class MarketDataFetcher:
         cache_key = (ticker, period, interval)
         now = datetime.now()
 
-        # ── Throttle: return cache if it is fresh enough ──────────────────
+        # ── 30s throttle: return cache immediately if it is fresh enough ──
         last_time = self._cache_time.get(cache_key)
         if last_time is not None:
             age = (now - last_time).total_seconds()
@@ -64,33 +81,37 @@ class MarketDataFetcher:
                 if cached is not None and not cached.empty:
                     return cached
 
-        try:
-            data = yf.download(ticker, period=period, interval=interval,
-                               progress=False)
-            if data.empty:
-                # Rate-limited or temporarily delisted — use stale cache rather
-                # than propagating an empty DataFrame that kills the cycle.
-                cached = self._cache.get(cache_key)
-                if cached is not None and not cached.empty:
-                    return cached
-                return pd.DataFrame()
+        # ── Try primary ticker then fallbacks ─────────────────────────────
+        tickers_to_try = [ticker] + _TICKER_FALLBACKS.get(ticker, [])
+        data = pd.DataFrame()
+        for try_ticker in tickers_to_try:
+            try:
+                data = yf.download(try_ticker, period=period, interval=interval,
+                                   progress=False)
+                if not data.empty:
+                    break          # got good data, stop trying
+            except Exception:
+                data = pd.DataFrame()
+                continue          # try next ticker
 
-            # Flatten multi-level columns if present
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
-            data.dropna(inplace=True)
-            self._cache[cache_key] = data
-            self._cache_time[cache_key] = now
-            self._last_fetch = now
-            return data
-        except Exception as e:
-            print(f"[MarketData] Error fetching {ticker} ({interval}/{period}): {e}")
+        if data.empty:
+            # All tickers failed — return stale cache rather than an empty
+            # DataFrame that would kill the cycle
             cached = self._cache.get(cache_key)
             if cached is not None and not cached.empty:
                 return cached
             return pd.DataFrame()
+
+        # ── Normalise columns and cache ────────────────────────────────────
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+
+        data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+        data.dropna(inplace=True)
+        self._cache[cache_key] = data
+        self._cache_time[cache_key] = now
+        self._last_fetch = now
+        return data
 
     def compute_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -347,16 +368,29 @@ class MarketDataFetcher:
         except Exception:
             return None
 
-    def get_latest_features(self, seq_length: int = 64) -> Optional[np.ndarray]:
+    def get_latest_features(self, seq_length: int = 64,
+                            df: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
         """
         Get the most recent feature sequence for live prediction.
+
+        Accepts an optional pre-fetched ``df`` so callers that already have
+        OHLCV data (e.g. run_cycle) can pass it in directly and avoid a second
+        yfinance network call with a different period (was fetching period=1y
+        while run_cycle already had period=3mo cached).
+
         Uses training normalization statistics if available to ensure
         consistent feature distributions between training and inference.
+
+        Args:
+            seq_length: Number of bars to return (model input length)
+            df: Optional pre-fetched OHLCV DataFrame. If None, fetches fresh
+                data with period=3mo / interval=1h.
 
         Returns:
             Array of shape (1, seq_length, num_features) or None
         """
-        df = self.fetch_ohlcv()
+        if df is None or df.empty:
+            df = self.fetch_ohlcv(period="3mo", interval="1h")
         if df.empty:
             return None
 

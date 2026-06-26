@@ -67,54 +67,31 @@ class MultiTimeframeDataFetcher:
         if timeframe == "4h":
             return self._fetch_and_resample_4h(ticker, period)
 
-        try:
-            data = yf.download(ticker, period=period, interval=timeframe,
-                               progress=False)
-            if data.empty:
-                return pd.DataFrame()
-
-            # Flatten multi-level columns if present
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
-            data.dropna(inplace=True)
-            self._cache[f"{ticker}_{timeframe}"] = data
-            return data
-        except Exception as e:
-            print(f"[MultiTF] Error fetching {ticker} {timeframe}: {e}")
-            cached = self._cache.get(f"{ticker}_{timeframe}")
-            return cached if cached is not None else pd.DataFrame()
+        # Route through MarketDataFetcher: inherits 30s cache + GC=F→XAUUSD=X
+        # fallback chain so multi-timeframe fetches never spam yfinance errors.
+        return self.market_data.fetch_ohlcv(
+            ticker=ticker, period=period, interval=timeframe
+        )
 
     def _fetch_and_resample_4h(self, ticker: str, period: str) -> pd.DataFrame:
-        """Fetch 1h data and resample to 4h bars."""
-        try:
-            data = yf.download(ticker, period=period, interval="1h",
-                               progress=False)
-            if data.empty:
-                return pd.DataFrame()
-
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-
-            data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
-            data.dropna(inplace=True)
-
-            # Resample to 4-hour bars
-            resampled = data.resample("4h").agg({
-                "Open": "first",
-                "High": "max",
-                "Low": "min",
-                "Close": "last",
-                "Volume": "sum"
-            }).dropna()
-
-            self._cache[f"{ticker}_4h"] = resampled
-            return resampled
-        except Exception as e:
-            print(f"[MultiTF] Error fetching/resampling 4h: {e}")
+        """Fetch 1h data and resample to 4h bars (routed through cache)."""
+        # Route through MarketDataFetcher for 30s cache + fallback ticker chain
+        data = self.market_data.fetch_ohlcv(ticker=ticker, period=period, interval="1h")
+        if data.empty:
             cached = self._cache.get(f"{ticker}_4h")
             return cached if cached is not None else pd.DataFrame()
+
+        # Resample to 4-hour bars
+        resampled = data.resample("4h").agg({
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum"
+        }).dropna()
+
+        self._cache[f"{ticker}_4h"] = resampled
+        return resampled
 
     def compute_timeframe_features(self, timeframe: str,
                                    df: pd.DataFrame) -> pd.DataFrame:
