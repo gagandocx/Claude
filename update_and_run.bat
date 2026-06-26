@@ -53,7 +53,7 @@ echo ============================================
 echo.
 
 echo Verifying Trading Brain...
-python -c "import sys; sys.path.insert(0,'python_bridge'); from strategies.trading_brain import TradingBrain; from config.settings import BrainConfig; b=TradingBrain(BrainConfig()); print('  Brain: OK ^| min_conf=' + str(b.config.base_min_confidence) + ' ^| min_win_prob=' + str(b.config.min_win_probability) + ' ^| daily_limit=$' + str(b.config.daily_loss_limit))"
+python -c "import sys; sys.path.insert(0,'python_bridge'); from strategies.trading_brain import TradingBrain; from config.settings import BrainConfig; b=TradingBrain(BrainConfig()); print('  Brain: OK  min_conf=' + str(b.config.base_min_confidence) + '  min_win_prob=' + str(b.config.min_win_probability) + '  daily_limit=$' + str(b.config.daily_loss_limit))"
 echo.
 
 cd %PB%

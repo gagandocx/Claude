@@ -209,7 +209,7 @@ class PythonMLBridge:
             target=self._poll_confirmations, daemon=True, name="ConfirmationPoller"
         )
         self._confirmation_thread.start()
-        self.logger.info("  Confirmation poller: 100ms (instant sync)")
+        self.logger.info("  Confirmation poller: 50ms (instant sync)")
 
     def _load_models(self):
         """Load model checkpoints if available."""
