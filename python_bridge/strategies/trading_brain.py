@@ -996,7 +996,8 @@ class TradingBrain:
             edge_status=e_status, risk_level=r_status,
             win_probability=win_prob, trade_score=score, reasoning=r,
         )
-        # Note: main.py logs decision.log_summary() — no duplicate log here
+        # ── Write optimised settings to MT5 every cycle ──────────────────
+        self._write_settings(decision)
         if self._cycle % self.config.status_report_interval == 0:
             logger.info(self.status_report())
         return decision
@@ -1069,3 +1070,85 @@ class TradingBrain:
         ]
         if under: lines.append(f"  Weak models : {', '.join(under)}")
         return "\n".join(lines)
+
+    def _write_settings(self, decision: 'BrainDecision') -> None:
+        """
+        Write brain-computed optimal settings to the MT5 bridge file.
+        Called every cycle so MT5 always has the latest brain intelligence.
+
+        Settings written (override MT5 input parameters dynamically):
+          sl_dollars     — regime-optimal stop loss ($)      → overrides InpFixedSL
+          min_confidence — dynamic confidence threshold      → overrides InpMinConfidence
+          lot_multiplier — scale the signal lot              → multiplies signal lot
+          be_profit      — when to move to breakeven ($)     → overrides InpBreakevenProfit
+          trail_start    — when to start trailing ($)        → overrides InpTrailStart
+          session_active — 1=trade, 0=pause (PAUSE_DAY)     → emergency stop flag
+        """
+        try:
+            import tempfile
+            from config.settings import MT5_COMMON_PATH
+
+            # Regime → optimal breakeven threshold
+            be_map = {
+                'strong_trend_up':   0.20,  'strong_trend_down': 0.20,
+                'trending_up':       0.15,  'trending_down':     0.15,
+                'ranging':           0.06,  'volatile':          0.08,
+                'neutral':           0.10,  'crash':             0.04,
+                'unknown':           0.10,
+            }
+            # Edge → optimal trailing stop start
+            trail_map = {
+                'HOT':    0.06,    # tight trail — lock profits when edge is hot
+                'NORMAL': 0.10,
+                'COLD':   0.18,    # wider — more room when edge is cooling
+                'BROKEN': 0.30,
+            }
+
+            be_profit   = be_map.get(decision.regime, 0.10)
+            trail_start = trail_map.get(decision.edge_status, 0.10)
+
+            # Lot multiplier: brain sizing vs base lot
+            if decision.should_trade and self.config.base_lot > 0:
+                lot_mult = round(decision.lot_size / self.config.base_lot, 2)
+                lot_mult = max(0.25, min(3.0, lot_mult))
+            else:
+                lot_mult = 1.0
+
+            settings = {
+                'sl_dollars':     round(decision.sl_dollars, 2) if decision.sl_dollars > 0 else 2.00,
+                'min_confidence': round(decision.min_confidence, 3),
+                'lot_multiplier': lot_mult,
+                'be_profit':      be_profit,
+                'trail_start':    trail_start,
+                'session_active': 0 if decision.action == 'PAUSE_DAY' else 1,
+            }
+
+            settings_path = os.path.join(MT5_COMMON_PATH, "python_bridge_brain_settings.csv")
+            directory = os.path.dirname(settings_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+
+            fd, tmp = tempfile.mkstemp(suffix=".tmp", prefix="bcfg_", dir=directory or ".")
+            with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+                f.write("parameter,value\r\n")
+                for k, v in settings.items():
+                    f.write(f"{k},{v}\r\n")
+
+            import time as _t
+            for _ in range(3):
+                try:
+                    os.replace(tmp, settings_path)
+                    break
+                except PermissionError:
+                    _t.sleep(0.05)
+
+            logger.debug(
+                f"[Brain->MT5] SL=${settings['sl_dollars']} "
+                f"conf>={settings['min_confidence']} "
+                f"lot×{settings['lot_multiplier']} "
+                f"BE=${settings['be_profit']} "
+                f"trail>${settings['trail_start']} "
+                f"active={settings['session_active']}"
+            )
+        except Exception as e:
+            logger.debug(f"[Brain->MT5] settings write error: {e}")

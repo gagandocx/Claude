@@ -330,6 +330,55 @@ class MT5Bridge:
         except Exception as e:
             print(f"[Bridge] Error writing heartbeat: {e}")
 
+    def write_brain_settings(self, settings: dict) -> bool:
+        """
+        Write Brain-computed optimal settings to a CSV file.
+        MT5 EA reads this file every tick and overrides its input parameters.
+
+        The brain decides the best values for:
+          sl_dollars      — stop loss distance ($)  overrides InpFixedSL
+          min_confidence  — signal quality gate      overrides InpMinConfidence
+          lot_multiplier  — scale the signal lot     multiplies signal lot
+          be_profit       — breakeven threshold ($)  overrides InpBreakevenProfit
+          trail_start     — trailing stop start ($)  overrides InpTrailStart
+          session_active  — 1=trade / 0=pause        emergency pause flag
+
+        Args:
+            settings: dict of parameter → value pairs
+
+        Returns:
+            True if written successfully
+        """
+        logger = logging.getLogger("PythonBridge")
+        settings_path = os.path.join(
+            os.path.dirname(self.signal_path),
+            "python_bridge_brain_settings.csv"
+        )
+        try:
+            directory = os.path.dirname(settings_path) or "."
+            fd, tmp = tempfile.mkstemp(
+                suffix=".tmp", prefix="brain_settings_", dir=directory
+            )
+            with os.fdopen(fd, "w", encoding="ascii", newline="") as f:
+                f.write("parameter,value\r\n")
+                for key, val in settings.items():
+                    f.write(f"{key},{val}\r\n")
+
+            for attempt in range(3):
+                try:
+                    os.replace(tmp, settings_path)
+                    logger.debug(f"[Brain→MT5] Settings written: {settings}")
+                    return True
+                except PermissionError:
+                    if attempt < 2:
+                        time.sleep(0.05)
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            return False
+        except Exception as e:
+            logger.debug(f"[Brain→MT5] Settings write error: {e}")
+            return False
+
     def write_status(self, status_type: str, message: str) -> bool:
         """
         Write a status message for the MT5 dashboard to display.

@@ -88,6 +88,19 @@ datetime       g_lastExecutedSignalTime = 0;
 // Emergency close-all cooldown (5 seconds between triggers)
 datetime       g_lastEmergencyClose = 0;
 
+// ── Brain settings (overrides input parameters dynamically) ──────────────────
+// Updated every cycle by TradingBrain via python_bridge_brain_settings.csv.
+// When brain_x > 0, it REPLACES the corresponding input parameter.
+// When brain_x == 0, the original input parameter is used as fallback.
+double   g_brain_sl           = 0;     // replaces InpFixedSL (0=use input)
+double   g_brain_min_conf     = 0;     // replaces InpMinConfidence (0=use input)
+double   g_brain_lot_mult     = 1.0;   // multiplied onto signal lot size
+double   g_brain_be_profit    = 0;     // replaces InpBreakevenProfit (0=use input)
+double   g_brain_trail_start  = 0;     // replaces InpTrailStart (0=use input)
+int      g_brain_session_active = 1;   // 0 = brain says pause trading this session
+datetime g_brain_last_read    = 0;     // last time brain settings were loaded
+
+
 // --- Dynamic Trailing SL: Position tracking ---
 // Store entry time for each position (indexed by ticket)
 #define MAX_TRACKED_POSITIONS 20
@@ -102,6 +115,42 @@ datetime       g_momentumTime  = 0;
 
 // Trailing status for dashboard display
 string         g_trailStatus   = "No positions";
+
+//+------------------------------------------------------------------+
+//| Read Brain settings from Python TradingBrain                      |
+//| File: python_bridge_brain_settings.csv                            |
+//| Called every second — ultra-low overhead (tiny file, no allocs)  |
+//+------------------------------------------------------------------+
+void ReadBrainSettings()
+{
+    int fh = FileOpen("python_bridge_brain_settings.csv",
+                      FILE_READ | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
+    if(fh == INVALID_HANDLE)
+        return;   // Brain hasn't written settings yet — keep defaults
+
+    // Skip header row: "parameter,value"
+    if(!FileIsEnding(fh))
+    {
+        FileReadString(fh);  // "parameter"
+        FileReadString(fh);  // "value"
+    }
+
+    while(!FileIsEnding(fh))
+    {
+        string param = FileReadString(fh);
+        string val   = FileReadString(fh);
+        double v     = StringToDouble(val);
+
+        if     (param == "sl_dollars")      g_brain_sl             = v;
+        else if(param == "min_confidence")  g_brain_min_conf       = v;
+        else if(param == "lot_multiplier")  g_brain_lot_mult       = v;
+        else if(param == "be_profit")       g_brain_be_profit      = v;
+        else if(param == "trail_start")     g_brain_trail_start    = v;
+        else if(param == "session_active")  g_brain_session_active = (int)v;
+    }
+    FileClose(fh);
+    g_brain_last_read = TimeCurrent();
+}
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -163,6 +212,9 @@ void OnTimer()
             ExecuteSignal();
         }
     }
+
+    // Load latest brain-computed settings (tiny file read, negligible overhead)
+    ReadBrainSettings();
 
     // Process exit signals from Smart Exit Manager (RL agent)
     ProcessExitSignals();
@@ -401,10 +453,19 @@ bool ValidateSignal()
         return false;
     }
 
-    // Check minimum confidence
-    if(g_lastConfidence < InpMinConfidence)
+    // Check minimum confidence — brain dynamic threshold overrides static input
+    double activeMinConf = (g_brain_min_conf > 0) ? g_brain_min_conf : InpMinConfidence;
+    if(g_lastConfidence < activeMinConf)
     {
-        g_status = "Low confidence: " + DoubleToString(g_lastConfidence, 4);
+        g_status = "Low confidence: " + DoubleToString(g_lastConfidence, 4) +
+                   " (min=" + DoubleToString(activeMinConf, 4) + ")";
+        return false;
+    }
+
+    // Brain session pause — brain detected poor conditions, pausing all entries
+    if(g_brain_session_active == 0)
+    {
+        g_status = "Brain: session paused (drawdown/poor conditions)";
         return false;
     }
 
@@ -468,6 +529,15 @@ void ExecuteSignal()
     lotSize = MathMin(lotSize, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
     lotSize = MathMin(lotSize, InpMaxLotSize);
 
+    // Apply brain lot multiplier (brain sizes up/down based on edge+regime+session)
+    if(g_brain_lot_mult > 0 && g_brain_lot_mult != 1.0)
+    {
+        lotSize = lotSize * g_brain_lot_mult;
+        lotSize = MathFloor(lotSize / lotStep) * lotStep;
+        lotSize = MathMax(lotSize, InpMinLotSize);
+        lotSize = MathMin(lotSize, InpMaxLotSize);
+    }
+
     // Calculate SL/TP from pips
     // For gold: 1 pip = 0.1 (10 points if 2 digits, 100 if 3)
     double pipValue = point * 10;
@@ -480,9 +550,10 @@ void ExecuteSignal()
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
         sl = NormalizeDouble(price - g_lastSLPips * pipValue, digits);
-        // Fixed SL override: if InpFixedSL > 0, use fixed $ distance instead of signal SL
-        if(InpFixedSL > 0)
-            sl = NormalizeDouble(price - InpFixedSL, digits);
+        // Brain SL override: brain computes regime-optimal stop loss
+        double activeSL = (g_brain_sl > 0) ? g_brain_sl : InpFixedSL;
+        if(activeSL > 0)
+            sl = NormalizeDouble(price - activeSL, digits);
         if(dynamicTPMode)
             tp = 0;  // No fixed TP - EA manages exit via trailing
         else
@@ -513,9 +584,10 @@ void ExecuteSignal()
     {
         price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
         sl = NormalizeDouble(price + g_lastSLPips * pipValue, digits);
-        // Fixed SL override: if InpFixedSL > 0, use fixed $ distance instead of signal SL
-        if(InpFixedSL > 0)
-            sl = NormalizeDouble(price + InpFixedSL, digits);
+        // Brain SL override: brain computes regime-optimal stop loss
+        double activeSL_sell = (g_brain_sl > 0) ? g_brain_sl : InpFixedSL;
+        if(activeSL_sell > 0)
+            sl = NormalizeDouble(price + activeSL_sell, digits);
         if(dynamicTPMode)
             tp = 0;  // No fixed TP - EA manages exit via trailing
         else
@@ -725,6 +797,10 @@ void ManageOpenPositions()
         double newSL = currentSL;
         string tierLabel = "";
 
+        // Brain-controlled thresholds — override input params when set
+        double activeBeProfit   = (g_brain_be_profit   > 0) ? g_brain_be_profit   : InpBreakevenProfit;
+        double activeTrailStart = (g_brain_trail_start > 0) ? g_brain_trail_start : InpTrailStart;
+
         if(profit >= InpTrailVeryTight)
         {
             // Tier 4: Very tight trail (InpTrailDist3 behind current price)
@@ -745,7 +821,7 @@ void ManageOpenPositions()
                 newSL = NormalizeDouble(currentPrice + trailDist, digits);
             tierLabel = "T3($" + DoubleToString(InpTrailDist2, 2) + ")";
         }
-        else if(profit >= InpTrailStart)
+        else if(profit >= activeTrailStart)
         {
             // Tier 2: Standard trail (InpTrailDist1 behind current price)
             double trailDist = InpTrailDist1;
@@ -755,7 +831,7 @@ void ManageOpenPositions()
                 newSL = NormalizeDouble(currentPrice + trailDist, digits);
             tierLabel = "T2($" + DoubleToString(InpTrailDist1, 2) + ")";
         }
-        else if(profit >= InpBreakevenProfit)
+        else if(profit >= activeBeProfit)
         {
             // Tier 1: Breakeven+ (move SL to entry price + spread + buffer)
             // This ensures a breakeven trade does not lose money to spread.
