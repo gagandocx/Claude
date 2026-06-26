@@ -643,6 +643,8 @@ class PythonMLBridge:
                         confidence=0.0, sl_pips=0, tp_pips=0,
                         lot_size=0.0, model_name=signal.model_name, regime=decision.regime,
                     )
+                    # Clear ghost position — trade never reached MT5
+                    self.signal_generator.clear_active_position()
                 else:
                     # Brain approved — apply its sizing, SL, TP
                     signal.lot_size = decision.lot_size
