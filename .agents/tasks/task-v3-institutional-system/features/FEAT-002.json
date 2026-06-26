@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Implement Tier 1 features: Order flow/tick data features, regime-specific model routing, walk-forward retraining pipeline, and adversarial signal filtering. These are the highest-impact additions that give the system real institutional edge.",
+  "status": "pending",
+  "steps": [
+    "Create python_bridge_v3/data/tick_data.py: A TickDataProcessor class that reads tick data from TICK_DATA_FILE CSV (format: timestamp,bid,ask,volume,flags written by EA). Methods: poll_tick_file() - reads latest ticks from CSV; compute_tick_features() - returns dict with bid_ask_imbalance (ratio of bid vs ask volume over last N ticks), volume_delta (cumulative delta of buy vs sell volume), trade_flow_intensity (ticks per second), large_trade_detection (volume > 3x average). Store a rolling window of ticks (max 5000). Features should be numpy arrays suitable for model input.",
+    "Create python_bridge_v3/data/microstructure.py: A MicrostructureAnalyzer class that uses tick data to compute: tick_rate (ticks per second over configurable window), bid_ask_bounce_rate (how often price alternates between bid-side and ask-side hits), large_order_flow (net volume from trades > threshold * avg_size), spread_velocity (rate of spread change). These feed into the feature vector alongside existing technical indicators.",
+    "Create python_bridge_v3/strategies/regime_router.py: A RegimeModelRouter class that maintains 3 sets of model weight configurations (trending, ranging, volatile). Methods: get_regime_weights(regime: str) -> np.ndarray returns model weights optimized for the given regime; route_prediction(features, regime) -> calls ensemble.predict() but with regime-specific weights applied; update_regime_performance(regime, model_name, correct: bool) -> tracks per-model accuracy within each regime for dynamic weight adjustment. Default weights: trending = boost Transformer/LSTM/TCN (momentum models), ranging = boost DLinear/NHiTS/GradBoost (mean-reversion), volatile = boost Mamba/TimesNet/xLSTM (adaptive models).",
+    "Update python_bridge_v3/models/ensemble.py: Add a method set_regime_weights(weights: np.ndarray) that temporarily overrides self.weights for the next prediction. Add get_individual_predictions(x) method that returns all 17 model predictions without combining them (needed by regime router and disagreement signal).",
+    "Create python_bridge_v3/strategies/walk_forward.py: A WalkForwardRetrainer class that extends the existing AutoRetrainer. Adds: save_training_data(features, labels, metadata) to accumulate data in training_data/ folder; retrain_with_validation(train_window, val_window) that trains on recent data and validates on held-out set; deploy_if_improved(new_model_path, baseline_accuracy) that compares new vs old model and only deploys if better by min_improvement_pct; schedule_weekly() that runs every Sunday at configurable time. The retrain uses the existing training pipeline from python_bridge_v3/training/ but with walk-forward splits.",
+    "Create python_bridge_v3/strategies/adversarial_filter.py: An AdversarialFilter class that maintains a history of recent signals with their outcomes. Methods: record_signal(direction, confidence, regime, time_of_day, price_level, features_hash) -> stores signal context; record_outcome(signal_id, won: bool, pnl: float) -> updates signal history; should_skip_signal(direction, confidence, regime, time_of_day, price_level) -> returns (skip: bool, reason: str) by finding similar past signals (cosine similarity on feature vector) and checking if last N similar signals lost. If loss_rate > threshold (default 0.6) among the last N similar signals, skip. Use configurable similarity_threshold and min_similar_signals.",
+    "Update python_bridge_v3/strategies/signal_generator.py: Import and integrate the new modules. In generate_signal(): (1) After feature computation, call tick_data_processor.compute_tick_features() and append to feature vector if tick data available; (2) After regime detection, call regime_router.route_prediction() instead of direct ensemble.predict(); (3) Before generating final signal, call adversarial_filter.should_skip_signal() and return HOLD if skip=True; (4) After signal generation, call adversarial_filter.record_signal(). Add these as optional components controlled by config flags.",
+    "Update python_bridge_v3/main.py: Initialize TickDataProcessor, MicrostructureAnalyzer, RegimeModelRouter, WalkForwardRetrainer, AdversarialFilter. Wire them into the signal generator and main loop. Check walk-forward retrain schedule each cycle (similar to existing auto_retrainer check). All behind enable_* flags."
+  ],
+  "acceptance_criteria": [
+    "python_bridge_v3/data/tick_data.py exists with TickDataProcessor class implementing poll_tick_file(), compute_tick_features()",
+    "python_bridge_v3/data/microstructure.py exists with MicrostructureAnalyzer class",
+    "python_bridge_v3/strategies/regime_router.py exists with RegimeModelRouter class that routes predictions based on regime",
+    "python_bridge_v3/strategies/walk_forward.py exists with WalkForwardRetrainer extending training pipeline",
+    "python_bridge_v3/strategies/adversarial_filter.py exists with AdversarialFilter class",
+    "python_bridge_v3/models/ensemble.py has set_regime_weights() and get_individual_predictions() methods",
+    "python_bridge_v3/strategies/signal_generator.py integrates all Tier 1 components with config flag guards",
+    "python_bridge_v3/main.py initializes and wires all Tier 1 components",
+    "All Tier 1 features can be individually enabled/disabled via MainConfig flags",
+    "Import check passes: python -c with all new module imports"
+  ],
+  "verification": [
+    "Run: python -c \"import sys; sys.path.insert(0, 'python_bridge_v3'); from data.tick_data import TickDataProcessor; from data.microstructure import MicrostructureAnalyzer; from strategies.regime_router import RegimeModelRouter; from strategies.walk_forward import WalkForwardRetrainer; from strategies.adversarial_filter import AdversarialFilter; print('All Tier 1 modules import OK')\"",
+    "Run: python -c \"import sys; sys.path.insert(0, 'python_bridge_v3'); from models.ensemble import EnsembleManager; e = EnsembleManager(); import numpy as np; e.set_regime_weights(np.ones(17)/17); print('Regime weights set OK')\"",
+    "Run: python -c \"import sys; sys.path.insert(0, 'python_bridge_v3'); from main import PythonMLBridge; print('Main bridge imports OK')\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

@@ -1,0 +1,31 @@
+{
+  "project_type": "Python ML Trading Bridge + MQL5 Expert Advisor for MetaTrader 5",
+  "language": "Python (bridge) + MQL5 (EA)",
+  "build_system": "pip install -r requirements.txt for Python; MQL5 compiles in MetaEditor (not available here)",
+  "test_framework": "pytest in python_bridge/tests/ (limited tests exist)",
+  "build_command": "cd python_bridge_v3 && pip install -r requirements.txt",
+  "test_command": "cd python_bridge_v3 && python -c \"from main import PythonMLBridge; print('Import OK')\"",
+  "verification_instructions": "1. Verify python_bridge_v3/ directory exists with all modules. 2. Verify imports work without errors. 3. Verify Python_Bridge_EA_v3.mq5 has valid MQL5 syntax. 4. Verify update_and_run_v3.bat exists with correct paths.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install torch pandas numpy scikit-learn==1.9.0 lightgbm catboost xgboost ta yfinance feedparser beautifulsoup4 requests schedule hmmlearn joblib scipy",
+  "environment_constraints": "OPEN_INTERNET - full network access. No MT5 terminal available for runtime testing. No MQL5 compiler. CPU-only (i7-4720HQ, no CUDA). Python 3.14, scikit-learn==1.9.0.",
+  "contribution_requirements": "MUST NOT modify python_bridge/ or python_bridge_v2/ directories. Create python_bridge_v3/ as separate copy. The MQL5 'input' keyword is RESERVED - never use as variable name in MQL5 code.",
+  "key_patterns": "File-based CSV bridge: Python writes signal CSV -> EA reads every tick. EA writes confirmation CSV -> Python polls every 10ms. Brain writes settings CSV -> EA reads every 1s. All files in MT5 Common Files folder. Ensemble of 17 models with meta-learner. Dataclass-based configs in config/settings.py. Modular strategy files in strategies/. Version string in main.py.",
+  "relevant_files": [
+    "python_bridge/main.py",
+    "python_bridge/config/settings.py",
+    "python_bridge/models/ensemble.py",
+    "python_bridge/strategies/signal_generator.py",
+    "python_bridge/strategies/trading_brain.py",
+    "python_bridge/strategies/regime_detector.py",
+    "python_bridge/strategies/auto_optimizer.py",
+    "python_bridge/strategies/risk_manager.py",
+    "python_bridge/signals/bridge.py",
+    "python_bridge/data/market_data.py",
+    "python_bridge/training/auto_retrain.py",
+    "python_bridge/requirements.txt",
+    "Python_Bridge_EA_v2.mq5",
+    "update_and_run_v2.bat"
+  ],
+  "directory_structure": "python_bridge/ - v7.1 production (DO NOT MODIFY). python_bridge_v2/ - v7.2-rc1 test (DO NOT MODIFY). Root-level .mq5 files are EAs. update_and_run*.bat are launchers. python_bridge/config/ has settings.py with all dataclass configs. python_bridge/models/ has 14 neural + 3 tree model files. python_bridge/strategies/ has signal generation, brain, regime detection, risk management. python_bridge/signals/ has the file bridge. python_bridge/data/ has market data fetcher. python_bridge/training/ has auto-retrainer."
+}

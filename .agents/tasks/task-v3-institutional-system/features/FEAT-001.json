@@ -1,0 +1,32 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the python_bridge_v3/ directory structure by copying python_bridge/ as a base, update version to v8.0, create update_and_run_v3.bat launcher, and set up the v3 config with new feature flags. This establishes the v3 foundation without modifying any original files.",
+  "status": "in_progress",
+  "steps": [
+    "Copy the entire python_bridge/ directory to python_bridge_v3/ (use shutil or cp -r). Do NOT use symlinks - full independent copy.",
+    "Update python_bridge_v3/main.py: Change VERSION = '7.1' to VERSION = '8.0'. Update all print banners to say 'v8.0'.",
+    "Update python_bridge_v3/config/settings.py: Add new v3 feature flags to MainConfig: enable_tick_data (bool, True), enable_regime_routing (bool, True), enable_walk_forward (bool, True), enable_adversarial_filter (bool, True), enable_spread_gate (bool, True), enable_microstructure (bool, True), enable_correlation_regime (bool, True), enable_adaptive_threshold (bool, True), enable_disagreement_signal (bool, True), enable_kelly_sizing (bool, True), enable_monte_carlo_risk (bool, True).",
+    "Update python_bridge_v3/config/settings.py: Add new config dataclasses - TickDataConfig (tick_file path, poll_interval_ms=100, max_ticks=5000, features: bid_ask_imbalance, volume_delta, trade_flow), MicrostructureConfig (tick_rate_window=60, large_order_threshold=3.0, bounce_rate_window=30), RegimeRoutingConfig (trending_models list, ranging_models list, volatile_models list, routing_lookback=50), WalkForwardConfig (retrain_interval_hours=168, validation_window_bars=500, min_improvement_pct=2.0, max_retrain_duration_min=30, data_save_path='training_data/'), AdversarialFilterConfig (lookback_signals=50, similarity_threshold=0.85, min_similar_signals=3, loss_rate_threshold=0.6), SpreadGateConfig (spread_file path, max_spread_multiplier=1.5, update_interval_ms=500), CorrelationRegimeConfig (regime_lookback=100, dxy_correlation_threshold=-0.5, bond_correlation_threshold=0.3, rebalance_interval=60), AdaptiveThresholdConfig (lookback_trades=30, adjustment_rate=0.02, min_threshold=0.15, max_threshold=0.55, target_win_rate=0.55), DisagreementConfig (strong_disagreement_threshold=0.4, volatility_scale_factor=1.5, position_reduction_pct=0.5), KellyConfig (full_kelly=False, kelly_fraction=0.25, min_win_rate=0.50, min_trades=20, max_kelly_lot=0.10), MonteCarloConfig (num_simulations=1000, max_daily_loss_prob=0.05, drawdown_threshold=0.10, confidence_level=0.95).",
+    "Update python_bridge_v3/config/settings.py: Change SIGNAL_FILE path to use 'python_bridge_v3_signal.csv', CONFIRMATION_FILE to 'python_bridge_v3_confirm.csv'. Add TICK_DATA_FILE = os.path.join(MT5_COMMON_PATH, 'python_bridge_v3_tick_data.csv'), SPREAD_FILE = os.path.join(MT5_COMMON_PATH, 'python_bridge_v3_spread.csv'). Update MODEL_DIR to point to python_bridge_v3/checkpoints.",
+    "Create update_and_run_v3.bat at the repo root following the pattern from update_and_run_v2.bat but pointing to python_bridge_v3/ and showing 'v8.0' in the banner.",
+    "Verify: Run 'python -c \"import sys; sys.path.insert(0, \\\"python_bridge_v3\\\"); from config.settings import MainConfig; print(MainConfig())\"' to confirm settings import correctly."
+  ],
+  "acceptance_criteria": [
+    "python_bridge_v3/ directory exists as a complete copy of python_bridge/",
+    "python_bridge_v3/main.py shows VERSION = '8.0'",
+    "python_bridge_v3/config/settings.py has all 11 new feature flags in MainConfig",
+    "python_bridge_v3/config/settings.py has all new dataclass configs (TickDataConfig, MicrostructureConfig, RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig, SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig, DisagreementConfig, KellyConfig, MonteCarloConfig)",
+    "Signal/confirmation file paths are updated to v3 prefixes",
+    "update_and_run_v3.bat exists at repo root with correct paths",
+    "python_bridge/ and python_bridge_v2/ directories are completely unmodified"
+  ],
+  "verification": [
+    "Run: python -c \"import sys; sys.path.insert(0, 'python_bridge_v3'); from config.settings import MainConfig, TickDataConfig, MicrostructureConfig, RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig, SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig, DisagreementConfig, KellyConfig, MonteCarloConfig; m=MainConfig(); print('All configs imported OK'); print(f'Version flags: tick={m.enable_tick_data}, regime_routing={m.enable_regime_routing}')\"",
+    "Run: diff <(ls python_bridge/) <(ls python_bridge_v3/) to confirm v3 has same structure",
+    "Run: test -f update_and_run_v3.bat && echo 'BAT exists'",
+    "Run: grep -c 'v8.0' python_bridge_v3/main.py to confirm version updated"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

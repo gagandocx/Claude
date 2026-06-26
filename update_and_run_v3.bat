@@ -1,0 +1,36 @@
+@echo off
+REM ============================================
+REM  Python ML Bridge v3 - Update and Run
+REM  This runs the v3 system (python_bridge_v3/)
+REM  The original system in python_bridge/ is untouched
+REM  The v2 system in python_bridge_v2/ is untouched
+REM ============================================
+
+echo ============================================
+echo  Python ML Bridge v3 (v8.0) - Starting
+echo  Institutional-Grade Trading System
+echo ============================================
+
+cd /d "%~dp0"
+
+REM Pull latest code from git
+echo [1/3] Pulling latest code...
+git pull origin feature/5-model-ensemble-tcn-lgbm 2>nul
+if %errorlevel% neq 0 (
+    echo Warning: git pull failed - continuing with local code
+)
+
+REM Install/update dependencies
+echo [2/3] Checking dependencies...
+cd python_bridge_v3
+pip install -r requirements.txt --quiet 2>nul
+
+REM Run the v3 bridge
+echo [3/3] Starting Python ML Bridge v3...
+echo ============================================
+python -u main.py --live
+
+REM If Python exits, pause so user can see errors
+echo.
+echo Bridge stopped. Press any key to exit...
+pause >nul
