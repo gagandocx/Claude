@@ -1,0 +1,27 @@
+{
+  "project_type": "MQL5 Expert Advisor + Python ML bridge trading system",
+  "language": "Python + MQL5 + Windows batch",
+  "build_system": "No formal build system. Bat files download and run Python scripts. MQL5 compiled in MetaEditor.",
+  "test_framework": "pytest (tests/ directories in each python_bridge variant)",
+  "build_command": "N/A (no compilation step for Python)",
+  "test_command": "cd python_bridge && python -m pytest tests/ -x",
+  "verification_instructions": "1. Verify NeuroX/ folder structure mirrors old layout. 2. Verify bat files reference correct new paths and GitHub URLs. 3. Verify CSV filenames (python_bridge_signal.csv etc.) are NOT renamed. 4. Verify EA files have updated header comments but preserve all CSV filename references.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "N/A - file copy/rename operation, no dependencies needed",
+  "environment_constraints": "OPEN_INTERNET. No MetaEditor available for MQL5 compilation validation. No MT5 available.",
+  "contribution_requirements": "Do NOT rename bridge protocol CSV filenames (python_bridge_signal.csv, python_bridge_confirm.csv, python_bridge_heartbeat.txt, python_bridge_brain_settings.csv, python_bridge_v3_signal.csv, python_bridge_v3_confirm.csv, python_bridge_v3_tick_data.csv, python_bridge_v3_spread.csv). Do NOT change trading logic. 'input' is reserved in MQL5 - never use as variable name.",
+  "key_patterns": "Each version (v1, v2, v3) is a self-contained Python package with config/, data/, models/, signals/, strategies/, training/, dashboard/, tests/. Bat files use python urllib to download files from GitHub raw URLs. EA files use InpSignalFile etc. for CSV filenames.",
+  "relevant_files": [
+    "update_and_run.bat",
+    "update_and_run_v2.bat",
+    "update_and_run_v3.bat",
+    "setup_new_pc.bat",
+    "Python_Bridge_EA.mq5",
+    "Python_Bridge_EA_v2.mq5",
+    "Python_Bridge_EA_v3.mq5",
+    "python_bridge/",
+    "python_bridge_v2/",
+    "python_bridge_v3/"
+  ],
+  "directory_structure": "Root has: python_bridge/ (v7.1), python_bridge_v2/ (v7.2-rc1), python_bridge_v3/ (v8.0), 3 EA .mq5 files, 3 update_and_run bat files, 1 setup bat. New NeuroX/ folder will contain: neurox/ (from python_bridge), neurox_v2/ (from python_bridge_v2), neurox_v3/ (from python_bridge_v3), 3 NeuroX_EA_*.mq5 files, 3 neurox_run*.bat files, 1 neurox_setup.bat."
+}
