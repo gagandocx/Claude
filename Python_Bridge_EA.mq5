@@ -1568,8 +1568,9 @@ void UpdateDashboard()
     int finalHeight = (y - panelY) + lineHeight + 20;
     if(finalHeight != panelHeight)
     {
-        string bgName = "PB_bg_main";
-        ObjectSetInteger(0, bgName, OBJPROP_YSIZE, finalHeight);
+        ObjectSetInteger(0, "PB_bg_main", OBJPROP_YSIZE, finalHeight);
+        ObjectSetInteger(0, "PB_bg_main2", OBJPROP_YSIZE, finalHeight);
+        ObjectSetInteger(0, "PB_bg_main3", OBJPROP_YSIZE, finalHeight);
     }
 
     ChartRedraw(0);
