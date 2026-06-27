@@ -292,3 +292,36 @@ class TickDataProcessor:
         self._last_file_mtime = 0.0
         self._features_cache = None
         logger.info("[TickData] State reset")
+
+    def is_tick_stale(self, max_age_seconds: int = 120) -> bool:
+        """
+        Check if tick data is stale based on file modification time.
+
+        This detects situations where the MT5 EA has stopped writing
+        tick data (EA crash, terminal disconnect, etc.), which means
+        the Python side is operating on outdated order flow information.
+
+        Args:
+            max_age_seconds: Maximum age in seconds before considered stale.
+                           Default is 120 seconds (2 minutes).
+
+        Returns:
+            True if tick data file is stale (too old or missing)
+        """
+        tick_file = self.config.tick_file
+
+        if not os.path.exists(tick_file):
+            return True
+
+        try:
+            mtime = os.path.getmtime(tick_file)
+            age = time.time() - mtime
+            if age > max_age_seconds:
+                logger.debug(
+                    f"[TickData] Tick data stale: "
+                    f"age={age:.0f}s > threshold={max_age_seconds}s"
+                )
+                return True
+            return False
+        except OSError:
+            return True

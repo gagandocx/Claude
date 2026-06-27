@@ -70,6 +70,10 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/microstructure.py','python_bridge_v4/data/microstructure.py'); print('  data/microstructure.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/data_validator.py','python_bridge_v4/data/data_validator.py'); print('  data/data_validator.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/pipeline.py','python_bridge_v4/data/pipeline.py'); print('  data/pipeline.py OK')"
+
 :: --- models/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/models/__init__.py','python_bridge_v4/models/__init__.py'); print('  models/__init__.py OK')"
 

@@ -37,6 +37,7 @@ from config.settings import (
     RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig,
     SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig,
     DisagreementConfig, KellyConfig, MonteCarloConfig,
+    DataValidatorConfig, PipelineConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -68,6 +69,8 @@ from strategies.adaptive_threshold import AdaptiveConfidenceThreshold
 from strategies.disagreement_signal import DisagreementSignal
 from strategies.kelly_sizing import KellySizer
 from strategies.monte_carlo import MonteCarloRiskSimulator
+from data.data_validator import DataValidator
+from data.pipeline import PipelineManager
 
 
 # ─────────────────────────────────────────────
@@ -269,6 +272,19 @@ class PythonMLBridge:
             if self.config.enable_monte_carlo_risk else None
         )
 
+        # ── V7.5 Data Quality & Pipeline Components ───────────────────────────
+        # Live data validation (NaN, gaps, zero-volume, price sanity)
+        self.data_validator = (
+            DataValidator(DataValidatorConfig())
+            if self.config.enable_data_validation else None
+        )
+
+        # Pipeline threading (overlap data fetch with model compute)
+        self.pipeline_manager = (
+            PipelineManager(PipelineConfig())
+            if self.config.enable_pipeline else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -315,6 +331,8 @@ class PythonMLBridge:
         self.logger.info(f"  Disagreement signal: {self.config.enable_disagreement_signal}")
         self.logger.info(f"  Kelly sizing: {self.config.enable_kelly_sizing}")
         self.logger.info(f"  Monte Carlo risk: {self.config.enable_monte_carlo_risk}")
+        self.logger.info(f"  Data validation: {self.config.enable_data_validation}")
+        self.logger.info(f"  Pipeline threading: {self.config.enable_pipeline}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -629,6 +647,19 @@ class PythonMLBridge:
                 result["error"] = "No market data available"
                 return result
 
+            # 1a. Validate fetched data (v7.5)
+            if self.data_validator:
+                val_result = self.data_validator.validate(df)
+                if not val_result.is_valid:
+                    self.logger.error(
+                        f"[DataValidator] CRITICAL: {val_result.summary()}"
+                    )
+                    result["error"] = f"Data validation failed: {val_result.summary()}"
+                    return result
+                elif val_result.warnings:
+                    for w in val_result.warnings:
+                        self.logger.warning(f"[DataValidator] {w}")
+
             # 1b. Fetch M1 data for momentum direction and M1 ATR sizing
             # M1 gives 7-minute momentum (vs 7-hour from H1) - correct for scalping
             df_m1 = None
@@ -640,6 +671,27 @@ class PythonMLBridge:
             except Exception as e:
                 self.logger.warning(f"[M1 Data] M1 fetch error: {e} - falling back to H1 for momentum")
                 df_m1 = None
+
+            # 1c. Validate M1 data if available (v7.5)
+            if self.data_validator and df_m1 is not None:
+                m1_val = self.data_validator.validate(df_m1)
+                if not m1_val.is_valid:
+                    self.logger.warning(
+                        f"[DataValidator] M1 data invalid: {m1_val.summary()} - "
+                        f"falling back to H1"
+                    )
+                    df_m1 = None
+                elif m1_val.warnings:
+                    for w in m1_val.warnings:
+                        self.logger.debug(f"[DataValidator M1] {w}")
+
+            # 1d. Tick data staleness check (v7.5)
+            if self.tick_data_processor and self.data_validator:
+                if self.tick_data_processor.is_tick_stale():
+                    self.logger.debug(
+                        "[DataValidator] Tick data is stale - order flow "
+                        "features may be outdated"
+                    )
 
             # 2. Compute features
             features_df = self.data_fetcher.compute_features(df)
@@ -656,6 +708,19 @@ class PythonMLBridge:
             if feature_input is None:
                 result["error"] = "Could not prepare model input"
                 return result
+
+            # 3a. Validate feature schema (v7.5)
+            if self.data_validator:
+                feat_val = self.data_validator.validate_features(feature_input)
+                if not feat_val.is_valid:
+                    self.logger.error(
+                        f"[DataValidator] Feature validation CRITICAL: {feat_val.summary()}"
+                    )
+                    result["error"] = f"Feature validation failed: {feat_val.summary()}"
+                    return result
+                elif feat_val.warnings:
+                    for w in feat_val.warnings:
+                        self.logger.warning(f"[DataValidator] {w}")
 
             # 4. Get ATR and current price
             # Use M1 ATR for SL/TP sizing (~$2-3 for proper scalping stops)

@@ -1167,6 +1167,41 @@ class MonteCarloConfig:
 
 
 # ─────────────────────────────────────────────
+#  DATA VALIDATION
+# ─────────────────────────────────────────────
+@dataclass
+class DataValidatorConfig:
+    """Live data validation configuration.
+
+    Validates incoming market data to prevent garbage-in-garbage-out.
+    Checks for NaN/inf, zero-volume bars, price gaps, price sanity,
+    tick staleness, and feature schema compliance.
+    """
+    max_nan_pct: float = 0.05                # Max allowed NaN percentage (5%)
+    max_gap_atr_mult: float = 3.0            # Gap > 3x ATR triggers warning
+    min_price: float = 500.0                 # Min sane price for XAUUSD
+    max_price: float = 5000.0                # Max sane price for XAUUSD
+    staleness_seconds: int = 120             # Tick data stale after 2 minutes
+    expected_feature_count: int = 46         # Expected features per sample
+    enable_validation: bool = True           # Master enable/disable
+
+
+# ─────────────────────────────────────────────
+#  PIPELINE ARCHITECTURE (THREADING)
+# ─────────────────────────────────────────────
+@dataclass
+class PipelineConfig:
+    """Pipeline architecture configuration for overlapping I/O and compute.
+
+    Uses ThreadPoolExecutor to fetch data in parallel with model inference,
+    reducing total cycle time by overlapping I/O-bound and CPU-bound work.
+    """
+    max_workers: int = 3                     # Thread pool size (data + sentiment + alt)
+    fetch_timeout_seconds: float = 30.0      # Timeout per fetch task
+    enable_pipeline: bool = True             # Master enable/disable
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -1202,3 +1237,7 @@ class MainConfig:
     enable_disagreement_signal: bool = True  # Tier 3: Multi-model disagreement signal
     enable_kelly_sizing: bool = True         # Tier 3: Kelly criterion position sizing
     enable_monte_carlo_risk: bool = True     # Tier 3: Monte Carlo risk simulation
+
+    # V7.5 Data Quality & Pipeline
+    enable_data_validation: bool = True      # Live data validation/sanity checking
+    enable_pipeline: bool = True             # Pipeline threading (overlap fetch + compute)

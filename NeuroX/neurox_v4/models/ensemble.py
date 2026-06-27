@@ -229,7 +229,36 @@ class EnsembleManager:
     # ── main predict ──────────────────────────────────────────────────────
 
     def predict(self, x: np.ndarray) -> Dict[str, np.ndarray]:
-        """Full 17-model ensemble prediction."""
+        """Full 17-model ensemble prediction with feature schema validation."""
+        # ── Feature schema validation ─────────────────────────────────────
+        expected_features = 46
+        if x.ndim == 3:
+            actual_features = x.shape[2]
+        elif x.ndim == 2:
+            actual_features = x.shape[1]
+        else:
+            actual_features = None
+
+        if actual_features is not None and actual_features != expected_features:
+            logger.warning(
+                f"[Ensemble] Feature count mismatch: got {actual_features}, "
+                f"expected {expected_features}. Adjusting input."
+            )
+            if x.ndim == 3:
+                if actual_features < expected_features:
+                    # Pad with zeros
+                    pad_width = ((0, 0), (0, 0), (0, expected_features - actual_features))
+                    x = np.pad(x, pad_width, mode='constant', constant_values=0.0)
+                else:
+                    # Truncate
+                    x = x[:, :, :expected_features]
+            elif x.ndim == 2:
+                if actual_features < expected_features:
+                    pad_width = ((0, 0), (0, expected_features - actual_features))
+                    x = np.pad(x, pad_width, mode='constant', constant_values=0.0)
+                else:
+                    x = x[:, :expected_features]
+
         all_probs = [
             self.predict_transformer(x), self.predict_lstm(x),
             self.predict_tcn(x),         self.predict_patch_tst(x),
