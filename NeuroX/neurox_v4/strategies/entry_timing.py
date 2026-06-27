@@ -46,13 +46,16 @@ class EntryTimingManager:
         self._signal_price: Optional[float] = None
         self._signal_time: Optional[float] = None
         self._best_pullback_price: Optional[float] = None
+        # Full signal details for reconstruction during HOLD-cycle triggers
+        self._signal_details: Optional[Dict] = None
 
     @property
     def has_pending_signal(self) -> bool:
         """Check if there is a pending signal waiting for pullback."""
         return self._signal_action is not None
 
-    def set_pending_signal(self, action: str, price: float, timestamp: Optional[float] = None) -> None:
+    def set_pending_signal(self, action: str, price: float, timestamp: Optional[float] = None,
+                           signal_details: Optional[Dict] = None) -> None:
         """
         Register a new signal waiting for micro-pullback entry.
 
@@ -60,11 +63,15 @@ class EntryTimingManager:
             action: "BUY" or "SELL"
             price: Price at signal generation time
             timestamp: Signal time (defaults to current time)
+            signal_details: Full signal attributes (confidence, sl_pips, tp_pips,
+                            lot_size, model_name, regime, symbol) for reconstruction
+                            when the pullback triggers during a HOLD cycle.
         """
         self._signal_action = action
         self._signal_price = price
         self._signal_time = timestamp or time.time()
         self._best_pullback_price = price
+        self._signal_details = signal_details
 
         logger.info(
             f"[EntryTiming] Pending {action} signal @ ${price:.2f} - "
@@ -177,6 +184,7 @@ class EntryTimingManager:
         self._signal_price = None
         self._signal_time = None
         self._best_pullback_price = None
+        self._signal_details = None
 
     def cancel_pending(self) -> None:
         """Cancel any pending signal (e.g., if conditions changed)."""
@@ -198,4 +206,5 @@ class EntryTimingManager:
             "elapsed_seconds": elapsed,
             "timeout_seconds": self.config.timeout_seconds,
             "best_pullback_price": self._best_pullback_price,
+            "signal_details": self._signal_details,
         }

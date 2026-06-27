@@ -1495,7 +1495,12 @@ class SignalGenerator:
                 "sl_distance": levels["sl_pips"] * 0.1,
                 "momentum_lookback": self.data_config.momentum_lookback,
                 "rsi_at_entry": current_rsi_for_zone if current_rsi_for_zone else 50.0,
-            }
+            },
+            # v7.4: Store per-model predictions for Sharpe PnL attribution
+            "individual_preds": {
+                name: float(probs[0][2] if action == "BUY" else probs[0][0])
+                for name, probs in prediction.get("individual_preds", {}).items()
+            },
         }
 
         logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",

@@ -355,12 +355,32 @@ class PythonMLBridge:
                                         )
                                         self.confidence_calibrator.save_state()
                                     # v7.4: Feed Sharpe-based model weighting
+                                    # Attribute PnL proportionally to models that voted
+                                    # in the direction of the trade (not equally to all)
                                     if self.config.enable_sharpe_weights and hasattr(self.signal_generator, 'ensemble'):
                                         ensemble = self.signal_generator.ensemble
-                                        model_name = active.get("model_name", "ensemble")
-                                        # Attribute PnL to all models (proportional)
-                                        for mn in ensemble._model_names:
-                                            ensemble.update_pnl_attribution(mn, pnl)
+                                        individual_preds = active.get("individual_preds", {})
+                                        if individual_preds:
+                                            # Only attribute PnL to models that predicted
+                                            # the trade direction (prob > 1/3 threshold)
+                                            contributing_models = {
+                                                name: prob for name, prob in individual_preds.items()
+                                                if prob > 1.0 / 3.0
+                                            }
+                                            if contributing_models:
+                                                # Normalize contributions to sum to 1
+                                                total_contribution = sum(contributing_models.values())
+                                                for mn, contrib in contributing_models.items():
+                                                    weight = contrib / total_contribution
+                                                    ensemble.update_pnl_attribution(mn, pnl * weight)
+                                            else:
+                                                # Fallback: no model passed threshold, attribute equally
+                                                for mn in ensemble._model_names:
+                                                    ensemble.update_pnl_attribution(mn, pnl / len(ensemble._model_names))
+                                        else:
+                                            # No individual preds stored (legacy position), attribute equally
+                                            for mn in ensemble._model_names:
+                                                ensemble.update_pnl_attribution(mn, pnl / len(ensemble._model_names))
                                         ensemble.sharpe_reweight()
                                     self.signal_generator.clear_active_position()
                                     self.signal_generator._estimated_close_pending = True
@@ -710,6 +730,15 @@ class PythonMLBridge:
                     self.entry_timing.set_pending_signal(
                         action=signal.action,
                         price=current_price,
+                        signal_details={
+                            "confidence": signal.confidence,
+                            "sl_pips": signal.sl_pips,
+                            "tp_pips": signal.tp_pips,
+                            "lot_size": signal.lot_size,
+                            "model_name": signal.model_name,
+                            "regime": signal.regime,
+                            "symbol": signal.symbol,
+                        },
                     )
                 # Evaluate whether to enter now
                 entry_result = self.entry_timing.evaluate_entry(
@@ -744,12 +773,23 @@ class PythonMLBridge:
                         current_price=current_price,
                     )
                     if entry_result['should_enter']:
-                        # Re-emit the pending signal action to write to bridge
+                        # Reconstruct the signal from pending state and write to bridge
                         self.logger.info(
                             f"[EntryTiming] Pending signal triggered: {entry_result['reason']}"
                         )
-                        # Note: The original signal has already passed through the generator.
-                        # This is a timing-only delay; the bridge write happens next cycle.
+                        details = status.get('signal_details') or {}
+                        from strategies.signal_generator import TradeSignal
+                        signal = TradeSignal(
+                            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            symbol=details.get("symbol", "XAUUSD"),
+                            action=status['action'],
+                            confidence=details.get("confidence", 0.5),
+                            sl_pips=details.get("sl_pips", 0),
+                            tp_pips=details.get("tp_pips", 0),
+                            lot_size=details.get("lot_size", 0.01),
+                            model_name=details.get("model_name", "ensemble"),
+                            regime=details.get("regime", "unknown"),
+                        )
 
             # 10c. Write signal to bridge
             if signal.action != "HOLD":

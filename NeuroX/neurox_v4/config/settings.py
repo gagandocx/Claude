@@ -341,11 +341,15 @@ class SOFTSConfig:
 # ─────────────────────────────────────────────
 #  PLATT SCALING CONFIDENCE CALIBRATION
 # ─────────────────────────────────────────────
+# Anchor state file path to the neurox_v4 root directory
+_NEUROX_V4_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 @dataclass
 class PlattCalibrationConfig:
     """Platt scaling confidence calibration configuration."""
     window_size: int = 200                   # Sliding window of (logit, outcome) pairs
-    state_file: str = "platt_calibration_state.json"  # Persistence file
+    state_file: str = os.path.join(_NEUROX_V4_ROOT, "platt_calibration_state.json")  # Absolute path
     min_samples: int = 50                    # Minimum samples before calibration is active
 
 
