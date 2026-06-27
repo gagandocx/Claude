@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                            NeuroX_EA.mq5   |
+//|                                            Python_Bridge_EA.mq5   |
 //|                              NeuroX - Signal Executor              |
 //|                                                                    |
 //|  v7.1 - Ultimate: $0.6 SL, $0.05 Trail, 61.6% WR, PF 4.02      |
@@ -1376,31 +1376,25 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("tf_lbl", panelX + leftMargin, y, "Timeframe:", clrLabel);
     DashboardLabel("tf_val", panelX + valueCol, y, EnumToString(Period()), clrValue);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
 
     // ═══════════════════════════════════════════════════════════════════
     // --- CONNECTION (live — updates every tick from cached globals) ---
     // ═══════════════════════════════════════════════════════════════════
-    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 106, C'15,25,15', 255);
-    DashboardLabel("sep_conn", panelX + leftMargin, y, "--- CONNECTION ---", clrHeader, 9);
-    y += lineHeight;
+    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 118, C'15,25,15', 255);
+    y += 4;
 
     // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
     string pyConnStr;
     color  pyConnClr;
-    if(g_pyHeartbeatAge < 0)
+    if(g_pyHeartbeatAge >= 0 && g_pyHeartbeatAge <= 3)
     {
-        pyConnStr = "● OFFLINE  (Python not started)";
-        pyConnClr = clrRed;
-    }
-    else if(g_pyHeartbeatAge <= InpMaxHeartbeatAge)
-    {
-        pyConnStr = "● LIVE    " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnStr = "● LIVE";
         pyConnClr = clrLime;
     }
     else
     {
-        pyConnStr = "● OFFLINE  " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnStr = "● OFFLINE";
         pyConnClr = clrRed;
     }
     DashboardLabel("conn_py_lbl", panelX + leftMargin, y, "Python Bridge:", clrLabel);
@@ -1450,12 +1444,8 @@ void UpdateDashboard()
     color  brainStateClr = (g_brain_session_active == 0) ? clrRed : clrLime;
     DashboardLabel("conn_bst_lbl", panelX + leftMargin, y, "Brain State:", clrLabel);
     DashboardLabel("conn_bst_val", panelX + valueCol,   y, brainStateStr, brainStateClr);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
     // ═══════════════════════════════════════════════════════════════════
-
-    // --- Separator ---
-    DashboardLabel("sep1", panelX + leftMargin, y, "--- SIGNAL ---", clrHeader, 9);
-    y += lineHeight;
 
     // Signal section
     color actionClr = clrValue;
@@ -1473,12 +1463,9 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("sig_reg_lbl", panelX + leftMargin, y, "Regime:", clrLabel);
     DashboardLabel("sig_reg_val", panelX + valueCol, y, (g_lastRegime == "" ? "---" : g_lastRegime), clrValue);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
 
-    // --- Trade section ---
-    DashboardLabel("sep2", panelX + leftMargin, y, "--- TRADE ---", clrHeader, 9);
-    y += lineHeight;
-
+    // Trade section
     DashboardLabel("trd_lot_lbl", panelX + leftMargin, y, "Lot Size:", clrLabel);
     DashboardLabel("trd_lot_val", panelX + valueCol, y, DoubleToString(g_lastLotSize, 2), clrValue);
     y += lineHeight;
@@ -1491,12 +1478,9 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("trd_trail_lbl", panelX + leftMargin, y, "Trail:", clrLabel);
     DashboardLabel("trd_trail_val", panelX + valueCol, y, g_trailStatus, clrGold);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
 
-    // --- Statistics section ---
-    DashboardLabel("sep3", panelX + leftMargin, y, "--- STATISTICS ---", clrHeader, 9);
-    y += lineHeight;
-
+    // Statistics section
     DashboardLabel("st_sig_lbl", panelX + leftMargin, y, "Signals Read:", clrLabel);
     DashboardLabel("st_sig_val", panelX + valueCol, y, IntegerToString(g_signalsRead), clrValue);
     y += lineHeight;
@@ -1514,12 +1498,9 @@ void UpdateDashboard()
     string plSign = (floatingPL >= 0) ? "+" : "";
     DashboardLabel("st_pl_lbl", panelX + leftMargin, y, "Floating P/L:", clrLabel);
     DashboardLabel("st_pl_val", panelX + valueCol, y, plSign + "$" + DoubleToString(floatingPL, 2), plColor);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
 
-    // --- Scalper config ---
-    DashboardLabel("sep4", panelX + leftMargin, y, "--- CONFIG ---", clrHeader, 9);
-    y += lineHeight;
-
+    // Config section
     DashboardLabel("cfg1_lbl", panelX + leftMargin, y, "Cycle:", clrLabel);
     DashboardLabel("cfg1_val", panelX + valueCol, y, "Every tick | ATR Cap: $5", clrValue);
     y += lineHeight;
@@ -1528,12 +1509,9 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("cfg3_lbl", panelX + leftMargin, y, "Emergency:", clrLabel);
     DashboardLabel("cfg3_val", panelX + valueCol, y, "$50 loss stop", clrWarning);
-    y += lineHeight + 6;
+    y += lineHeight + 12;
 
-    // --- Status line ---
-    DashboardLabel("sep5", panelX + leftMargin, y, "--- STATUS ---", clrHeader, 9);
-    y += lineHeight;
-
+    // Status section
     color statusClr = clrRunning;
     if(StringFind(g_status, "EMERGENCY") >= 0 || StringFind(g_status, "ERROR") >= 0)
         statusClr = clrWarning;
