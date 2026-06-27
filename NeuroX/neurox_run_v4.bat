@@ -44,6 +44,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/train_colab.py','python_bridge_v4/train_colab.py'); print('  train_colab.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/verify_models.py','python_bridge_v4/verify_models.py'); print('  verify_models.py OK')"
+
 :: --- config/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/config/__init__.py','python_bridge_v4/config/__init__.py'); print('  config/__init__.py OK')"
 
