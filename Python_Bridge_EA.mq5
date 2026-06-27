@@ -1375,13 +1375,15 @@ void UpdateDashboard()
     DashboardLabel("sym_val", panelX + valueCol, y, _Symbol, clrValue);
     y += lineHeight;
     DashboardLabel("tf_lbl", panelX + leftMargin, y, "Timeframe:", clrLabel);
-    DashboardLabel("tf_val", panelX + valueCol, y, EnumToString(Period()), clrValue);
+    string tfStr = EnumToString(Period());
+    if(StringFind(tfStr, "PERIOD_") == 0)
+        tfStr = StringSubstr(tfStr, 7);
+    DashboardLabel("tf_val", panelX + valueCol, y, tfStr, clrValue);
     y += lineHeight + 12;
 
     // ═══════════════════════════════════════════════════════════════════
     // --- CONNECTION (live — updates every tick from cached globals) ---
     // ═══════════════════════════════════════════════════════════════════
-    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 118, C'15,25,15', 255);
     y += 4;
 
     // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
