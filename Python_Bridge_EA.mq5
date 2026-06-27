@@ -1382,8 +1382,7 @@ void UpdateDashboard()
     // --- CONNECTION (live — updates every tick from cached globals) ---
     // ═══════════════════════════════════════════════════════════════════
     DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 118, C'15,25,15', 255);
-    DashboardLabel("sep_conn", panelX + leftMargin, y, "--- CONNECTION ---", clrHeader, 9);
-    y += lineHeight + 6;
+    y += 4;
 
     // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
     string pyConnStr;
@@ -1448,10 +1447,6 @@ void UpdateDashboard()
     y += lineHeight + 12;
     // ═══════════════════════════════════════════════════════════════════
 
-    // --- Separator ---
-    DashboardLabel("sep1", panelX + leftMargin, y, "--- SIGNAL ---", clrHeader, 9);
-    y += lineHeight + 6;
-
     // Signal section
     color actionClr = clrValue;
     if(g_lastAction == "BUY") actionClr = clrLime;
@@ -1470,10 +1465,7 @@ void UpdateDashboard()
     DashboardLabel("sig_reg_val", panelX + valueCol, y, (g_lastRegime == "" ? "---" : g_lastRegime), clrValue);
     y += lineHeight + 12;
 
-    // --- Trade section ---
-    DashboardLabel("sep2", panelX + leftMargin, y, "--- TRADE ---", clrHeader, 9);
-    y += lineHeight + 6;
-
+    // Trade section
     DashboardLabel("trd_lot_lbl", panelX + leftMargin, y, "Lot Size:", clrLabel);
     DashboardLabel("trd_lot_val", panelX + valueCol, y, DoubleToString(g_lastLotSize, 2), clrValue);
     y += lineHeight;
@@ -1488,10 +1480,7 @@ void UpdateDashboard()
     DashboardLabel("trd_trail_val", panelX + valueCol, y, g_trailStatus, clrGold);
     y += lineHeight + 12;
 
-    // --- Statistics section ---
-    DashboardLabel("sep3", panelX + leftMargin, y, "--- STATISTICS ---", clrHeader, 9);
-    y += lineHeight + 6;
-
+    // Statistics section
     DashboardLabel("st_sig_lbl", panelX + leftMargin, y, "Signals Read:", clrLabel);
     DashboardLabel("st_sig_val", panelX + valueCol, y, IntegerToString(g_signalsRead), clrValue);
     y += lineHeight;
@@ -1511,10 +1500,7 @@ void UpdateDashboard()
     DashboardLabel("st_pl_val", panelX + valueCol, y, plSign + "$" + DoubleToString(floatingPL, 2), plColor);
     y += lineHeight + 12;
 
-    // --- Scalper config ---
-    DashboardLabel("sep4", panelX + leftMargin, y, "--- CONFIG ---", clrHeader, 9);
-    y += lineHeight + 6;
-
+    // Config section
     DashboardLabel("cfg1_lbl", panelX + leftMargin, y, "Cycle:", clrLabel);
     DashboardLabel("cfg1_val", panelX + valueCol, y, "Every tick | ATR Cap: $5", clrValue);
     y += lineHeight;
@@ -1525,10 +1511,7 @@ void UpdateDashboard()
     DashboardLabel("cfg3_val", panelX + valueCol, y, "$50 loss stop", clrWarning);
     y += lineHeight + 12;
 
-    // --- Status line ---
-    DashboardLabel("sep5", panelX + leftMargin, y, "--- STATUS ---", clrHeader, 9);
-    y += lineHeight + 6;
-
+    // Status section
     color statusClr = clrRunning;
     if(StringFind(g_status, "EMERGENCY") >= 0 || StringFind(g_status, "ERROR") >= 0)
         statusClr = clrWarning;
