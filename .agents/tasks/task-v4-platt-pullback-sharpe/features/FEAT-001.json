@@ -26,5 +26,5 @@
     "python -c \"import sys; sys.path.insert(0, '/projects/sandbox/Claude/NeuroX/neurox_v4'); from main import VERSION; assert VERSION == '7.4', f'Expected 7.4 got {VERSION}'\""
   ],
   "blocked_reason": null,
-  "findings": "All imports verified clean. scipy installed for Platt scaling optimization. Required pyenv global 3.12.13 setup. Additional pip packages needed: numpy scipy torch scikit-learn pandas yfinance feedparser lightgbm catboost transformers ta. Original neurox/ folder confirmed untouched (no git diff)."
+  "findings": "All imports verified clean. scipy installed for Platt scaling optimization. Required pyenv global 3.12.13 setup. Additional pip packages needed: numpy scipy torch scikit-learn pandas yfinance feedparser lightgbm catboost transformers ta. Original neurox/ folder confirmed untouched (no git diff). v2 review fixes applied: (1) individual_preds now stored in signal_details when registering pending signal, _active_position re-established in HOLD-cycle trigger path; (2) Platt NLL threshold changed from 10.0 to 0.75."
 }
