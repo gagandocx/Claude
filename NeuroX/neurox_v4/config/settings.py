@@ -405,10 +405,17 @@ class EnsembleConfig:
     gradient_boost_weight: float = 0.04 # sklearn HistGradBoost
     xgboost_weight: float      = 0.03   # LightGBM / XGBoost
     catboost_weight: float     = 0.03   # Ordered boosting
-    meta_learner_features: int = 51     # 17 models × 3 classes
+    meta_learner_features: int = 51     # 17 models x 3 classes
     min_agreement: float       = 0.10
     dynamic_weights: bool      = True
     weight_lookback: int       = 50
+    # Online learning: lightweight gradient updates between weekly retrains
+    online_learning_enabled: bool = True
+    online_batch_size: int = 10          # Min labeled samples before update
+    online_lr: float = 1e-4              # Learning rate for online head updates
+    # Meta-learner data accumulation for auto-retrain
+    accumulate_meta_data: bool = True
+    meta_data_min_samples: int = 500     # Min samples before auto-retrain
 
 
 # ─────────────────────────────────────────────
@@ -1241,6 +1248,24 @@ class PipelineConfig:
 
 
 # ─────────────────────────────────────────────
+#  FEATURE IMPORTANCE MONITOR
+# ─────────────────────────────────────────────
+@dataclass
+class FeatureMonitorConfig:
+    """Feature importance monitoring configuration.
+
+    Tracks per-feature importance using permutation importance approximation.
+    Alerts when a feature's importance drops below a threshold of its
+    historical average, indicating that the feature has degraded or its
+    data source has become unreliable.
+    """
+    importance_window: int = 200             # Rolling window of importance scores
+    check_interval: int = 50                 # Predictions between importance checks
+    degradation_threshold: float = 0.1       # Alert if importance < 10% of historical avg
+    enabled: bool = True                     # Master enable/disable
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -1282,3 +1307,5 @@ class MainConfig:
     enable_pipeline: bool = True             # Pipeline threading (overlap fetch + compute)
     enable_account_sync: bool = True         # Live account balance sync from MT5
     enable_slippage_tracker: bool = True     # Slippage/execution quality tracking
+    enable_feature_monitor: bool = True      # Feature importance monitoring
+    enable_online_learning: bool = True      # Online learning adaptation between retrains

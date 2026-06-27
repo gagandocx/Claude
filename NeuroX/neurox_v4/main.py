@@ -39,6 +39,7 @@ from config.settings import (
     DisagreementConfig, KellyConfig, MonteCarloConfig,
     DataValidatorConfig, PipelineConfig,
     AccountSyncConfig, SlippageTrackerConfig,
+    FeatureMonitorConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -73,6 +74,7 @@ from strategies.monte_carlo import MonteCarloRiskSimulator
 from data.data_validator import DataValidator
 from data.pipeline import PipelineManager
 from strategies.slippage_tracker import SlippageTracker
+from strategies.feature_monitor import FeatureImportanceMonitor
 
 
 # ─────────────────────────────────────────────
@@ -300,6 +302,15 @@ class PythonMLBridge:
             if self.config.enable_account_sync else None
         )
 
+        # ── V7.5 Feature Monitoring & Online Learning ─────────────────────
+        # Feature importance monitor (detects degraded features)
+        self.feature_monitor = (
+            FeatureImportanceMonitor(FeatureMonitorConfig())
+            if self.config.enable_feature_monitor else None
+        )
+        self._feature_monitor_log_interval: int = 100  # Log status every N cycles
+        self._feature_monitor_cycle_count: int = 0
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -350,6 +361,8 @@ class PythonMLBridge:
         self.logger.info(f"  Pipeline threading: {self.config.enable_pipeline}")
         self.logger.info(f"  Account sync: {self.config.enable_account_sync}")
         self.logger.info(f"  Slippage tracker: {self.config.enable_slippage_tracker}")
+        self.logger.info(f"  Feature monitor: {self.config.enable_feature_monitor}")
+        self.logger.info(f"  Online learning: {self.config.enable_online_learning}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -486,6 +499,25 @@ class PythonMLBridge:
                                             actual_outcome=1 if won else 0,
                                         )
                                         self.confidence_calibrator.save_state()
+                                    # v7.5: Record true label for meta-learner accumulation
+                                    if self.config.enable_online_learning or self.config.enable_feature_monitor:
+                                        ensemble = self.signal_generator.ensemble
+                                        # Map trade result to label:
+                                        # BUY+win=2, SELL+win=0, loss=1(HOLD)
+                                        if won:
+                                            true_label = 2 if direction == "BUY" else 0
+                                        else:
+                                            true_label = 1  # HOLD would have been better
+                                        # Record for meta-learner data accumulation
+                                        ensemble.record_true_label(true_label)
+                                        # Feed feature monitor
+                                        if self.feature_monitor:
+                                            feat_input = active.get("feature_input")
+                                            pred_probs = active.get("prediction_probs")
+                                            if feat_input is not None and pred_probs is not None:
+                                                self.feature_monitor.record(
+                                                    feat_input, pred_probs, won
+                                                )
                                     # v7.4: Feed Sharpe-based model weighting
                                     # Attribute PnL proportionally to models that voted
                                     # in the direction of the trade (not equally to all)
@@ -879,6 +911,16 @@ class PythonMLBridge:
                 prices_m1=df_m1,
             )
 
+            # 9a. Store feature_input and prediction_probs on active position
+            # for feature monitor and online learning feedback
+            if (self.config.enable_feature_monitor or self.config.enable_online_learning):
+                if self.signal_generator._active_position and signal.action != "HOLD":
+                    self.signal_generator._active_position["feature_input"] = feature_input
+                    pred_result = self.signal_generator.ensemble.predict(feature_input)
+                    self.signal_generator._active_position["prediction_probs"] = (
+                        pred_result["probabilities"]
+                    )
+
             # 9b. Apply Platt scaling confidence calibration (v7.4)
             if self.confidence_calibrator and signal.action != "HOLD":
                 raw_confidence = signal.confidence
@@ -1194,6 +1236,24 @@ class PythonMLBridge:
                     if self.dashboard_config.enable_log_output:
                         self.dashboard_renderer.render_log()
                     self._dashboard_last_render = now
+
+            # 14. Feature monitor periodic degradation check
+            if self.feature_monitor:
+                self._feature_monitor_cycle_count += 1
+                if (self._feature_monitor_cycle_count
+                        % self._feature_monitor_log_interval == 0):
+                    if self.feature_monitor.has_sufficient_data:
+                        fm_result = self.feature_monitor.check_degradation()
+                        if fm_result.alert:
+                            self.logger.warning(
+                                f"[FeatureMonitor] {len(fm_result.degraded_features)} "
+                                f"features degraded: {fm_result.degraded_features[:5]}"
+                            )
+                        else:
+                            top = self.feature_monitor.get_top_features(3)
+                            self.logger.debug(
+                                f"[FeatureMonitor] OK - top features: {top}"
+                            )
 
             result["signal"] = signal.to_dict()
             result["htf_bias"] = htf_bias

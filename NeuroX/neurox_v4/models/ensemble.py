@@ -29,6 +29,8 @@
 import os, sys, logging
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from typing import Dict, List, Optional
 from collections import deque
 from sklearn.ensemble import HistGradientBoostingClassifier
@@ -166,6 +168,16 @@ class EnsembleManager:
         }
         self._sharpe_trade_counter: int = 0
 
+        # ── Online learning state ─────────────────────────────────────────
+        self._online_labels_buffer: List[tuple] = []  # (x_input, true_label)
+        self._last_stacked_predictions: Optional[np.ndarray] = None
+
+        # ── Meta-learner data accumulation ─────────────────────────────────
+        self._meta_data_path: str = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "checkpoints", "meta_learner_data.npz"
+        )
+
     # ── device ────────────────────────────────────────────────────────────
 
     def to_device(self, device: str = "cpu") -> "EnsembleManager":
@@ -271,6 +283,10 @@ class EnsembleManager:
             self.predict_xgboost(x),     self.predict_catboost(x),
         ]
         stacked = np.concatenate(all_probs, axis=1)   # (batch, 51)
+
+        # Store stacked predictions for meta-learner data accumulation
+        if self.config.accumulate_meta_data:
+            self._last_stacked_predictions = stacked.copy()
 
         ensemble_probs = (
             self.meta_learner.predict_proba(stacked) if self.meta_fitted
@@ -493,8 +509,260 @@ class EnsembleManager:
         else:
             logger.warning("[Ensemble] meta_learner.joblib missing — "
                            "weighted average fallback until retrained.")
+            # Attempt auto-retrain from accumulated data
+            if self.config.accumulate_meta_data:
+                self.retrain_meta_learner_from_accumulated()
         if nn_loaded:
             self.models_loaded = True
             logger.info(f"[Ensemble] Load complete. "
                         f"gb={self.gb_fitted} xgb={self.xgb_fitted} "
                         f"cb={self.catboost_fitted} meta={self.meta_fitted}")
+
+    # ── Online Learning Adaptation ────────────────────────────────────────
+
+    def online_update(self, x_batch: np.ndarray, y_true: np.ndarray) -> bool:
+        """
+        Perform lightweight gradient updates on neural model classification heads.
+
+        Only updates the last layer (classification head) while keeping the
+        backbone frozen. This bridges the gap between weekly full retrains by
+        adapting to recent market conditions.
+
+        Args:
+            x_batch: Input features, shape (batch, seq_len, features)
+            y_true: True labels, shape (batch,) with values in {0, 1, 2}
+
+        Returns:
+            True if update was performed, False if skipped (insufficient data
+            or online learning disabled).
+        """
+        if not self.config.online_learning_enabled:
+            return False
+
+        if len(x_batch) < self.config.online_batch_size:
+            return False
+
+        # Convert to tensors
+        x_tensor = torch.FloatTensor(x_batch).to(self.device)
+        y_tensor = torch.LongTensor(y_true).to(self.device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        updated_count = 0
+
+        # List of neural models to update (their classification heads only)
+        nn_models = [
+            self.transformer, self.lstm, self.tcn,
+            self.patch_tst, self.tft, self.nhits,
+            self.itransformer, self.mamba, self.dlinear,
+            self.xlstm, self.timesnet,
+            self.chronos, self.timemixer, self.softs,
+        ]
+
+        for model in nn_models:
+            try:
+                model.train()
+
+                # Freeze all parameters first
+                for param in model.parameters():
+                    param.requires_grad = False
+
+                # Unfreeze only the last linear layer (classification head)
+                # Most models have a 'fc' or 'classifier' or 'head' attribute
+                head_params = []
+                for name, param in model.named_parameters():
+                    # Look for the final classification layer
+                    if any(key in name for key in ['fc.', 'classifier.', 'head.', 'output_layer.']):
+                        param.requires_grad = True
+                        head_params.append(param)
+
+                # If no explicit head found, unfreeze last 2 layers
+                if not head_params:
+                    all_params = list(model.parameters())
+                    for param in all_params[-2:]:
+                        param.requires_grad = True
+                        head_params.append(param)
+
+                if not head_params:
+                    continue
+
+                # Single gradient step with small learning rate
+                optimizer = optim.Adam(head_params, lr=self.config.online_lr)
+                optimizer.zero_grad()
+
+                with torch.enable_grad():
+                    output = model.predict(x_tensor)
+                    if isinstance(output, np.ndarray):
+                        # Model returned numpy, need to re-run forward pass
+                        # Skip this model for online update
+                        continue
+                    # output should be (batch, 3) logits or probabilities
+                    if output.requires_grad:
+                        loss = loss_fn(output, y_tensor)
+                        loss.backward()
+                        # Gradient clipping for stability
+                        torch.nn.utils.clip_grad_norm_(head_params, max_norm=1.0)
+                        optimizer.step()
+                        updated_count += 1
+
+                # Re-freeze everything
+                for param in model.parameters():
+                    param.requires_grad = False
+                model.eval()
+
+            except Exception as e:
+                # Silently skip models that fail online update
+                # (e.g., models without standard forward pass)
+                model.eval()
+                for param in model.parameters():
+                    param.requires_grad = False
+                logger.debug(f"[Online] Skip model update: {e}")
+                continue
+
+        if updated_count > 0:
+            logger.info(
+                f"[Online] Updated {updated_count} model heads "
+                f"(batch={len(x_batch)}, lr={self.config.online_lr})"
+            )
+
+        return updated_count > 0
+
+    def record_true_label(self, true_label: int) -> None:
+        """
+        Record the true label for the most recent prediction.
+
+        When accumulate_meta_data is enabled, this saves the stacked predictions
+        (from the last predict() call) paired with the true label for future
+        meta-learner retraining.
+
+        Args:
+            true_label: True class label (0=SELL, 1=HOLD, 2=BUY)
+        """
+        if not self.config.accumulate_meta_data:
+            return
+
+        if self._last_stacked_predictions is None:
+            logger.debug("[Ensemble] No stacked predictions to pair with label")
+            return
+
+        # Save to disk for future meta-learner training
+        self.save_stacked_predictions(self._last_stacked_predictions, true_label)
+
+    def save_stacked_predictions(
+        self, stacked_preds: np.ndarray, true_label: int
+    ) -> None:
+        """
+        Append (stacked_51_dim, true_label) to accumulated meta-learner data.
+
+        Data is stored in checkpoints/meta_learner_data.npz as two arrays:
+        - 'X': stacked predictions, shape (N, 51)
+        - 'y': true labels, shape (N,)
+
+        Args:
+            stacked_preds: Stacked model predictions, shape (1, 51) or (51,)
+            true_label: True class label (0, 1, or 2)
+        """
+        if stacked_preds.ndim == 1:
+            stacked_preds = stacked_preds.reshape(1, -1)
+        elif stacked_preds.ndim == 2:
+            stacked_preds = stacked_preds[:1]  # Take first sample only
+
+        label_arr = np.array([true_label])
+
+        try:
+            os.makedirs(os.path.dirname(self._meta_data_path), exist_ok=True)
+
+            # Load existing data if available
+            if os.path.exists(self._meta_data_path):
+                existing = np.load(self._meta_data_path)
+                X_existing = existing['X']
+                y_existing = existing['y']
+                X_new = np.vstack([X_existing, stacked_preds])
+                y_new = np.concatenate([y_existing, label_arr])
+            else:
+                X_new = stacked_preds
+                y_new = label_arr
+
+            np.savez(self._meta_data_path, X=X_new, y=y_new)
+            logger.debug(
+                f"[Ensemble] Saved meta-learner sample "
+                f"(total: {len(y_new)} samples)"
+            )
+        except Exception as e:
+            logger.debug(f"[Ensemble] Error saving meta-learner data: {e}")
+
+    def retrain_meta_learner_from_accumulated(self) -> bool:
+        """
+        Retrain the meta-learner from accumulated stacked prediction data.
+
+        Loads meta_learner_data.npz, fits self.meta_learner on the data,
+        and saves to meta_learner.joblib. Called from load_models() when
+        .joblib is missing and sufficient data exists, and also callable
+        from walk_forward.py during retraining.
+
+        Returns:
+            True if retrain was successful, False if insufficient data or error.
+        """
+        if not os.path.exists(self._meta_data_path):
+            logger.info(
+                "[Ensemble] No accumulated meta-learner data found at "
+                f"{self._meta_data_path}"
+            )
+            return False
+
+        try:
+            data = np.load(self._meta_data_path)
+            X = data['X']
+            y = data['y']
+
+            if len(y) < self.config.meta_data_min_samples:
+                logger.info(
+                    f"[Ensemble] Insufficient meta-learner data: "
+                    f"{len(y)} samples (need {self.config.meta_data_min_samples})"
+                )
+                return False
+
+            # Verify shape
+            if X.shape[1] != 51:
+                logger.warning(
+                    f"[Ensemble] Meta-learner data shape mismatch: "
+                    f"X.shape={X.shape}, expected (N, 51)"
+                )
+                return False
+
+            # Verify labels are valid
+            unique_labels = np.unique(y)
+            if len(unique_labels) < 2:
+                logger.warning(
+                    "[Ensemble] Meta-learner data has fewer than 2 classes, "
+                    "cannot retrain"
+                )
+                return False
+
+            logger.info(
+                f"[Ensemble] Retraining meta-learner from "
+                f"{len(y)} accumulated samples..."
+            )
+
+            # Fit the meta-learner
+            self.meta_learner.fit(X, y)
+            self.meta_fitted = True
+
+            # Save to joblib
+            import joblib
+            meta_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "checkpoints", "meta_learner.joblib"
+            )
+            os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+            joblib.dump(self.meta_learner, meta_path)
+
+            logger.info(
+                f"[Ensemble] Meta-learner retrained successfully "
+                f"({len(y)} samples, {len(unique_labels)} classes). "
+                f"Saved to {meta_path}"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(f"[Ensemble] Meta-learner retrain failed: {e}")
+            return False
