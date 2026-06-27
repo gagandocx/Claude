@@ -1351,8 +1351,7 @@ void UpdateDashboard()
     DashboardBackground("bg_main2", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
     // Layer 3 (top): third layer ensures absolutely no bleed-through
     DashboardBackground("bg_main3", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
-    // Title bar background (75px to fit logo + subtitle)
-    DashboardBackground("bg_title", panelX, panelY, panelWidth, 75, clrBgHeader, 255);
+    // Title area (no separate background - logo blends with panel)
 
     // --- Logo (OBJ_BITMAP_LABEL: 300x60 dark background blends with panel) ---
     string logoName = "PB_logo";
