@@ -1376,14 +1376,14 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("tf_lbl", panelX + leftMargin, y, "Timeframe:", clrLabel);
     DashboardLabel("tf_val", panelX + valueCol, y, EnumToString(Period()), clrValue);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
 
     // ═══════════════════════════════════════════════════════════════════
     // --- CONNECTION (live — updates every tick from cached globals) ---
     // ═══════════════════════════════════════════════════════════════════
-    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 114, C'15,25,15', 255);
+    DashboardBackground("bg_conn", panelX + 8, y - 3, panelWidth - 16, 118, C'15,25,15', 255);
     DashboardLabel("sep_conn", panelX + leftMargin, y, "--- CONNECTION ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
     string pyConnStr;
@@ -1445,12 +1445,12 @@ void UpdateDashboard()
     color  brainStateClr = (g_brain_session_active == 0) ? clrRed : clrLime;
     DashboardLabel("conn_bst_lbl", panelX + leftMargin, y, "Brain State:", clrLabel);
     DashboardLabel("conn_bst_val", panelX + valueCol,   y, brainStateStr, brainStateClr);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
     // ═══════════════════════════════════════════════════════════════════
 
     // --- Separator ---
     DashboardLabel("sep1", panelX + leftMargin, y, "--- SIGNAL ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     // Signal section
     color actionClr = clrValue;
@@ -1468,11 +1468,11 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("sig_reg_lbl", panelX + leftMargin, y, "Regime:", clrLabel);
     DashboardLabel("sig_reg_val", panelX + valueCol, y, (g_lastRegime == "" ? "---" : g_lastRegime), clrValue);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
 
     // --- Trade section ---
     DashboardLabel("sep2", panelX + leftMargin, y, "--- TRADE ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     DashboardLabel("trd_lot_lbl", panelX + leftMargin, y, "Lot Size:", clrLabel);
     DashboardLabel("trd_lot_val", panelX + valueCol, y, DoubleToString(g_lastLotSize, 2), clrValue);
@@ -1486,11 +1486,11 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("trd_trail_lbl", panelX + leftMargin, y, "Trail:", clrLabel);
     DashboardLabel("trd_trail_val", panelX + valueCol, y, g_trailStatus, clrGold);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
 
     // --- Statistics section ---
     DashboardLabel("sep3", panelX + leftMargin, y, "--- STATISTICS ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     DashboardLabel("st_sig_lbl", panelX + leftMargin, y, "Signals Read:", clrLabel);
     DashboardLabel("st_sig_val", panelX + valueCol, y, IntegerToString(g_signalsRead), clrValue);
@@ -1509,11 +1509,11 @@ void UpdateDashboard()
     string plSign = (floatingPL >= 0) ? "+" : "";
     DashboardLabel("st_pl_lbl", panelX + leftMargin, y, "Floating P/L:", clrLabel);
     DashboardLabel("st_pl_val", panelX + valueCol, y, plSign + "$" + DoubleToString(floatingPL, 2), plColor);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
 
     // --- Scalper config ---
     DashboardLabel("sep4", panelX + leftMargin, y, "--- CONFIG ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     DashboardLabel("cfg1_lbl", panelX + leftMargin, y, "Cycle:", clrLabel);
     DashboardLabel("cfg1_val", panelX + valueCol, y, "Every tick | ATR Cap: $5", clrValue);
@@ -1523,11 +1523,11 @@ void UpdateDashboard()
     y += lineHeight;
     DashboardLabel("cfg3_lbl", panelX + leftMargin, y, "Emergency:", clrLabel);
     DashboardLabel("cfg3_val", panelX + valueCol, y, "$50 loss stop", clrWarning);
-    y += lineHeight + 10;
+    y += lineHeight + 12;
 
     // --- Status line ---
     DashboardLabel("sep5", panelX + leftMargin, y, "--- STATUS ---", clrHeader, 9);
-    y += lineHeight + 4;
+    y += lineHeight + 6;
 
     color statusClr = clrRunning;
     if(StringFind(g_status, "EMERGENCY") >= 0 || StringFind(g_status, "ERROR") >= 0)
