@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
 //|                                          Python_Bridge_EA_v3.mq5  |
-//|                          Python ML Bridge - Signal Executor        |
+//|                              NeuroX - Signal Executor              |
 //|                                                                    |
 //|  v8.0 - Institutional Grade: Disagreement, Kelly, Monte Carlo    |
 //|                                                                    |
-//|  Reads trade signals from the Python ML Bridge CSV file and        |
+//|  Reads trade signals from the NeuroX CSV file and                  |
 //|  executes trades with proper risk management. Writes execution     |
 //|  confirmations back for the Python system to read.                 |
 //|                                                                    |
@@ -12,7 +12,7 @@
 //|    Python -> MT5: python_bridge_v3_signal.csv (signals)            |
 //|    MT5 -> Python: python_bridge_v3_confirm.csv (confirmations)     |
 //+------------------------------------------------------------------+
-#property copyright "Python ML Bridge"
+#property copyright "NeuroX"
 #property version   "8.00"
 // v8.0 - Institutional Grade: Disagreement, Kelly, Monte Carlo
 #property strict
@@ -1476,7 +1476,7 @@ void UpdateDashboard()
     DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
 
     // --- Title ---
-    DashboardLabel("title", panelX + leftMargin, y, "PYTHON ML BRIDGE - HF SCALPER", clrTitle, 10, "Consolas Bold");
+    DashboardLabel("title", panelX + leftMargin, y, "NEUROX - HF SCALPER", clrTitle, 10, "Consolas Bold");
     y += 28;
 
     // --- Symbol & Timeframe ---

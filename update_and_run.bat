@@ -1,11 +1,11 @@
 @echo off
 color 0A
-title EA Update and Run
+title NeuroX v7.1
 SET PYTHONUNBUFFERED=1
 SET PYTHONIOENCODING=utf-8
 
 echo ============================================
-echo   EA Update and Run
+echo   NeuroX v7.1
 echo ============================================
 echo.
 
@@ -51,7 +51,7 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 echo.
 echo All files updated. Applying patches...
 python -c "f=open('python_bridge/strategies/trading_brain.py','r',encoding='utf-8').read(); f=f.replace('rp[\"rr\"]','rp.get(\"tp_rr\",rp.get(\"rr\",0.0))'); open('python_bridge/strategies/trading_brain.py','w',encoding='utf-8').write(f)"
-echo Starting EA...
+echo Starting NeuroX...
 echo ============================================
 echo.
 

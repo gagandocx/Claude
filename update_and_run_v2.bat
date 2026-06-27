@@ -1,12 +1,12 @@
 @echo off
 REM ============================================
-REM  Python ML Bridge v2 - Update and Run
+REM  NeuroX v7.2-rc1 - Update and Run
 REM  This runs the v2 system (python_bridge_v2/)
 REM  The original system in python_bridge/ is untouched
 REM ============================================
 
 echo ============================================
-echo  Python ML Bridge v2 (7.2-rc1) - Starting
+echo  NeuroX v7.2-rc1 - Starting
 echo ============================================
 
 cd /d "%~dp0"
@@ -24,7 +24,7 @@ cd python_bridge_v2
 pip install -r requirements.txt --quiet 2>nul
 
 REM Run the v2 bridge
-echo [3/3] Starting Python ML Bridge v2...
+echo [3/3] Starting NeuroX v7.2-rc1...
 echo ============================================
 python -u main.py --live
 

@@ -1,6 +1,6 @@
 """
 =============================================================
-  Python ML Bridge - Main Entry Point
+  NeuroX - Main Entry Point
   Runs continuous prediction loop:
     1. Fetch market data
     2. Compute features
@@ -300,7 +300,7 @@ class PythonMLBridge:
         if self.monte_carlo_risk:
             self.signal_generator.set_monte_carlo_risk(self.monte_carlo_risk)
 
-        self.logger.info("Python ML Bridge initialized")
+        self.logger.info("NeuroX initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
         self.logger.info(f"  Sentiment: {self.config.enable_sentiment}")
@@ -1047,7 +1047,7 @@ class PythonMLBridge:
     def run(self):
         """Run the main bridge loop (blocking)."""
         self._running = True
-        self.logger.info(f"Python ML Bridge v{VERSION} starting...")
+        self.logger.info(f"NeuroX v{VERSION} starting...")
         self.logger.info("Starting main loop...")
 
         # Register signal handlers for graceful shutdown
@@ -1096,7 +1096,7 @@ class PythonMLBridge:
 def main():
     """Main entry point."""
     print("=" * 60)
-    print(f"  Python ML Bridge for MetaTrader 5 v{VERSION}")
+    print(f"  NeuroX for MetaTrader 5 v{VERSION}")
     print("  Deep Learning Trade Signal Generator")
     print("=" * 60)
 

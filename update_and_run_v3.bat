@@ -1,11 +1,11 @@
 @echo off
 color 0B
-title Python ML Bridge v3 - Update and Run
+title NeuroX v8.0
 SET PYTHONUNBUFFERED=1
 SET PYTHONIOENCODING=utf-8
 
 echo ============================================
-echo   Python ML Bridge v3 (v8.0)
+echo   NeuroX v8.0
 echo   Institutional-Grade Trading System
 echo   Update and Run
 echo ============================================
@@ -82,7 +82,7 @@ echo   dependencies OK
 
 echo.
 echo ============================================
-echo   All files updated. Starting v3 bridge...
+echo   All files updated. Starting NeuroX v8.0...
 echo ============================================
 echo.
 
