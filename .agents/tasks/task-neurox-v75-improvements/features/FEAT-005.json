@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-005",
+  "type": "feat",
+  "description": "Platt Scaling Regime-Conditional Calibration + Entry Timing Adaptive Timeout + Sharpe Attribution Improvement + Spread Filter Using Actual EA Spread + Monotonic Time Fix + EA Improvements (Dynamic Array, Partial Close Verification).",
+  "status": "completed",
+  "steps": [
+    "Upgrade Platt scaling to regime-conditional: In strategies/confidence_calibrator.py, change the single (A, B) parameter set to a dict of per-regime parameters: {regime_name: (A, B, fitted, window)}. Add method calibrate_for_regime(raw_probs, regime) that uses regime-specific parameters. Fall back to global calibration if regime has <20 samples. Update record_outcome to accept regime parameter and store in regime-specific window",
+    "Make entry timing timeout adaptive based on volatility: In strategies/entry_timing.py, add method _compute_adaptive_timeout(atr, avg_atr) that returns shorter timeouts in high volatility (price moves fast, no time to wait) and longer in low volatility. Formula: base_timeout * (avg_atr / max(atr, 0.01)), clamped to [3.0, 30.0] seconds. Update evaluate_entry to use adaptive timeout instead of static config.timeout_seconds. Add adaptive_timeout field to EntryTimingConfig (default True)",
+    "Improve Sharpe attribution logic: In main.py _poll_confirmations CLOSED handling, improve the attribution from simple proportional to a marginal contribution approach: For each model, compute how much its removal would change the ensemble prediction confidence. Models whose presence strongly increased confidence in the winning direction get more attribution. Implement this as a method in EnsembleManager: compute_marginal_contributions(individual_preds, direction) that returns per-model weights based on how aligned each model was with the trade direction",
+    "Fix spread filter to use actual EA-reported spread: In signal_generator.py generate_signal(), replace the H/L range spread proxy with actual spread from SpreadMonitor. The spread_monitor already reads python_bridge_spread.csv from the EA. Pass the SpreadMonitor instance (or its current spread value) into generate_signal(). In main.py, pass self.spread_monitor.get_current_spread() as a new parameter spread_points to generate_signal(). Use this for spread gating instead of the candle H-L range proxy",
+    "Fix position management timing to use monotonic time: Throughout signal_generator.py and main.py, replace time.time() with time.monotonic() for all elapsed-time calculations (cooldown checks, signal age, hold duration). time.time() can jump on timezone changes or NTP sync; time.monotonic() is immune. Keep time.time() only for timestamps written to files/logs. Add a helper _monotonic() = time.monotonic() at module level",
+    "EA: Make MAX_TRACKED_POSITIONS dynamic with overflow check. In both NeuroX_EA_v4.mq5 and Python_Bridge_EA_v4.mq5: (a) Increase MAX_TRACKED_POSITIONS from 20 to 50 (generous headroom). (b) In the function that adds positions to g_trackedTickets, add overflow check: if g_trackedCount >= MAX_TRACKED_POSITIONS, remove oldest entry (FIFO) and log a warning. Currently it silently overflows",
+    "EA: Add partial close verification. In ClosePosition(), after attempting partial close, verify the position volume actually decreased. If g_trade.ResultRetcode() indicates failure, log the error and write a FAILED confirmation back to Python so it doesn't assume the partial close succeeded. Currently failures are silently ignored",
+    "Update main.py run_cycle() to pass spread_monitor readings and regime to confidence_calibrator",
+    "Update neurox_run_v4.bat if any new files were created"
+  ],
+  "acceptance_criteria": [
+    "ConfidenceCalibrator supports per-regime calibration parameters",
+    "EntryTimingManager uses adaptive timeout based on ATR ratio",
+    "EnsembleManager has compute_marginal_contributions() method",
+    "signal_generator accepts actual spread from SpreadMonitor",
+    "Monotonic time is used for elapsed-time calculations in signal_generator",
+    "EA MAX_TRACKED_POSITIONS is 50 with overflow protection",
+    "EA ClosePosition verifies partial close success and writes FAILED on error",
+    "Both EA files updated identically"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"from strategies.confidence_calibrator import ConfidenceCalibrator; c=ConfidenceCalibrator(); print(hasattr(c,'calibrate_for_regime'))\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"from models.ensemble import EnsembleManager; e=EnsembleManager(); print(hasattr(e,'compute_marginal_contributions'))\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"import main; print('main.py imports OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -x --tb=short -q 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": "All acceptance criteria met. 530 tests pass, 2 pre-existing failures remain (test_estimated_close_sets_pending_flag and test_price_structure_config_defaults - both documented as pre-existing in FEAT-004). Fixed test_momentum_lookback_uses_adaptive_atr_on_close which broke due to monotonic time change. The compute_marginal_contributions method correctly attributes more weight to models aligned with trade direction (leave-one-out analysis). Entry timing adaptive timeout correctly shortens in high volatility and lengthens in low volatility. EA ClosePosition now writes FAILED confirmation using InpConfirmFile. Both EA files updated identically."
+}
