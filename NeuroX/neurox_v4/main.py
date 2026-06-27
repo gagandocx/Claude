@@ -33,6 +33,10 @@ from config.settings import (
     SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
     AutoOptimizerConfig, BrainConfig,
     PlattCalibrationConfig, EntryTimingConfig, SharpeWeightConfig,
+    TickDataConfig, MicrostructureConfig,
+    RegimeRoutingConfig, WalkForwardConfig, AdversarialFilterConfig,
+    SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig,
+    DisagreementConfig, KellyConfig, MonteCarloConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -53,6 +57,17 @@ from signals.bridge import MT5Bridge
 from training.auto_retrain import AutoRetrainer
 from dashboard.performance_tracker import PerformanceTracker, TradeRecord
 from dashboard.dashboard_renderer import DashboardRenderer
+from data.tick_data import TickDataProcessor
+from data.microstructure import MicrostructureAnalyzer
+from data.spread_monitor import SpreadMonitor
+from strategies.regime_router import RegimeModelRouter
+from strategies.walk_forward import WalkForwardRetrainer
+from strategies.adversarial_filter import AdversarialFilter
+from strategies.correlation_regime import CorrelationRegimeDetector
+from strategies.adaptive_threshold import AdaptiveConfidenceThreshold
+from strategies.disagreement_signal import DisagreementSignal
+from strategies.kelly_sizing import KellySizer
+from strategies.monte_carlo import MonteCarloRiskSimulator
 
 
 # ─────────────────────────────────────────────
@@ -185,6 +200,75 @@ class PythonMLBridge:
         self._dashboard_last_render = 0.0
         self._trades_since_render = 0
 
+        # ── V3 Institutional Tier 1 Components ────────────────────────────────
+        # Tick data processor (order flow features)
+        self.tick_data_processor = (
+            TickDataProcessor(TickDataConfig())
+            if self.config.enable_tick_data else None
+        )
+
+        # Microstructure analyzer (tick-level features)
+        self.microstructure_analyzer = (
+            MicrostructureAnalyzer(MicrostructureConfig())
+            if self.config.enable_microstructure else None
+        )
+
+        # Regime-specific model router
+        self.regime_router = (
+            RegimeModelRouter(RegimeRoutingConfig())
+            if self.config.enable_regime_routing else None
+        )
+
+        # Walk-forward retrainer (weekly automated retraining)
+        self.walk_forward_retrainer = (
+            WalkForwardRetrainer(WalkForwardConfig())
+            if self.config.enable_walk_forward else None
+        )
+
+        # Adversarial signal filter
+        self.adversarial_filter = (
+            AdversarialFilter(AdversarialFilterConfig())
+            if self.config.enable_adversarial_filter else None
+        )
+
+        # ── V3 Institutional Tier 2 Components ────────────────────────────────
+        # Spread monitor (EA-reported real-time spread gating)
+        self.spread_monitor = (
+            SpreadMonitor(SpreadGateConfig())
+            if self.config.enable_spread_gate else None
+        )
+
+        # Correlation regime detector (DXY/bonds/equities state)
+        self.correlation_regime = (
+            CorrelationRegimeDetector(CorrelationRegimeConfig())
+            if self.config.enable_correlation_regime else None
+        )
+
+        # Adaptive confidence threshold (self-tuning entry gate)
+        self.adaptive_threshold = (
+            AdaptiveConfidenceThreshold(AdaptiveThresholdConfig())
+            if self.config.enable_adaptive_threshold else None
+        )
+
+        # ── V3 Institutional Tier 3 Components ────────────────────────────────
+        # Multi-model disagreement signal (volatility prediction)
+        self.disagreement_signal = (
+            DisagreementSignal(DisagreementConfig())
+            if self.config.enable_disagreement_signal else None
+        )
+
+        # Kelly criterion position sizing
+        self.kelly_sizer = (
+            KellySizer(KellyConfig())
+            if self.config.enable_kelly_sizing else None
+        )
+
+        # Monte Carlo risk simulation
+        self.monte_carlo_risk = (
+            MonteCarloRiskSimulator(MonteCarloConfig(), BrainConfig())
+            if self.config.enable_monte_carlo_risk else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -220,6 +304,17 @@ class PythonMLBridge:
         self.logger.info(f"  Platt calibration: {self.config.enable_platt_calibration}")
         self.logger.info(f"  Entry timing: {self.config.enable_entry_timing}")
         self.logger.info(f"  Sharpe weights: {self.config.enable_sharpe_weights}")
+        self.logger.info(f"  Tick data: {self.config.enable_tick_data}")
+        self.logger.info(f"  Regime routing: {self.config.enable_regime_routing}")
+        self.logger.info(f"  Walk-forward: {self.config.enable_walk_forward}")
+        self.logger.info(f"  Adversarial filter: {self.config.enable_adversarial_filter}")
+        self.logger.info(f"  Spread gate: {self.config.enable_spread_gate}")
+        self.logger.info(f"  Microstructure: {self.config.enable_microstructure}")
+        self.logger.info(f"  Correlation regime: {self.config.enable_correlation_regime}")
+        self.logger.info(f"  Adaptive threshold: {self.config.enable_adaptive_threshold}")
+        self.logger.info(f"  Disagreement signal: {self.config.enable_disagreement_signal}")
+        self.logger.info(f"  Kelly sizing: {self.config.enable_kelly_sizing}")
+        self.logger.info(f"  Monte Carlo risk: {self.config.enable_monte_carlo_risk}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread

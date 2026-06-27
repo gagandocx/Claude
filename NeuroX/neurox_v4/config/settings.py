@@ -33,6 +33,12 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoint
 # Log directory
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 
+# Tick data file that MT5 writes and Python reads (order flow features)
+TICK_DATA_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_tick_data.csv")
+
+# Spread file that MT5 writes and Python reads (spread gating)
+SPREAD_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_spread.csv")
+
 
 # ─────────────────────────────────────────────
 #  MODEL PARAMETERS
@@ -961,6 +967,206 @@ class BrainConfig:
 
 
 # ─────────────────────────────────────────────
+#  TICK DATA / ORDER FLOW (Tier 1)
+# ─────────────────────────────────────────────
+@dataclass
+class TickDataConfig:
+    """Tick data reader for order flow features (Tier 1).
+
+    MT5 EA writes real-time tick data (bid, ask, volume, flags) to a CSV
+    in Common Files. Python reads this to compute institutional order flow
+    features: bid/ask imbalance, volume delta, and trade flow direction.
+    """
+    tick_file: str = TICK_DATA_FILE          # Path to tick data CSV
+    poll_interval_ms: int = 100              # How often to poll for new ticks (ms)
+    max_ticks: int = 5000                    # Max ticks to keep in memory
+    # Features to compute from tick stream
+    features: List[str] = field(default_factory=lambda: [
+        "bid_ask_imbalance", "volume_delta", "trade_flow"
+    ])
+
+
+# ─────────────────────────────────────────────
+#  MICROSTRUCTURE FEATURES (Tier 2)
+# ─────────────────────────────────────────────
+@dataclass
+class MicrostructureConfig:
+    """Microstructure features from tick stream (Tier 2).
+
+    Computes institutional-grade microstructure signals: tick arrival rate,
+    bid-ask bounce rate (how often price bounces off bid vs ask), and
+    large-order detection from abnormal tick volume spikes.
+    """
+    tick_rate_window: int = 60               # Seconds window for tick rate calc
+    large_order_threshold: float = 3.0       # Std devs above mean for large order
+    bounce_rate_window: int = 30             # Ticks window for bounce rate calc
+
+
+# ─────────────────────────────────────────────
+#  REGIME-SPECIFIC MODEL ROUTING (Tier 1)
+# ─────────────────────────────────────────────
+@dataclass
+class RegimeRoutingConfig:
+    """Regime-specific model routing (Tier 1).
+
+    Routes predictions to different model subsets based on detected market
+    regime. Trending markets favor momentum models (TCN, LSTM), ranging
+    markets favor mean-reversion models (DLinear, TimesNet), and volatile
+    markets favor robust ensemble (Mamba, iTransformer).
+    """
+    trending_models: List[str] = field(default_factory=lambda: [
+        "tcn", "lstm", "patch_tst", "tft", "mamba"
+    ])
+    ranging_models: List[str] = field(default_factory=lambda: [
+        "dlinear", "timesnet", "nhits", "softs", "xlstm"
+    ])
+    volatile_models: List[str] = field(default_factory=lambda: [
+        "mamba", "itransformer", "transformer", "chronos", "timemixer"
+    ])
+    routing_lookback: int = 50               # Bars to assess regime for routing
+
+
+# ─────────────────────────────────────────────
+#  WALK-FORWARD RETRAINING (Tier 1)
+# ─────────────────────────────────────────────
+@dataclass
+class WalkForwardConfig:
+    """Walk-forward retraining pipeline (Tier 1).
+
+    Automated weekly retraining: saves training data, retrains models on
+    latest market data, validates improvement via walk-forward before
+    deploying new weights. Prevents overfitting and adapts to regime shifts.
+    """
+    retrain_interval_hours: int = 168        # 168h = 1 week
+    validation_window_bars: int = 500        # Bars for walk-forward validation
+    min_improvement_pct: float = 2.0         # Must improve >2% to deploy
+    max_retrain_duration_min: int = 30       # Max minutes per retrain cycle
+    data_save_path: str = "training_data/"   # Where to save training snapshots
+
+
+# ─────────────────────────────────────────────
+#  ADVERSARIAL SIGNAL FILTER (Tier 1)
+# ─────────────────────────────────────────────
+@dataclass
+class AdversarialFilterConfig:
+    """Adversarial signal filtering (Tier 1).
+
+    Before trading, checks if recent similar signals (same direction,
+    similar time, similar price level) won or lost. If last N similar
+    signals had a high loss rate, skips the current signal. Prevents
+    repeated losses in adverse conditions.
+    """
+    lookback_signals: int = 50               # How many past signals to compare
+    similarity_threshold: float = 0.85       # Cosine similarity threshold
+    min_similar_signals: int = 3             # Min similar signals to evaluate
+    loss_rate_threshold: float = 0.6         # Skip if >60% of similar signals lost
+
+
+# ─────────────────────────────────────────────
+#  SPREAD/SLIPPAGE GATE (Tier 2)
+# ─────────────────────────────────────────────
+@dataclass
+class SpreadGateConfig:
+    """Spread/slippage-aware entry gate (Tier 2).
+
+    EA writes current spread to a CSV file. Python reads it and only
+    generates entry signals when spread is below a dynamic threshold
+    (multiple of recent average spread). Prevents entries during
+    high-spread periods (news, low liquidity).
+    """
+    spread_file: str = SPREAD_FILE           # Path to spread CSV from EA
+    max_spread_multiplier: float = 1.5       # Enter only if spread < 1.5x average
+    update_interval_ms: int = 500            # How often EA updates spread file
+
+
+# ─────────────────────────────────────────────
+#  CORRELATION REGIME DETECTION (Tier 2)
+# ─────────────────────────────────────────────
+@dataclass
+class CorrelationRegimeConfig:
+    """Cross-market correlation regime detection (Tier 2).
+
+    Monitors DXY/bonds/equities correlation state to detect regime
+    changes that affect gold direction. When correlations break down
+    (e.g., gold moves with USD instead of against), signals caution.
+    """
+    regime_lookback: int = 100               # Bars for correlation computation
+    dxy_correlation_threshold: float = -0.5  # Expected XAUUSD-DXY correlation
+    bond_correlation_threshold: float = 0.3  # Expected XAUUSD-Bond correlation
+    rebalance_interval: int = 60             # Bars between regime reassessment
+
+
+# ─────────────────────────────────────────────
+#  ADAPTIVE CONFIDENCE THRESHOLD (Tier 2)
+# ─────────────────────────────────────────────
+@dataclass
+class AdaptiveThresholdConfig:
+    """Adaptive confidence threshold (Tier 2).
+
+    Dynamically raises or lowers the model override threshold based on
+    recent accuracy. When models are accurate, threshold drops (trade more).
+    When models are inaccurate, threshold rises (trade less). Not a fixed
+    value like the base 0.60.
+    """
+    lookback_trades: int = 30                # Trades to evaluate accuracy
+    adjustment_rate: float = 0.02            # How much to shift per evaluation
+    min_threshold: float = 0.15              # Floor for confidence threshold
+    max_threshold: float = 0.55              # Ceiling for confidence threshold
+    target_win_rate: float = 0.55            # Target win rate to maintain
+
+
+# ─────────────────────────────────────────────
+#  MULTI-MODEL DISAGREEMENT SIGNAL (Tier 3)
+# ─────────────────────────────────────────────
+@dataclass
+class DisagreementConfig:
+    """Multi-model disagreement as volatility signal (Tier 3).
+
+    When models strongly disagree on direction, it predicts an upcoming
+    volatility spike. Used to reduce position size or delay entry until
+    models converge. Strong disagreement = uncertainty = smaller size.
+    """
+    strong_disagreement_threshold: float = 0.4   # Std dev of model outputs above this = disagreement
+    volatility_scale_factor: float = 1.5         # Scale expected volatility by this during disagreement
+    position_reduction_pct: float = 0.5          # Reduce position to 50% during disagreement
+
+
+# ─────────────────────────────────────────────
+#  KELLY CRITERION POSITION SIZING (Tier 3)
+# ─────────────────────────────────────────────
+@dataclass
+class KellyConfig:
+    """Kelly criterion position sizing (Tier 3).
+
+    Full Kelly with fractional Kelly safety. Uses Brain's win rate and
+    average win/loss ratio to compute mathematically optimal lot size.
+    Fractional Kelly (25%) provides geometric growth with reduced variance.
+    """
+    full_kelly: bool = False                 # Use full Kelly (dangerous) or fractional
+    kelly_fraction: float = 0.25             # 25% Kelly = safe geometric growth
+    min_win_rate: float = 0.50               # Don't trade if win rate below this
+    min_trades: int = 20                     # Min trades before Kelly is reliable
+    max_kelly_lot: float = 0.10              # Hard cap on Kelly-computed lot size
+
+
+# ─────────────────────────────────────────────
+#  MONTE CARLO RISK SIMULATION (Tier 3)
+# ─────────────────────────────────────────────
+@dataclass
+class MonteCarloConfig:
+    """Monte Carlo risk simulation (Tier 3).
+
+    Before each trade, simulates N scenarios given current drawdown,
+    win/loss streak, and regime. Gates trades that have >X% probability
+    of hitting the daily loss limit. Institutional-grade risk management.
+    """
+    num_simulations: int = 1000              # Number of Monte Carlo paths
+    max_daily_loss_prob: float = 0.05        # Gate if >5% chance of hitting daily loss
+    drawdown_threshold: float = 0.10         # Current drawdown that triggers simulation
+    confidence_level: float = 0.95           # VaR confidence level
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -983,3 +1189,16 @@ class MainConfig:
     enable_entry_timing: bool = True        # Smart entry timing (micro-pullback)
     enable_sharpe_weights: bool = True      # Sharpe-ratio-based model weighting
     paper_trading: bool = True              # Paper trading mode by default
+
+    # V3 Institutional Feature Flags (Tier 1-3)
+    enable_tick_data: bool = True            # Tier 1: Order flow / tick data features
+    enable_regime_routing: bool = True       # Tier 1: Regime-specific model routing
+    enable_walk_forward: bool = True         # Tier 1: Walk-forward retraining pipeline
+    enable_adversarial_filter: bool = True   # Tier 1: Adversarial signal filtering
+    enable_spread_gate: bool = True          # Tier 2: Spread/slippage-aware entry gate
+    enable_microstructure: bool = True       # Tier 2: Microstructure features from ticks
+    enable_correlation_regime: bool = True   # Tier 2: Cross-market correlation regime
+    enable_adaptive_threshold: bool = True   # Tier 2: Adaptive confidence threshold
+    enable_disagreement_signal: bool = True  # Tier 3: Multi-model disagreement signal
+    enable_kelly_sizing: bool = True         # Tier 3: Kelly criterion position sizing
+    enable_monte_carlo_risk: bool = True     # Tier 3: Monte Carlo risk simulation
