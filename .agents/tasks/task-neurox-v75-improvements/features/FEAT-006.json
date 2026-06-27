@@ -2,7 +2,7 @@
   "id": "FEAT-006",
   "type": "chore",
   "description": "Version Bump to 7.5, Update neurox_run_v4.bat with All New Files, Final Integration Pass. Bumps version to 7.5 everywhere, adds all new module downloads to the batch file, and ensures all new modules are properly wired in main.py with feature flags.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Update VERSION in main.py from '7.4' to '7.5'",
     "Update #property version in BOTH NeuroX/NeuroX_EA_v4.mq5 AND Python_Bridge_EA_v4.mq5 from '7.40' to '7.50'",
@@ -29,5 +29,5 @@
     "Run: grep -c '7.50' /projects/sandbox/Claude/NeuroX/NeuroX_EA_v4.mq5 && grep -c '7.50' /projects/sandbox/Claude/Python_Bridge_EA_v4.mq5"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Pre-existing test failure in test_signal_generator.py::TestV6ReviewFixes::test_estimated_close_sets_pending_flag (confirmed failing on base state before any changes). All new module downloads were already present in neurox_run_v4.bat from previous features. Equity curve trading is integrated within TradingBrain class (EquityCurveTrader) and controlled by enable_equity_curve_trading flag. ABTestFramework added to main.py imports and instantiation."
 }
