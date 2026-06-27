@@ -38,6 +38,7 @@ from config.settings import (
     SpreadGateConfig, CorrelationRegimeConfig, AdaptiveThresholdConfig,
     DisagreementConfig, KellyConfig, MonteCarloConfig,
     DataValidatorConfig, PipelineConfig,
+    AccountSyncConfig, SlippageTrackerConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -71,6 +72,7 @@ from strategies.kelly_sizing import KellySizer
 from strategies.monte_carlo import MonteCarloRiskSimulator
 from data.data_validator import DataValidator
 from data.pipeline import PipelineManager
+from strategies.slippage_tracker import SlippageTracker
 
 
 # ─────────────────────────────────────────────
@@ -285,6 +287,19 @@ class PythonMLBridge:
             if self.config.enable_pipeline else None
         )
 
+        # ── V7.5 Execution Quality & Account Sync ────────────────────────────
+        # Slippage / execution quality tracker
+        self.slippage_tracker = (
+            SlippageTracker(SlippageTrackerConfig())
+            if self.config.enable_slippage_tracker else None
+        )
+
+        # Account balance sync configuration
+        self._account_sync_config = (
+            AccountSyncConfig()
+            if self.config.enable_account_sync else None
+        )
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -333,6 +348,8 @@ class PythonMLBridge:
         self.logger.info(f"  Monte Carlo risk: {self.config.enable_monte_carlo_risk}")
         self.logger.info(f"  Data validation: {self.config.enable_data_validation}")
         self.logger.info(f"  Pipeline threading: {self.config.enable_pipeline}")
+        self.logger.info(f"  Account sync: {self.config.enable_account_sync}")
+        self.logger.info(f"  Slippage tracker: {self.config.enable_slippage_tracker}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread
@@ -459,6 +476,8 @@ class PythonMLBridge:
                                             won    = pnl > 0,
                                             regime = active.get("regime", "unknown"),
                                         )
+                                    # Sync account balance from MT5 after close
+                                    self._sync_account_balance()
                                     # v7.4: Feed Platt calibrator with trade outcome
                                     if self.confidence_calibrator:
                                         raw_conf = active.get("confidence", 0.5)
@@ -509,6 +528,7 @@ class PythonMLBridge:
                                 lot_filled   = conf.get("lot_size", "?")
                                 sl_price     = conf.get("sl", 0)
                                 tp_price     = conf.get("tp", 0)
+                                slippage_val = conf.get("slippage", "")
                                 if self.signal_generator._active_position and actual_price > 0:
                                     self.signal_generator._active_position["entry_price"] = actual_price
                                     self.signal_generator._active_position["entry_time"]  = time.time()  # float! was strftime string causing TypeError
@@ -525,12 +545,67 @@ class PythonMLBridge:
                                         self.logger.info(f"  TP    : ${float(tp_price):.2f}")
                                     if lot_filled:
                                         self.logger.info(f"  Lot   : {lot_filled}")
+                                    # Track slippage from EA confirmation
+                                    if slippage_val and slippage_val.strip():
+                                        slip = float(slippage_val)
+                                        self.logger.info(f"  Slip  : ${slip:.4f}")
+                                        if self.slippage_tracker:
+                                            result = self.slippage_tracker.record_fill(
+                                                direction=direction,
+                                                slippage=slip,
+                                                fill_price=actual_price,
+                                                ticket=ticket,
+                                            )
+                                            quality = result.get("quality_score", 1.0)
+                                            if quality < 0.7:
+                                                self.logger.warning(
+                                                    f"[SlippageTracker] Fill quality degraded: "
+                                                    f"{quality:.2f} (avg slip: ${result.get('avg_slippage', 0):.4f})"
+                                                )
                                     self.logger.info("=" * 55)
                         self.bridge.clear_confirmations()
             except Exception as e:
                 # Log the error so missed confirmations are visible (not silently swallowed)
                 self.logger.debug(f"[ConfPoller] Error processing confirmation: {e}")
             time.sleep(0.01)  # 10ms polling — near-instant trade sync
+
+    def _sync_account_balance(self):
+        """
+        Sync account balance from MT5 balance file.
+
+        Reads python_bridge_balance.csv (written by EA after each trade close)
+        and updates brain.account_balance and monte_carlo_risk configs to keep
+        risk sizing accurate as the account grows/shrinks.
+        """
+        if not self._account_sync_config:
+            return
+
+        try:
+            balance_data = self.bridge.read_balance(
+                self._account_sync_config.balance_file
+            )
+            if balance_data and balance_data.get("balance", 0) > 0:
+                new_balance = balance_data["balance"]
+                old_balance = None
+
+                # Update Brain config
+                if self.brain:
+                    old_balance = self.brain.config.account_balance
+                    self.brain.config.account_balance = new_balance
+
+                # Update Monte Carlo risk config
+                if self.monte_carlo_risk and hasattr(self.monte_carlo_risk, '_brain_config'):
+                    self.monte_carlo_risk._brain_config.account_balance = new_balance
+
+                # Log the update
+                if old_balance and abs(new_balance - old_balance) > 0.01:
+                    self.logger.info(
+                        f"[AccountSync] Balance updated: "
+                        f"${old_balance:.2f} -> ${new_balance:.2f} "
+                        f"(equity: ${balance_data.get('equity', 0):.2f})"
+                    )
+        except Exception as e:
+            self.logger.debug(f"[AccountSync] Error: {e}")
 
     def run_cycle(self) -> dict:
         """

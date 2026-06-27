@@ -1187,6 +1187,45 @@ class DataValidatorConfig:
 
 
 # ─────────────────────────────────────────────
+#  ACCOUNT BALANCE SYNC
+# ─────────────────────────────────────────────
+# Balance file that MT5 writes after each trade close
+BALANCE_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_balance.csv")
+
+
+@dataclass
+class AccountSyncConfig:
+    """Live account balance sync from MT5 confirmations.
+
+    The EA writes current balance and equity to python_bridge_balance.csv
+    after each trade close. Python reads this file to keep risk sizing
+    accurate as the account grows/shrinks.
+    """
+    sync_from_confirmations: bool = True     # Enable balance sync from confirmations
+    balance_file: str = BALANCE_FILE         # Path to balance CSV in MT5 Common Files
+    sync_on_close: bool = True               # Sync when CLOSED confirmation arrives
+    fallback_balance: float = 10000.0        # Default if file not readable
+
+
+# ─────────────────────────────────────────────
+#  SLIPPAGE TRACKER
+# ─────────────────────────────────────────────
+@dataclass
+class SlippageTrackerConfig:
+    """Slippage/execution quality tracking configuration.
+
+    Tracks fill quality by comparing requested price vs actual fill price
+    reported in FILLED confirmations. Detects degrading broker execution
+    quality over time.
+    """
+    window_size: int = 100                   # Rolling window of fills
+    degradation_multiplier: float = 2.0      # Alert if slippage > 2x average
+    min_fills_for_scoring: int = 5           # Min fills before scoring is active
+    quality_warning_threshold: float = 0.7   # Log warning below this quality
+    max_expected_slippage: float = 1.0       # Max expected slippage ($ for XAUUSD)
+
+
+# ─────────────────────────────────────────────
 #  PIPELINE ARCHITECTURE (THREADING)
 # ─────────────────────────────────────────────
 @dataclass
@@ -1241,3 +1280,5 @@ class MainConfig:
     # V7.5 Data Quality & Pipeline
     enable_data_validation: bool = True      # Live data validation/sanity checking
     enable_pipeline: bool = True             # Pipeline threading (overlap fetch + compute)
+    enable_account_sync: bool = True         # Live account balance sync from MT5
+    enable_slippage_tracker: bool = True     # Slippage/execution quality tracking

@@ -23,6 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import SIGNAL_FILE, CONFIRMATION_FILE, MT5_COMMON_PATH
 from strategies.signal_generator import TradeSignal
 
+# Balance file path (EA writes after trade close)
+BALANCE_FILE = os.path.join(MT5_COMMON_PATH, "python_bridge_balance.csv")
+
 
 # CSV column headers
 SIGNAL_HEADERS = [
@@ -39,7 +42,7 @@ EXIT_SIGNAL_HEADERS = [
 
 CONFIRMATION_HEADERS = [
     "timestamp", "ticket", "symbol", "action", "lot_size",
-    "open_price", "sl", "tp", "status", "profit"
+    "open_price", "sl", "tp", "status", "profit", "slippage"
 ]
 
 # Status file for communicating bridge state to MT5 dashboard
@@ -637,3 +640,45 @@ class MT5Bridge:
         except Exception as e:
             result["status_str"] = f"DISCONNECTED (err: {e})"
         return result
+
+    def read_balance(self, balance_file: Optional[str] = None) -> Optional[Dict]:
+        """
+        Read the account balance file written by MT5 EA after trade closes.
+
+        The EA writes python_bridge_balance.csv with columns:
+            timestamp, balance, equity
+
+        Returns:
+            Dict with 'balance' and 'equity' floats, or None if unavailable.
+        """
+        logger = logging.getLogger("PythonBridge")
+        path = balance_file or BALANCE_FILE
+        if not os.path.exists(path):
+            return None
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if not content.strip():
+                return None
+
+            # Handle BOM
+            if content and content[0] == "\ufeff":
+                content = content[1:]
+
+            reader = csv.DictReader(io.StringIO(content))
+            rows = list(reader)
+            if not rows:
+                return None
+
+            # Return latest row
+            latest = rows[-1]
+            balance = float(latest.get("balance", 0))
+            equity = float(latest.get("equity", 0))
+
+            if balance > 0:
+                return {"balance": balance, "equity": equity}
+            return None
+        except Exception as e:
+            logger.debug(f"[Bridge] read_balance error: {e}")
+            return None

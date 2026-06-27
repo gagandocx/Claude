@@ -46,6 +46,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/verify_models.py','python_bridge_v4/verify_models.py'); print('  verify_models.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/watchdog.py','python_bridge_v4/watchdog.py'); print('  watchdog.py OK')"
+
 :: --- config/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/config/__init__.py','python_bridge_v4/config/__init__.py'); print('  config/__init__.py OK')"
 
@@ -148,6 +150,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/monte_carlo.py','python_bridge_v4/strategies/monte_carlo.py'); print('  strategies/monte_carlo.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/slippage_tracker.py','python_bridge_v4/strategies/slippage_tracker.py'); print('  strategies/slippage_tracker.py OK')"
+
 :: --- signals/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/signals/__init__.py','python_bridge_v4/signals/__init__.py'); print('  signals/__init__.py OK')"
 
@@ -199,6 +203,9 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 :: --- EA file ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/NeuroX_EA_v4.mq5','NeuroX_EA_v4.mq5'); print('  NeuroX_EA_v4.mq5 OK')"
+
+:: --- Watchdog bat ---
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_watchdog.bat','neurox_watchdog.bat'); print('  neurox_watchdog.bat OK')"
 
 echo.
 echo   All files downloaded.

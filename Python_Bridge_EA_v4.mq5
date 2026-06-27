@@ -122,6 +122,9 @@ datetime       g_momentumTime  = 0;
 // Trailing status for dashboard display
 string         g_trailStatus   = "No positions";
 
+// Requested price for slippage calculation (set in ExecuteSignal before order)
+double         g_lastRequestedPrice = 0.0;
+
 //+------------------------------------------------------------------+
 //| Read Brain settings from Python TradingBrain                      |
 //| File: python_bridge_brain_settings.csv                            |
@@ -612,7 +615,10 @@ void ExecuteSignal()
             Print("[PythonBridge] BUY ", lotSize, " lots @ ", price,
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
-            WriteConfirmation("BUY", lotSize, price, sl, tp, "FILLED");
+            // Calculate slippage: difference between requested and actual fill price
+            double fillPrice = g_trade.ResultPrice();
+            double slippage = (fillPrice > 0) ? MathAbs(fillPrice - price) : 0.0;
+            WriteConfirmation("BUY", lotSize, (fillPrice > 0 ? fillPrice : price), sl, tp, "FILLED", 0, 0.0, slippage);
             // Track position for dynamic trailing (use ResultDeal as position ticket)
             ulong posTicket = g_trade.ResultDeal();
             if(posTicket == 0) posTicket = g_trade.ResultOrder();
@@ -623,7 +629,7 @@ void ExecuteSignal()
             g_status = "BUY FAILED: " + IntegerToString(g_trade.ResultRetcode());
             Print("[PythonBridge] BUY FAILED: ", g_trade.ResultRetcode(),
                   " - ", g_trade.ResultRetcodeDescription());
-            WriteConfirmation("BUY", lotSize, price, sl, tp, "FAILED");
+            WriteConfirmation("BUY", lotSize, price, sl, tp, "FAILED", 0, 0.0, 0.0);
         }
     }
     else if(g_lastAction == "SELL")
@@ -648,7 +654,10 @@ void ExecuteSignal()
             Print("[PythonBridge] SELL ", lotSize, " lots @ ", price,
                   " SL=", sl, " TP=", (dynamicTPMode ? "DYNAMIC" : DoubleToString(tp, digits)),
                   " Model=", g_lastModel, " Regime=", g_lastRegime);
-            WriteConfirmation("SELL", lotSize, price, sl, tp, "FILLED");
+            // Calculate slippage: difference between requested and actual fill price
+            double fillPriceSell = g_trade.ResultPrice();
+            double slippageSell = (fillPriceSell > 0) ? MathAbs(fillPriceSell - price) : 0.0;
+            WriteConfirmation("SELL", lotSize, (fillPriceSell > 0 ? fillPriceSell : price), sl, tp, "FILLED", 0, 0.0, slippageSell);
             // Track position for dynamic trailing (use ResultDeal as position ticket)
             ulong posTicket = g_trade.ResultDeal();
             if(posTicket == 0) posTicket = g_trade.ResultOrder();
@@ -659,7 +668,7 @@ void ExecuteSignal()
             g_status = "SELL FAILED: " + IntegerToString(g_trade.ResultRetcode());
             Print("[PythonBridge] SELL FAILED: ", g_trade.ResultRetcode(),
                   " - ", g_trade.ResultRetcodeDescription());
-            WriteConfirmation("SELL", lotSize, price, sl, tp, "FAILED");
+            WriteConfirmation("SELL", lotSize, price, sl, tp, "FAILED", 0, 0.0, 0.0);
         }
     }
 }
@@ -990,7 +999,8 @@ void ManageOpenPositions()
 //+------------------------------------------------------------------+
 void WriteConfirmation(string action, double lots, double price,
                        double sl, double tp, string status,
-                       ulong ticketNum = 0, double profit = 0.0)
+                       ulong ticketNum = 0, double profit = 0.0,
+                       double slippage = 0.0)
 {
     int fileHandle = FileOpen(InpConfirmFile, FILE_WRITE | FILE_CSV | FILE_COMMON,
                               ',', CP_UTF8);
@@ -1000,9 +1010,9 @@ void WriteConfirmation(string action, double lots, double price,
         return;
     }
 
-    // Write header (includes profit field for accurate PnL reporting)
+    // Write header (includes profit and slippage fields)
     FileWrite(fileHandle, "timestamp", "ticket", "symbol", "action",
-              "lot_size", "open_price", "sl", "tp", "status", "profit");
+              "lot_size", "open_price", "sl", "tp", "status", "profit", "slippage");
 
     // Use provided ticket, or fall back to g_trade.ResultOrder() for FILLED
     string ticketStr;
@@ -1020,7 +1030,37 @@ void WriteConfirmation(string action, double lots, double price,
               DoubleToString(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               DoubleToString(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
               status,
-              DoubleToString(profit, 2));
+              DoubleToString(profit, 2),
+              DoubleToString(slippage, 4));
+
+    FileClose(fileHandle);
+
+    // Write balance file after trade closes (Python uses this for risk sizing)
+    if(status == "CLOSED")
+        WriteBalance();
+}
+
+//+------------------------------------------------------------------+
+//| Write current account balance/equity for Python risk sizing        |
+//+------------------------------------------------------------------+
+void WriteBalance()
+{
+    int fileHandle = FileOpen("python_bridge_balance.csv", FILE_WRITE | FILE_CSV | FILE_COMMON,
+                              ',', CP_UTF8);
+    if(fileHandle == INVALID_HANDLE)
+    {
+        Print("[PythonBridge] WARNING: Cannot write balance file");
+        return;
+    }
+
+    // Write header
+    FileWrite(fileHandle, "timestamp", "balance", "equity");
+
+    // Write current account data
+    FileWrite(fileHandle,
+              TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+              DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
+              DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
 
     FileClose(fileHandle);
 }
