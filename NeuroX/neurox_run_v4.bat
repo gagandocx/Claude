@@ -62,6 +62,12 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/sentiment.py','python_bridge_v4/data/sentiment.py'); print('  data/sentiment.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/tick_data.py','python_bridge_v4/data/tick_data.py'); print('  data/tick_data.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/spread_monitor.py','python_bridge_v4/data/spread_monitor.py'); print('  data/spread_monitor.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/data/microstructure.py','python_bridge_v4/data/microstructure.py'); print('  data/microstructure.py OK')"
+
 :: --- models/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/models/__init__.py','python_bridge_v4/models/__init__.py'); print('  models/__init__.py OK')"
 
@@ -119,6 +125,22 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/smart_exits.py','python_bridge_v4/strategies/smart_exits.py'); print('  strategies/smart_exits.py OK')"
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/trading_brain.py','python_bridge_v4/strategies/trading_brain.py'); print('  strategies/trading_brain.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/regime_router.py','python_bridge_v4/strategies/regime_router.py'); print('  strategies/regime_router.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/walk_forward.py','python_bridge_v4/strategies/walk_forward.py'); print('  strategies/walk_forward.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/adversarial_filter.py','python_bridge_v4/strategies/adversarial_filter.py'); print('  strategies/adversarial_filter.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/correlation_regime.py','python_bridge_v4/strategies/correlation_regime.py'); print('  strategies/correlation_regime.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/adaptive_threshold.py','python_bridge_v4/strategies/adaptive_threshold.py'); print('  strategies/adaptive_threshold.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/disagreement_signal.py','python_bridge_v4/strategies/disagreement_signal.py'); print('  strategies/disagreement_signal.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/kelly_sizing.py','python_bridge_v4/strategies/kelly_sizing.py'); print('  strategies/kelly_sizing.py OK')"
+
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/monte_carlo.py','python_bridge_v4/strategies/monte_carlo.py'); print('  strategies/monte_carlo.py OK')"
 
 :: --- signals/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/signals/__init__.py','python_bridge_v4/signals/__init__.py'); print('  signals/__init__.py OK')"
