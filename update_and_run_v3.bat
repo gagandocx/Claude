@@ -15,17 +15,7 @@ cd /d "%~dp0"
 echo Dir: %CD%
 echo.
 
-echo [1/5] Self-updating bat file...
-
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/update_and_run_v3.bat','update_and_run_v3_new.bat')" 2>nul
-if exist update_and_run_v3_new.bat (
-    copy /y update_and_run_v3_new.bat update_and_run_v3.bat >nul
-    del update_and_run_v3_new.bat >nul
-    echo   self-updated OK
-)
-
-echo.
-echo [2/5] Creating directories...
+echo [1/4] Setting up directories...
 
 if not exist python_bridge_v3 mkdir python_bridge_v3
 if not exist python_bridge_v3\config mkdir python_bridge_v3\config
@@ -38,7 +28,7 @@ if not exist python_bridge_v3\dashboard mkdir python_bridge_v3\dashboard
 echo   directories OK
 
 echo.
-echo [3/5] Downloading latest files...
+echo [2/4] Downloading latest files...
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge_v3/__init__.py','python_bridge_v3/__init__.py'); print('  __init__.py OK')"
 
@@ -159,12 +149,12 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/python_bridge_v3/requirements.txt','python_bridge_v3/requirements.txt'); print('  requirements.txt OK')"
 
 echo.
-echo [4/5] Downloading EA file...
+echo [3/4] Downloading EA file...
 
-python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/Python_Bridge_EA_v3.mq5','Python_Bridge_EA_v3.mq5'); print('  Python_Bridge_EA_v3.mq5 OK  <-- recompile in MetaEditor if updated')"
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/Python_Bridge_EA_v3.mq5','Python_Bridge_EA_v3.mq5'); print('  Python_Bridge_EA_v3.mq5 OK  -- recompile in MetaEditor if updated')"
 
 echo.
-echo [5/5] Installing dependencies...
+echo [4/4] Installing dependencies...
 
 cd python_bridge_v3
 pip install -r requirements.txt --quiet 2>nul
