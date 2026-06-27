@@ -727,6 +727,10 @@ class PythonMLBridge:
             if self.entry_timing and signal.action != "HOLD":
                 # If no pending signal, register this one
                 if not self.entry_timing.has_pending_signal:
+                    # Capture individual_preds before active_position may be cleared
+                    _individual_preds = {}
+                    if self.signal_generator._active_position:
+                        _individual_preds = self.signal_generator._active_position.get("individual_preds", {})
                     self.entry_timing.set_pending_signal(
                         action=signal.action,
                         price=current_price,
@@ -738,6 +742,7 @@ class PythonMLBridge:
                             "model_name": signal.model_name,
                             "regime": signal.regime,
                             "symbol": signal.symbol,
+                            "individual_preds": _individual_preds,
                         },
                     )
                 # Evaluate whether to enter now
@@ -790,6 +795,21 @@ class PythonMLBridge:
                             model_name=details.get("model_name", "ensemble"),
                             regime=details.get("regime", "unknown"),
                         )
+                        # Re-establish _active_position so confirmation poller
+                        # can track P&L, Platt recording, and Sharpe attribution
+                        self.signal_generator._position_id_counter += 1
+                        self.signal_generator._active_position = {
+                            "position_id": self.signal_generator._position_id_counter,
+                            "direction": status['action'],
+                            "entry_price": current_price,
+                            "entry_time": time.time(),
+                            "signal_context": {
+                                "confidence": details.get("confidence", 0.5),
+                                "session": details.get("regime", "unknown"),
+                                "sl_distance": details.get("sl_pips", 0) * 0.1,
+                            },
+                            "individual_preds": details.get("individual_preds", {}),
+                        }
 
             # 10c. Write signal to bridge
             if signal.action != "HOLD":

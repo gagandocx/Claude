@@ -121,7 +121,7 @@ class ConfidenceCalibrator:
                 options={'maxiter': 1000, 'xatol': 1e-6, 'fatol': 1e-6}
             )
 
-            if result.success or result.fun < 10.0:
+            if result.success or result.fun < 0.75:
                 self._A = float(result.x[0])
                 self._B = float(result.x[1])
                 self._fitted = True
