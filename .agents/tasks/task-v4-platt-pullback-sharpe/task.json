@@ -1,7 +1,28 @@
 {
   "task_id": "task-v4-platt-pullback-sharpe",
   "task_description": "Create NeuroX v4 (version 7.4) as a separate folder alongside existing versions. Copy neurox/ to neurox_v4/ and add three new features: (1) Platt scaling confidence calibration, (2) micro-pullback smart entry timing, (3) Sharpe-ratio-based model weights. Also create NeuroX_EA_v4.mq5, neurox_run_v4.bat, and Python_Bridge_EA_v4.mq5.",
-  "status": "in_progress",
+  "status": "completed",
   "feature_order": ["FEAT-001", "FEAT-002"],
-  "blocked_reason": null
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "All v4 imports verified clean. VERSION = '7.4' confirmed. ConfidenceCalibrator correctly passes through with insufficient data and calibrates after training. EntryTimingManager correctly detects pullback/breakout/timeout conditions. EnsembleManager has sharpe_reweight() and compute_sharpe_weights() working. EA has version '7.40'. Bat file targets python_bridge_v4/. Root-level Python_Bridge_EA_v4.mq5 matches EA copy (md5sum identical). Original neurox/ folder untouched (git diff clean)."
+  },
+  "review_fixes": {
+    "status": "completed",
+    "review_file": "2025-01-21-review-v1.md",
+    "fixes_applied": [
+      "Issue 1 (CRITICAL): Entry timing HOLD-cycle signal loss - signal_details stored in pending state, signal reconstructed and written to bridge on trigger",
+      "Issue 2 (DESIGN): Sharpe PnL attribution differentiated - individual model predictions stored at trade open, PnL attributed proportionally to models voting for trade direction",
+      "Issue 4 (CONFIG): Platt state file path made absolute using os.path.dirname anchored to neurox_v4 root"
+    ],
+    "not_addressed": [
+      "Issue 3 (unit tests): Skipped per orchestrator guidance (optional)",
+      "Issue 5 (batch script branch name): By project convention",
+      "Issue 6 (duplicate EA): By project convention"
+    ]
+  }
 }
