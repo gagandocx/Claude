@@ -1368,7 +1368,7 @@ void UpdateDashboard()
 
     // --- Subtitle ---
     DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.1", clrTitle, 8, "Consolas");
-    y += 18;
+    y += 26;
 
     // --- Symbol & Timeframe ---
     DashboardLabel("sym_lbl", panelX + leftMargin, y, "Symbol:", clrLabel);
@@ -1565,7 +1565,7 @@ void UpdateDashboard()
     DashboardLabel("sigtime_val", panelX + valueCol, y, sigTimeStr, clrValue);
 
     // Adjust panel height dynamically
-    int finalHeight = (y - panelY) + lineHeight + 10;
+    int finalHeight = (y - panelY) + lineHeight + 20;
     if(finalHeight != panelHeight)
     {
         string bgName = "PB_bg_main";
