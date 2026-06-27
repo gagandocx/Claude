@@ -8,7 +8,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 
 # ─────────────────────────────────────────────
@@ -1171,6 +1171,7 @@ class MonteCarloConfig:
     max_daily_loss_prob: float = 0.05        # Gate if >5% chance of hitting daily loss
     drawdown_threshold: float = 0.10         # Current drawdown that triggers simulation
     confidence_level: float = 0.95           # VaR confidence level
+    serial_correlation: float = 0.15         # Loss clustering autocorrelation factor
 
 
 # ─────────────────────────────────────────────
@@ -1266,6 +1267,46 @@ class FeatureMonitorConfig:
 
 
 # ─────────────────────────────────────────────
+#  CORRELATION RISK
+# ─────────────────────────────────────────────
+@dataclass
+class CorrelationRiskConfig:
+    """Cross-position correlation risk tracking.
+
+    Future-proof placeholder for multi-instrument trading.
+    Currently only XAUUSD is traded with max 1 position,
+    so this is a lightweight check that logs and returns safe.
+    """
+    enabled: bool = True                     # Enable correlation checking
+    max_correlated_positions: int = 2        # Max positions on correlated instruments
+    correlation_threshold: float = 0.70      # Threshold for 'correlated' instruments
+    # Known correlated pairs (for future multi-instrument)
+    correlated_groups: Dict = field(default_factory=lambda: {
+        'gold_group': ['XAUUSD', 'XAGUSD', 'GDX'],
+        'usd_group': ['EURUSD', 'GBPUSD', 'USDJPY'],
+    })
+
+
+# ─────────────────────────────────────────────
+#  A/B TESTING FRAMEWORK
+# ─────────────────────────────────────────────
+@dataclass
+class ABTestConfig:
+    """A/B testing framework for parameter comparison.
+
+    Randomly assigns trades to variant A (current) or variant B (candidate).
+    After min_trades_per_variant, computes statistical significance using
+    a z-test on win rates. Logs which variant is winning.
+    """
+    enabled: bool = False                    # Disabled by default (enable to test params)
+    min_trades_per_variant: int = 30         # Min trades before significance testing
+    significance_level: float = 0.05         # p-value threshold for significance
+    test_name: str = "default"               # Name of current A/B test
+    variant_a_label: str = "current"         # Label for control variant
+    variant_b_label: str = "candidate"       # Label for test variant
+
+
+# ─────────────────────────────────────────────
 #  MAIN LOOP
 # ─────────────────────────────────────────────
 @dataclass
@@ -1309,3 +1350,5 @@ class MainConfig:
     enable_slippage_tracker: bool = True     # Slippage/execution quality tracking
     enable_feature_monitor: bool = True      # Feature importance monitoring
     enable_online_learning: bool = True      # Online learning adaptation between retrains
+    enable_ab_testing: bool = False          # A/B testing framework for parameter comparison
+    enable_equity_curve_trading: bool = True  # Equity curve meta-strategy for lot sizing

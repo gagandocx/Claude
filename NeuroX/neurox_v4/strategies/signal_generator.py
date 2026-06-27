@@ -768,7 +768,13 @@ class SignalGenerator:
                 if total_volume > 0:
                     vw_momentum = np.sum(price_changes * volumes) / total_volume
                     # Configurable threshold (default $0.50 for gold/5 pips)
-                    threshold = self.data_config.momentum_threshold
+                    # Scale with ATR: threshold = base * (current_atr / avg_atr), clamped [0.30, 1.50]
+                    base_threshold = self.data_config.momentum_threshold
+                    if adaptive_atr is not None and avg_atr is not None and avg_atr > 0:
+                        atr_ratio = adaptive_atr / avg_atr
+                        threshold = base_threshold * max(0.30, min(1.50, atr_ratio))
+                    else:
+                        threshold = base_threshold
 
                     if abs(vw_momentum) < threshold:
                         return "FLAT"
@@ -791,7 +797,13 @@ class SignalGenerator:
 
         diff = current_close - reference_close
         # Configurable threshold (default $0.50 for gold/5 pips)
-        threshold = self.data_config.momentum_threshold
+        # Scale with ATR: threshold = base * (current_atr / avg_atr), clamped [0.30, 1.50]
+        base_threshold = self.data_config.momentum_threshold
+        if adaptive_atr is not None and avg_atr is not None and avg_atr > 0:
+            atr_ratio = adaptive_atr / avg_atr
+            threshold = base_threshold * max(0.30, min(1.50, atr_ratio))
+        else:
+            threshold = base_threshold
 
         if abs(diff) < threshold:
             return "FLAT"
@@ -1251,7 +1263,25 @@ class SignalGenerator:
 
         # When models are highly confident (>threshold), trust the MODEL direction
         # When models are uncertain, fall back to momentum direction
-        model_override_threshold = self.signal_config.model_override_threshold
+        # Regime-adaptive override threshold: lower in trending (trade more),
+        # higher in ranging/volatile (be selective)
+        base_override = self.signal_config.model_override_threshold
+        regime_override_map = {
+            'strong_trend': 0.50,
+            'trending': 0.50,
+            'neutral': base_override,
+            'ranging': 0.70,
+            'volatile': 0.75,
+            'crash': 0.90,
+        }
+        # Match regime_name prefix to map
+        model_override_threshold = base_override
+        for key, val in regime_override_map.items():
+            if regime_name.startswith(key) or regime_name == key:
+                model_override_threshold = val
+                break
+        logger.debug("[SignalGen] Regime-adaptive override threshold: %.2f (regime=%s)",
+                     model_override_threshold, regime_name)
 
         if sell_prob > model_override_threshold and momentum_direction != "SELL":
             action = "SELL"

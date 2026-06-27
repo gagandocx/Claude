@@ -8,7 +8,7 @@
 
 import numpy as np
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from collections import deque
 
 import sys
@@ -379,3 +379,62 @@ class RiskManager:
             "sl_pips": round(sl_pips, 1),
             "tp_pips": round(tp_pips, 1),
         }
+
+    def check_correlation_risk(self, positions: List[Dict]) -> Tuple[bool, str]:
+        """
+        Check cross-position correlation risk.
+
+        Warns if multiple open positions are on the same or correlated
+        instruments. Currently a lightweight placeholder since only
+        XAUUSD is traded with max 1 position.
+
+        Args:
+            positions: List of position dicts with at minimum a 'symbol' key.
+
+        Returns:
+            Tuple of (safe: bool, reason: str)
+            - safe=True means correlation risk is acceptable
+            - reason explains the decision
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if not positions:
+            return True, "No open positions"
+
+        if len(positions) <= 1:
+            return True, "Single position - no correlation risk"
+
+        # Group positions by symbol
+        symbols = [p.get('symbol', 'UNKNOWN') for p in positions]
+        unique_symbols = set(symbols)
+
+        # Check for same-symbol concentration
+        from collections import Counter
+        symbol_counts = Counter(symbols)
+        max_same = max(symbol_counts.values())
+        if max_same > 2:
+            logger.warning(
+                f"[RiskManager] Correlation risk: {max_same} positions on same symbol "
+                f"({symbol_counts.most_common(1)[0][0]})"
+            )
+            return False, f"Too many positions on same symbol ({max_same})"
+
+        # Known correlated groups (future-proof for multi-instrument)
+        correlated_groups = {
+            'gold_group': ['XAUUSD', 'XAGUSD'],
+            'usd_group': ['EURUSD', 'GBPUSD', 'AUDUSD'],
+        }
+
+        for group_name, group_symbols in correlated_groups.items():
+            matching = [s for s in symbols if s in group_symbols]
+            if len(matching) > 2:
+                logger.warning(
+                    f"[RiskManager] Correlation risk: {len(matching)} positions in "
+                    f"{group_name} ({matching})"
+                )
+                return False, f"Too many correlated positions in {group_name}"
+
+        logger.debug("[RiskManager] Correlation check passed: %d positions, %d unique symbols",
+                     len(positions), len(unique_symbols))
+        return True, f"Correlation OK ({len(positions)} pos, {len(unique_symbols)} symbols)"

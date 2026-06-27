@@ -154,6 +154,8 @@ python -c "import urllib.request; urllib.request.urlretrieve('https://raw.github
 
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/feature_monitor.py','python_bridge_v4/strategies/feature_monitor.py'); print('  strategies/feature_monitor.py OK')"
 
+python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/strategies/ab_testing.py','python_bridge_v4/strategies/ab_testing.py'); print('  strategies/ab_testing.py OK')"
+
 :: --- signals/ ---
 python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/signals/__init__.py','python_bridge_v4/signals/__init__.py'); print('  signals/__init__.py OK')"
 

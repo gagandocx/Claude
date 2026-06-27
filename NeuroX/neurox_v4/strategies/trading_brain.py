@@ -285,15 +285,86 @@ class BayesianConfidence:
         Returns calibrated win probability in [0,1].
         """
         p = max(0.01, min(0.99, prior))
+        # Use calibrated likelihoods if available, otherwise use static table
+        likelihoods = self._calibrated_likelihoods if self._calibrated_likelihoods else self._LIKELIHOODS
         for key in evidence_keys:
-            if key not in self._LIKELIHOODS:
+            if key not in likelihoods:
                 continue
-            l_win, l_loss = self._LIKELIHOODS[key]
+            l_win, l_loss = likelihoods[key]
             evidence = l_win * p + l_loss * (1 - p)
             if evidence > 0:
                 p = (l_win * p) / evidence
             p = max(0.01, min(0.99, p))
         return round(p, 4)
+
+    def __init__(self):
+        self._calibrated_likelihoods: Optional[Dict[str, Tuple[float, float]]] = None
+        self._calibration_count: int = 0
+
+    def calibrate_from_history(self, trade_history: List[Dict]) -> bool:
+        """
+        Calibrate likelihoods from actual trade outcomes.
+
+        After 50+ trades, replaces the static _LIKELIHOODS table with
+        empirically computed P(evidence|win) and P(evidence|loss) from
+        real trade data.
+
+        Args:
+            trade_history: List of dicts with keys:
+                'won': bool, 'evidence_keys': List[str]
+
+        Returns:
+            True if calibration was performed (50+ trades), False otherwise
+        """
+        if len(trade_history) < 50:
+            return False
+
+        # Count occurrences of each evidence key in wins vs losses
+        win_counts: Dict[str, int] = defaultdict(int)
+        loss_counts: Dict[str, int] = defaultdict(int)
+        total_wins: int = 0
+        total_losses: int = 0
+
+        for trade in trade_history:
+            won = trade.get('won', False)
+            evidence_keys = trade.get('evidence_keys', [])
+            if won:
+                total_wins += 1
+                for key in evidence_keys:
+                    win_counts[key] += 1
+            else:
+                total_losses += 1
+                for key in evidence_keys:
+                    loss_counts[key] += 1
+
+        if total_wins < 10 or total_losses < 10:
+            return False
+
+        # Compute empirical P(evidence|win) and P(evidence|loss) with Laplace smoothing
+        calibrated = {}
+        all_keys = set(list(win_counts.keys()) + list(loss_counts.keys()))
+
+        for key in all_keys:
+            # Laplace smoothing: add 1 to numerator, 2 to denominator
+            p_evidence_win = (win_counts.get(key, 0) + 1) / (total_wins + 2)
+            p_evidence_loss = (loss_counts.get(key, 0) + 1) / (total_losses + 2)
+            # Clamp to [0.10, 0.90] to prevent extreme updates
+            p_evidence_win = max(0.10, min(0.90, p_evidence_win))
+            p_evidence_loss = max(0.10, min(0.90, p_evidence_loss))
+            calibrated[key] = (round(p_evidence_win, 4), round(p_evidence_loss, 4))
+
+        # Also include any static keys not seen in history (keep defaults)
+        for key in self._LIKELIHOODS:
+            if key not in calibrated:
+                calibrated[key] = self._LIKELIHOODS[key]
+
+        self._calibrated_likelihoods = calibrated
+        self._calibration_count = len(trade_history)
+        logger.info(
+            f"[BayesianConfidence] Calibrated from {len(trade_history)} trades "
+            f"({total_wins}W/{total_losses}L). {len(calibrated)} evidence keys updated."
+        )
+        return True
 
 
 class AdaptiveLearner:
@@ -649,6 +720,15 @@ class ModelConsensus:
 class EdgeTracker:
     """Rolling edge quality monitor — the brain's heartbeat."""
 
+    # Session definitions for session-split edge tracking
+    _SESSIONS = {
+        'LONDON_NY_OVERLAP': (13, 16),
+        'LONDON':            (7, 13),
+        'NEW_YORK':          (16, 21),
+        'ASIAN':             (0, 7),
+        'OFF_HOURS':         (21, 24),
+    }
+
     def __init__(self, lookback: int = 40):
         self.trades: deque = deque(maxlen=lookback)
         self._equity: deque = deque(maxlen=lookback)
@@ -656,9 +736,20 @@ class EdgeTracker:
         self._peak: float = 0.0
         self._hour_pnl: Dict[int, deque] = defaultdict(lambda: deque(maxlen=20))
         self._regime_pnl: Dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+        # ── Session-split edge tracking ───────────────────────────────────
+        self._session_trades: Dict[str, deque] = {
+            s: deque(maxlen=lookback) for s in self._SESSIONS
+        }
         # ── Probe trade recovery state ────────────────────────────────────
         self._broken_since: Optional[float] = None    # timestamp when BROKEN started
         self._last_probe_time: Optional[float] = None # timestamp of last probe trade
+
+    def _get_session_for_hour(self, hour: int) -> str:
+        """Map UTC hour to session name."""
+        for name, (start, end) in self._SESSIONS.items():
+            if start <= hour < end:
+                return name
+        return 'OFF_HOURS'
 
     def record(self, pnl, won, hour=-1, regime='unknown'):
         self.trades.append({'pnl':pnl,'won':won,'hour':hour,'regime':regime})
@@ -667,6 +758,31 @@ class EdgeTracker:
         self._equity.append(self._pnl)
         if hour >= 0: self._hour_pnl[hour].append(pnl)
         if regime != 'unknown': self._regime_pnl[regime].append(pnl)
+        # Record to session-specific tracker
+        if hour >= 0:
+            session = self._get_session_for_hour(hour)
+            self._session_trades[session].append({'pnl': pnl, 'won': won})
+
+    def get_session_edge(self, session_name: str) -> Tuple[float, float, int]:
+        """
+        Get session-specific edge metrics.
+
+        Args:
+            session_name: One of LONDON, NEW_YORK, ASIAN, LONDON_NY_OVERLAP, OFF_HOURS
+
+        Returns:
+            (win_rate, profit_factor, n_trades) for that session
+        """
+        trades = self._session_trades.get(session_name, deque())
+        n = len(trades)
+        if n == 0:
+            return 0.0, 0.0, 0
+        wins = sum(1 for t in trades if t['won'])
+        wr = wins / n
+        gw = sum(t['pnl'] for t in trades if t['pnl'] > 0)
+        gl = abs(sum(t['pnl'] for t in trades if t['pnl'] < 0))
+        pf = gw / gl if gl > 0 else 3.0
+        return round(wr, 4), round(pf, 2), n
 
     def evaluate(self, config) -> Tuple[str, float, float, float]:
         n = len(self.trades)
@@ -760,6 +876,87 @@ class ModelTrustManager:
         return [n for n,q in self._acc.items() if len(q)>=10 and sum(q)/len(q)<thresh]
 
 
+class EquityCurveTrader:
+    """
+    Meta-strategy: trade the equity curve to reduce exposure during drawdowns.
+
+    Concept: If the equity curve is below its moving average, the system
+    is likely in a drawdown phase. Reduce lot size to survive and wait
+    for the edge to return.
+
+    Rules:
+      - Equity below 20-period EMA: reduce lot by 50%
+      - Equity below 50-period EMA: reduce lot by 75%
+      - Equity crosses ABOVE EMA from below: restore normal sizing (re-entry)
+
+    Returns a lot multiplier [0.25, 1.0] applied to position sizing.
+    """
+
+    def __init__(self, short_period: int = 20, long_period: int = 50):
+        self._equity_points: deque = deque(maxlen=max(short_period, long_period) + 10)
+        self._short_period = short_period
+        self._long_period = long_period
+        self._was_below_short: bool = False
+        self._was_below_long: bool = False
+
+    def update(self, equity: float):
+        """Record latest equity point (call after every trade or P&L update)."""
+        self._equity_points.append(equity)
+
+    def get_lot_multiplier(self) -> Tuple[float, str]:
+        """
+        Compute lot size multiplier based on equity curve position.
+
+        Returns:
+            (multiplier, reason) where multiplier is in [0.25, 1.0]
+        """
+        n = len(self._equity_points)
+        if n < self._short_period:
+            return 1.0, "Insufficient equity data for EC trading"
+
+        current = self._equity_points[-1]
+        points = list(self._equity_points)
+
+        # Compute short EMA (20-period)
+        short_ema = self._compute_ema(points, self._short_period)
+
+        # Compute long EMA (50-period) if enough data
+        long_ema = None
+        if n >= self._long_period:
+            long_ema = self._compute_ema(points, self._long_period)
+
+        # Check re-entry: crossed above short EMA from below
+        below_short = current < short_ema
+        if self._was_below_short and not below_short:
+            self._was_below_short = False
+            self._was_below_long = False
+            return 1.0, "EC re-entry: equity crossed above short EMA"
+
+        self._was_below_short = below_short
+
+        # Below both EMAs: heavy reduction
+        if long_ema is not None and current < long_ema:
+            self._was_below_long = True
+            return 0.25, f"EC: equity below 50-EMA (eq={current:.2f} < ema50={long_ema:.2f})"
+
+        # Below short EMA only: moderate reduction
+        if below_short:
+            return 0.50, f"EC: equity below 20-EMA (eq={current:.2f} < ema20={short_ema:.2f})"
+
+        return 1.0, "EC: equity above EMAs"
+
+    @staticmethod
+    def _compute_ema(values: List[float], period: int) -> float:
+        """Compute EMA of the last `period` values."""
+        if len(values) < period:
+            return values[-1]
+        k = 2.0 / (period + 1)
+        ema = sum(values[:period]) / period
+        for v in values[period:]:
+            ema = v * k + ema * (1 - k)
+        return ema
+
+
 
 # ═════════════════════════════════════════════
 #  POSITION SIZER & SL/TP
@@ -824,6 +1021,7 @@ class TradingBrain:
         self.dd_recovery= DrawdownRecovery()
         self.consensus  = ModelConsensus()
         self.model_trust= ModelTrustManager(self.config.lookback_trades)
+        self.ec_trader  = EquityCurveTrader(short_period=20, long_period=50)
 
         # ── Sizing & SL/TP ────────────────────────────────────────────────
         self.sizer      = PositionSizer()
@@ -859,6 +1057,8 @@ class TradingBrain:
         self.learner.record(conf, regime, session, hour, edge, structure, pf, won)
         if predictions and true_class is not None:
             self.model_trust.record(predictions, true_class)
+        # Update equity curve trader with cumulative P&L
+        self.ec_trader.update(self.account_balance + self.daily_pnl)
         logger.info(
             f"[Brain] Trade: pnl={pnl:+.2f} won={won} "
             f"daily={self.daily_pnl:+.2f} "
@@ -868,6 +1068,24 @@ class TradingBrain:
     def reset_daily(self):
         self.daily_pnl = self.daily_pnl_peak = self.total_drawdown = 0.0
         logger.info("[Brain] Daily reset")
+
+    def soft_reset(self):
+        """
+        Soft daily reset: preserves rolling metrics across day boundaries.
+
+        Only resets daily P&L counters. Preserves:
+          - Edge tracker state (rolling win rate, PF, session edges)
+          - Equity curve trader position
+          - Real-time risk metrics (Sharpe, Sortino, Calmar)
+          - Adaptive learner history
+          - Volatility forecaster state
+          - Model trust scores
+        """
+        self.daily_pnl = 0.0
+        self.daily_pnl_peak = 0.0
+        # NOTE: total_drawdown is NOT reset -- it represents account-level drawdown
+        # Only reset it if the equity has recovered above the previous peak
+        logger.info("[Brain] Soft daily reset (rolling metrics preserved)")
 
     # ── Main evaluation ───────────────────────────────────────────────────
 
@@ -913,6 +1131,14 @@ class TradingBrain:
 
         # ── L5: Edge ──────────────────────────────────────────────────────
         e_status, e_mult, conf_adj_edge, recent_pf = self.edge.evaluate(self.config)
+        # Session-specific edge: use session edge when sufficient data exists
+        session_wr, session_pf, session_n = self.edge.get_session_edge(t_session)
+        if session_n > 10:
+            r['L5_session_edge'] = f'{t_session}: wr={session_wr:.1%} PF={session_pf:.2f} n={session_n}'
+            # If session edge is poor, add confidence penalty
+            if session_wr < 0.40 or session_pf < 0.8:
+                conf_adj_edge += 0.05
+                r['L5_session_edge'] += ' [PENALTY]'
         r['L5_edge'] = f'{e_status} PF={recent_pf:.2f} ×{e_mult:.2f}'
         if e_status == 'BROKEN':
             # ── Probe trade recovery mechanism ────────────────────────────
@@ -1013,6 +1239,10 @@ class TradingBrain:
         r['sl_tp'] = f'SL=${sl_dollars:.2f} TP=${tp_dollars:.2f} RR={rp.get("tp_rr", rp.get("rr", 0.0)):.1f}'
 
         # ── Position sizing ───────────────────────────────────────────────
+        # Apply equity curve trading multiplier
+        ec_mult, ec_reason = self.ec_trader.get_lot_multiplier()
+        r['equity_curve'] = ec_reason
+
         final_lot = self.sizer.calculate(
             account       = self.account_balance,
             sl_dollars    = sl_dollars,
@@ -1028,7 +1258,9 @@ class TradingBrain:
             edge_status   = e_status,
             config        = self.config,
         )
-        r['sizing'] = f'lot={final_lot:.2f}'
+        # Apply equity curve trader reduction
+        final_lot = round(max(self.config.min_lot, final_lot * ec_mult), 2)
+        r['sizing'] = f'lot={final_lot:.2f} (ec×{ec_mult:.2f})'
 
         # ── Trade quality score ───────────────────────────────────────────
         score = self._score(win_prob, e_status, regime, t_status, recent_pf, cons_level)

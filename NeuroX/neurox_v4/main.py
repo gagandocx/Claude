@@ -963,7 +963,7 @@ class PythonMLBridge:
                 # Daily brain reset at new trading day
                 today = datetime.now().strftime("%Y-%m-%d")
                 if today != self._last_trade_date:
-                    self.brain.reset_daily()
+                    self.brain.soft_reset()
                     self._last_trade_date = today
 
                 decision = self.brain.evaluate(

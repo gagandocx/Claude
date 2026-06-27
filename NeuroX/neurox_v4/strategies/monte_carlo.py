@@ -136,10 +136,30 @@ class MonteCarloRiskSimulator:
         ruin_count = 0
         max_drawdowns = np.zeros(num_sims)
 
-        # Vectorized simulation for performance
-        # Generate all random outcomes at once
+        # Serial correlation: losses tend to cluster (autocorrelation).
+        # After a loss, increase probability of next outcome being a loss.
+        serial_corr = self.config.serial_correlation
+
+        # Generate outcomes with serial correlation
+        # Instead of pure i.i.d., model loss clustering
         random_outcomes = np.random.random((num_sims, trades_forward))
-        wins_mask = random_outcomes < adjusted_win_rate
+
+        # Apply serial correlation: if previous trade was a loss,
+        # shift the threshold up (making wins harder to achieve)
+        wins_mask = np.zeros((num_sims, trades_forward), dtype=bool)
+        # First trade is i.i.d.
+        wins_mask[:, 0] = random_outcomes[:, 0] < adjusted_win_rate
+
+        for t in range(1, trades_forward):
+            # If previous trade was a loss, reduce effective win rate by serial_corr
+            prev_was_loss = ~wins_mask[:, t - 1]
+            effective_wr = np.where(
+                prev_was_loss,
+                adjusted_win_rate * (1.0 - serial_corr),  # Lower win rate after loss
+                adjusted_win_rate * (1.0 + serial_corr * 0.3),  # Slight boost after win
+            )
+            effective_wr = np.clip(effective_wr, 0.20, 0.90)
+            wins_mask[:, t] = random_outcomes[:, t] < effective_wr
 
         # Add noise to win/loss amounts (realistic variance)
         win_noise = 1.0 + np.random.normal(0, 0.2, (num_sims, trades_forward))
