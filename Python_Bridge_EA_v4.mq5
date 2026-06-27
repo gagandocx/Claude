@@ -2,7 +2,7 @@
 //|                                            Python_Bridge_EA.mq5   |
 //|                              NeuroX - Signal Executor              |
 //|                                                                    |
-//|  v7.4 - Calibrated: Platt scaling, micro-pullback, Sharpe weights |
+//|  v7.5 - Enhanced: data validation, watchdog, slippage tracking, feature monitoring, equity curve trading, A/B testing |
 //|                                                                    |
 //|  Reads trade signals from the NeuroX CSV file and                  |
 //|  executes trades with proper risk management. Writes execution     |
@@ -13,8 +13,8 @@
 //|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
 //+------------------------------------------------------------------+
 #property copyright "NeuroX"
-#property version   "7.40"
-// v7.4 - Calibrated: Platt scaling, micro-pullback, Sharpe weights
+#property version   "7.50"
+// v7.5 - Enhanced: data validation, watchdog, slippage tracking, feature monitoring, equity curve trading, A/B testing
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -1441,7 +1441,7 @@ void UpdateDashboard()
     y += 62;
 
     // --- Subtitle ---
-    DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.4", clrTitle, 8, "Consolas");
+    DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.5", clrTitle, 8, "Consolas");
     y += 26;
 
     // --- Symbol & Timeframe ---

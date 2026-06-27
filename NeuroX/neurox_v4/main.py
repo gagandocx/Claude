@@ -20,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-VERSION = "7.4"
+VERSION = "7.5"
 
 import numpy as np
 import pandas as pd
@@ -39,7 +39,7 @@ from config.settings import (
     DisagreementConfig, KellyConfig, MonteCarloConfig,
     DataValidatorConfig, PipelineConfig,
     AccountSyncConfig, SlippageTrackerConfig,
-    FeatureMonitorConfig,
+    FeatureMonitorConfig, ABTestConfig,
     MODEL_DIR, LOG_DIR
 )
 from data.market_data import MarketDataFetcher
@@ -75,6 +75,7 @@ from data.data_validator import DataValidator
 from data.pipeline import PipelineManager
 from strategies.slippage_tracker import SlippageTracker
 from strategies.feature_monitor import FeatureImportanceMonitor
+from strategies.ab_testing import ABTestFramework
 
 
 # ─────────────────────────────────────────────
@@ -311,6 +312,17 @@ class PythonMLBridge:
         self._feature_monitor_log_interval: int = 100  # Log status every N cycles
         self._feature_monitor_cycle_count: int = 0
 
+        # ── V7.5 A/B Testing & Equity Curve Trading ──────────────────────
+        # A/B testing framework (rigorous parameter comparison)
+        self.ab_testing = (
+            ABTestFramework(ABTestConfig())
+            if self.config.enable_ab_testing else None
+        )
+
+        # Equity curve trading is handled within the TradingBrain
+        # (EquityCurveTrader class) - the flag controls whether it's active
+        self._equity_curve_trading_enabled = self.config.enable_equity_curve_trading
+
         # Rolling ATR baseline for post-news volatility comparison.
         # Stores recent ATR values from each signal cycle to compute a
         # "normal" baseline. The short ATR (5-period) is compared against
@@ -363,6 +375,8 @@ class PythonMLBridge:
         self.logger.info(f"  Slippage tracker: {self.config.enable_slippage_tracker}")
         self.logger.info(f"  Feature monitor: {self.config.enable_feature_monitor}")
         self.logger.info(f"  Online learning: {self.config.enable_online_learning}")
+        self.logger.info(f"  A/B testing: {self.config.enable_ab_testing}")
+        self.logger.info(f"  Equity curve trading: {self.config.enable_equity_curve_trading}")
 
         # Start background confirmation poller for instant position sync
         self._running = True  # Set before starting thread

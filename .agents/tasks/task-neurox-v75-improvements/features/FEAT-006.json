@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-006",
+  "type": "chore",
+  "description": "Version Bump to 7.5, Update neurox_run_v4.bat with All New Files, Final Integration Pass. Bumps version to 7.5 everywhere, adds all new module downloads to the batch file, and ensures all new modules are properly wired in main.py with feature flags.",
+  "status": "in_progress",
+  "steps": [
+    "Update VERSION in main.py from '7.4' to '7.5'",
+    "Update #property version in BOTH NeuroX/NeuroX_EA_v4.mq5 AND Python_Bridge_EA_v4.mq5 from '7.40' to '7.50'",
+    "Update the comment in EA files from 'v7.4 - Calibrated: Platt scaling, micro-pullback, Sharpe weights' to 'v7.5 - Enhanced: data validation, watchdog, slippage tracking, feature monitoring, equity curve trading, A/B testing'",
+    "Update neurox_run_v4.bat: (a) Change title from 'NeuroX v7.4' to 'NeuroX v7.5', (b) Update echo header, (c) Add download lines for all new files: data/data_validator.py, data/pipeline.py, strategies/slippage_tracker.py, strategies/feature_monitor.py, strategies/ab_testing.py, watchdog.py. (d) Add neurox_watchdog.bat download if it was placed in the repo",
+    "Ensure all new feature flags are added to MainConfig: enable_data_validation, enable_pipeline, enable_feature_monitor, enable_online_learning, enable_ab_testing, enable_equity_curve_trading",
+    "Ensure main.py __init__ instantiates all new modules based on their flags and logs their status in the startup log block",
+    "Ensure main.py run_cycle() calls new modules at appropriate points: DataValidator after data fetch, FeatureMonitor after trade close, SlippageTracker from confirmations",
+    "Final pass: verify all imports resolve correctly with: python -c 'import main'",
+    "Run full test suite and fix any broken tests caused by new parameters or module changes"
+  ],
+  "acceptance_criteria": [
+    "VERSION is '7.5' in main.py",
+    "Both EA files have version '7.50'",
+    "neurox_run_v4.bat downloads all new files",
+    "All new modules are instantiated in main.py with proper feature flag gating",
+    "python -c 'import main' succeeds",
+    "Test suite passes (or only pre-existing test failures remain)"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"import main; assert main.VERSION == '7.5', f'Version is {main.VERSION}'\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"import main; print('All imports OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -x --tb=short -q 2>&1 | tail -30",
+    "Run: grep -c '7.50' /projects/sandbox/Claude/NeuroX/NeuroX_EA_v4.mq5 && grep -c '7.50' /projects/sandbox/Claude/Python_Bridge_EA_v4.mq5"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

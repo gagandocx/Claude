@@ -1,12 +1,12 @@
 @echo off
 color 0D
-title NeuroX v7.4
+title NeuroX v7.5
 SET PYTHONUNBUFFERED=1
 SET PYTHONIOENCODING=utf-8
 
 echo ============================================
-echo   NeuroX v7.4 - Update, Compile, Run
-echo   Platt scaling, micro-pullback, Sharpe wts
+echo   NeuroX v7.5 - Update, Compile, Run
+echo   Data validation, watchdog, slippage, A/B
 echo ============================================
 echo.
 
@@ -247,7 +247,7 @@ echo.
 :: ══════════════════════════════════════════════
 :: STEP 3: Start Python bridge
 :: ══════════════════════════════════════════════
-echo [3/3] Starting NeuroX v7.4...
+echo [3/3] Starting NeuroX v7.5...
 echo ============================================
 echo.
 
