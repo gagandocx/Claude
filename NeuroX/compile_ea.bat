@@ -49,18 +49,16 @@ echo.
 
 :: --- Copy logo BMP if it exists ---
 echo [3/4] Copying neurox_logo.bmp to MT5 Images folder...
-if exist "%LOGO_SOURCE%" (
-    if not exist "%MT5_IMAGES%" mkdir "%MT5_IMAGES%"
-    copy /Y "%LOGO_SOURCE%" "%MT5_IMAGES%\" >nul
-    if %errorlevel% equ 0 (
-        echo         Done.
-    ) else (
-        echo [WARNING] Failed to copy logo file.
-    )
-) else (
-    echo         Skipped (neurox_logo.bmp not found).
+if not exist "%LOGO_SOURCE%" (
+    echo         Skipped - neurox_logo.bmp not found.
+    goto :compile
 )
+if not exist "%MT5_IMAGES%" mkdir "%MT5_IMAGES%"
+copy /Y "%LOGO_SOURCE%" "%MT5_IMAGES%\" >nul
+echo         Done.
 echo.
+
+:compile
 
 :: --- Compile EA ---
 echo [4/4] Compiling NeuroX_EA.mq5...
