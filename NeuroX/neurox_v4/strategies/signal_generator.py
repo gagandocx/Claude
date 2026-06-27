@@ -126,6 +126,11 @@ class SignalGenerator:
         # close, main.py should skip feeding the optimizer to avoid double-counting.
         self._estimated_close_pending = False
 
+        # v7.5: Use monotonic clock for elapsed-time calculations
+        # time.monotonic() is immune to NTP sync jumps and timezone changes
+        self._monotonic_start = time.monotonic()
+        self._last_signal_monotonic = 0.0
+
     def _analyze_candle_patterns(self, prices_df) -> Dict:
         """
         Analyze the most recent candle(s) for candlestick patterns that indicate
@@ -885,7 +890,8 @@ class SignalGenerator:
                         vix_level: Optional[float] = None,
                         htf_bias: Optional[Dict] = None,
                         cross_pair_info: Optional[Dict] = None,
-                        prices_m1: Optional[object] = None) -> TradeSignal:
+                        prices_m1: Optional[object] = None,
+                        spread_points: Optional[float] = None) -> TradeSignal:
         """
         Generate a trade signal using momentum for DIRECTION and AI for TIMING.
 
@@ -928,7 +934,7 @@ class SignalGenerator:
         # ─── v6.0: SINGLE POSITION MANAGEMENT ───────────────────────────
         # If we already have an active position, manage it before generating new signals
         if self._active_position is not None:
-            time_held = time.time() - self._active_position["entry_time"]
+            time_held = time.monotonic() - self._active_position["entry_time"]
             active_dir = self._active_position["direction"]
 
             # STALENESS CHECK: If position held far longer than max_hold, the close
@@ -1017,7 +1023,7 @@ class SignalGenerator:
         # ─── END v6.0 POSITION MANAGEMENT ────────────────────────────────
 
         # Cooldown check
-        elapsed = time.time() - self._last_signal_time
+        elapsed = time.monotonic() - self._last_signal_monotonic
         if elapsed < self.signal_config.cooldown_seconds:
             logger.info("[SignalGen] HOLD - cooldown active (%.1fs remaining)",
                         self.signal_config.cooldown_seconds - elapsed)
@@ -1082,7 +1088,23 @@ class SignalGenerator:
         logger.info("[SignalGen] Session: %s (position multiplier: %.2f)", session, session_multiplier)
 
         # 1b. Spread filter - block if spread is abnormally wide
-        if self._check_spread_filter(prices):
+        # v7.5: Use actual EA-reported spread if available (from SpreadMonitor)
+        if spread_points is not None and spread_points > 0:
+            # Use actual spread from EA via python_bridge_spread.csv
+            # Block if current spread > max_spread_multiplier * typical spread
+            # Typical gold spread is ~20-40 points; block above 3x average
+            avg_spread = self.spread_filter_config.avg_spread_window  # reuse as baseline
+            # If spread_points is in raw points (e.g. 30 for 3.0 pips on gold)
+            # Simple heuristic: block if > 80 points (abnormally wide for gold)
+            max_acceptable_spread = 80.0  # points (gold typical max)
+            if spread_points > max_acceptable_spread:
+                logger.warning(
+                    "[SignalGen] HOLD - actual EA spread too wide: %.1f pts > %.1f pts max",
+                    spread_points, max_acceptable_spread
+                )
+                return hold_signal
+            logger.debug("[SignalGen] Actual EA spread: %.1f pts (OK)", spread_points)
+        elif self._check_spread_filter(prices):
             logger.info("[SignalGen] HOLD - spread filter blocked (abnormally wide range)")
             return hold_signal
 
@@ -1510,6 +1532,7 @@ class SignalGenerator:
         )
 
         self._last_signal_time = time.time()
+        self._last_signal_monotonic = time.monotonic()
         self._signal_count += 1
 
         # v6.0: Track active position for single-position enforcement
@@ -1518,7 +1541,8 @@ class SignalGenerator:
             "position_id": self._position_id_counter,
             "direction": action,
             "entry_price": current_price,
-            "entry_time": time.time(),
+            "entry_time": time.monotonic(),
+            "entry_wall_time": time.time(),  # Wall clock for logs/files only
             "signal_context": {
                 "confidence": timing_confidence,
                 "session": session,
@@ -1531,6 +1555,8 @@ class SignalGenerator:
                 name: float(probs[0][2] if action == "BUY" else probs[0][0])
                 for name, probs in prediction.get("individual_preds", {}).items()
             },
+            "regime": regime_name,
+            "confidence": timing_confidence,
         }
 
         logger.info("[SignalGen] SIGNAL GENERATED: %s %s conf=%.4f lot=%.2f regime=%s",

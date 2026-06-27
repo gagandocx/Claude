@@ -439,6 +439,110 @@ class EnsembleManager:
     def get_disagreement_signal(self, x: np.ndarray) -> float:
         return float(1.0 - self.predict(x)["agreement"].mean())
 
+    # ── Marginal Contribution Analysis ────────────────────────────────────
+
+    def compute_marginal_contributions(
+        self, individual_preds: Dict[str, np.ndarray], direction: str
+    ) -> Dict[str, float]:
+        """
+        Compute each model's marginal contribution to the ensemble prediction.
+
+        For each model, measures how much its presence increased confidence
+        in the winning direction. Models whose predictions strongly align with
+        the trade direction get higher attribution weights.
+
+        This provides better PnL attribution than simple proportional splitting,
+        because it captures which models actually moved the needle on the
+        ensemble's final decision.
+
+        Args:
+            individual_preds: Dict mapping model_name -> probability array (3,)
+                              with [P(SELL), P(HOLD), P(BUY)] per model.
+            direction: "BUY" or "SELL" -- the trade direction taken.
+
+        Returns:
+            Dict mapping model_name -> normalized weight [0, 1] summing to 1.
+            Models more aligned with the direction get higher weights.
+        """
+        if not individual_preds:
+            return {}
+
+        # Direction index: BUY=2, SELL=0
+        dir_idx = 2 if direction == "BUY" else 0
+
+        # Compute ensemble prediction WITH all models (baseline)
+        all_probs = []
+        model_names = []
+        for name in _MODEL_NAMES:
+            if name in individual_preds:
+                prob = individual_preds[name]
+                if isinstance(prob, np.ndarray):
+                    # Handle (1, 3) or (3,) shape
+                    if prob.ndim == 2:
+                        prob = prob[0]
+                    all_probs.append(prob)
+                    model_names.append(name)
+
+        if len(all_probs) < 2:
+            # Cannot compute marginal with fewer than 2 models
+            if model_names:
+                return {name: 1.0 / len(model_names) for name in model_names}
+            return {}
+
+        all_probs_arr = np.array(all_probs)  # (N_models, 3)
+
+        # Weighted ensemble baseline confidence in the trade direction
+        # Use current weights for participating models
+        model_weights = np.array([
+            self.weights[_MODEL_NAMES.index(name)]
+            for name in model_names
+        ])
+        weight_sum = model_weights.sum()
+        if weight_sum > 0:
+            norm_weights = model_weights / weight_sum
+        else:
+            norm_weights = np.ones(len(model_names)) / len(model_names)
+
+        baseline_conf = float(np.dot(norm_weights, all_probs_arr[:, dir_idx]))
+
+        # For each model, compute confidence WITHOUT it (leave-one-out)
+        marginal_contributions = {}
+        for i, name in enumerate(model_names):
+            # Remove model i, recompute weighted average
+            mask = np.ones(len(model_names), dtype=bool)
+            mask[i] = False
+            remaining_weights = norm_weights[mask]
+            remaining_sum = remaining_weights.sum()
+            if remaining_sum > 0:
+                remaining_norm = remaining_weights / remaining_sum
+            else:
+                remaining_norm = np.ones(mask.sum()) / max(mask.sum(), 1)
+
+            without_conf = float(
+                np.dot(remaining_norm, all_probs_arr[mask, dir_idx])
+            )
+
+            # Marginal contribution = how much this model added to confidence
+            # Positive = model helped the trade direction
+            contribution = baseline_conf - without_conf
+            marginal_contributions[name] = max(contribution, 0.0)
+
+        # Normalize to sum to 1
+        total = sum(marginal_contributions.values())
+        if total > 0:
+            marginal_contributions = {
+                name: val / total
+                for name, val in marginal_contributions.items()
+            }
+        else:
+            # All models contributed equally (or negatively)
+            marginal_contributions = {
+                name: 1.0 / len(model_names)
+                for name in model_names
+            }
+
+        return marginal_contributions
+
     # ── checkpoint I/O ────────────────────────────────────────────────────
 
     def save_models(self, path: str) -> None:

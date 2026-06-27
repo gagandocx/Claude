@@ -1463,7 +1463,7 @@ class TestSinglePositionArchitecture:
         gen._active_position = {
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time(),  # just entered
+            "entry_time": time_mod.monotonic(),  # just entered
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",
@@ -1496,7 +1496,7 @@ class TestSinglePositionArchitecture:
         gen._active_position = {
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time() - 120,  # 120 seconds ago (exceeds 1 bar * 60s = 60s)
+            "entry_time": time_mod.monotonic() - 120,  # 120 seconds ago (exceeds 1 bar * 60s = 60s)
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",
@@ -1516,7 +1516,7 @@ class TestSinglePositionArchitecture:
         # on model state, but active_position should be None or freshly set)
         # If models not loaded, it returns HOLD and _active_position remains None
         # The key check: the old position was closed
-        assert gen._active_position is None or gen._active_position["entry_time"] > time_mod.time() - 5
+        assert gen._active_position is None or gen._active_position["entry_time"] > time_mod.monotonic() - 5
 
     def test_range_buy_blocked_when_htf_bearish(self, signal_config, mock_features):
         """Test that range BUY is blocked when M5 and M15 are both bearish."""
@@ -1597,7 +1597,7 @@ class TestSinglePositionArchitecture:
             assert gen._active_position["direction"] == signal.action
             assert gen._active_position["entry_price"] == 2010.0
             assert "signal_context" in gen._active_position
-            assert gen._active_position["entry_time"] > time_mod.time() - 5
+            assert gen._active_position["entry_time"] > time_mod.monotonic() - 5
 
 
 # ─────────────────────────────────────────────
@@ -1630,7 +1630,7 @@ class TestV6ReviewFixes:
             "position_id": 1,
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time() - 120,  # 120s ago, exceeds 1 bar * 60s
+            "entry_time": time_mod.monotonic() - 120,  # 120s ago, exceeds 1 bar * 60s
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",
@@ -1730,7 +1730,7 @@ class TestV6ReviewFixes:
             "position_id": 1,
             "direction": "BUY",
             "entry_price": 2000.0,
-            "entry_time": time_mod.time() - 70,  # Past cooldown but within max_hold
+            "entry_time": time_mod.monotonic() - 70,  # Past cooldown but within max_hold
             "signal_context": {
                 "confidence": 0.5,
                 "session": "london",

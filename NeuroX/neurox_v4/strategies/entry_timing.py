@@ -12,6 +12,10 @@
     - If timeout reached -> enter at market (don't miss the move)
     - If price moves away by breakout_threshold -> enter immediately
 
+  v7.5: Adaptive timeout based on ATR. In high volatility,
+  price moves faster so timeout is shorter. In low volatility,
+  price moves slower so timeout is longer.
+
   Non-blocking: uses time comparison, not sleep. Each call to
   evaluate_entry checks elapsed time and current price.
 =============================================================
@@ -36,6 +40,8 @@ class EntryTimingManager:
     After a trade signal fires, this manager waits for a small pullback
     in price before confirming the entry. This is non-blocking and uses
     time-based comparison on each evaluation call.
+
+    v7.5: Timeout adapts to volatility (ATR). High ATR -> shorter timeout.
     """
 
     def __init__(self, config: Optional[EntryTimingConfig] = None):
@@ -48,14 +54,47 @@ class EntryTimingManager:
         self._best_pullback_price: Optional[float] = None
         # Full signal details for reconstruction during HOLD-cycle triggers
         self._signal_details: Optional[Dict] = None
+        # Adaptive timeout for this specific signal
+        self._active_timeout: float = self.config.timeout_seconds
 
     @property
     def has_pending_signal(self) -> bool:
         """Check if there is a pending signal waiting for pullback."""
         return self._signal_action is not None
 
+    def _compute_adaptive_timeout(self, atr: float, avg_atr: float) -> float:
+        """
+        Compute adaptive timeout based on current volatility vs average.
+
+        In high volatility (ATR > avg), price moves faster, so we use a
+        shorter timeout (no time to wait). In low volatility (ATR < avg),
+        price moves slower, so we allow a longer timeout.
+
+        Formula: base_timeout * (avg_atr / max(atr, 0.01))
+        Clamped to [adaptive_timeout_min, adaptive_timeout_max].
+
+        Args:
+            atr: Current ATR value
+            avg_atr: Average (normal) ATR value
+
+        Returns:
+            Adapted timeout in seconds
+        """
+        if avg_atr <= 0 or atr <= 0:
+            return self.config.timeout_seconds
+
+        ratio = avg_atr / max(atr, 0.01)
+        adaptive_timeout = self.config.timeout_seconds * ratio
+
+        # Clamp to configured bounds
+        adaptive_timeout = max(self.config.adaptive_timeout_min, adaptive_timeout)
+        adaptive_timeout = min(self.config.adaptive_timeout_max, adaptive_timeout)
+
+        return adaptive_timeout
+
     def set_pending_signal(self, action: str, price: float, timestamp: Optional[float] = None,
-                           signal_details: Optional[Dict] = None) -> None:
+                           signal_details: Optional[Dict] = None,
+                           atr: float = 0.0, avg_atr: float = 0.0) -> None:
         """
         Register a new signal waiting for micro-pullback entry.
 
@@ -66,17 +105,31 @@ class EntryTimingManager:
             signal_details: Full signal attributes (confidence, sl_pips, tp_pips,
                             lot_size, model_name, regime, symbol) for reconstruction
                             when the pullback triggers during a HOLD cycle.
+            atr: Current ATR for adaptive timeout calculation
+            avg_atr: Average ATR for adaptive timeout calculation
         """
         self._signal_action = action
         self._signal_price = price
-        self._signal_time = timestamp or time.time()
+        self._signal_time = timestamp or time.monotonic()
         self._best_pullback_price = price
         self._signal_details = signal_details
 
-        logger.info(
-            f"[EntryTiming] Pending {action} signal @ ${price:.2f} - "
-            f"waiting for pullback of ${self.config.pullback_points:.2f}"
-        )
+        # Compute adaptive timeout if enabled and ATR data available
+        if self.config.adaptive_timeout and atr > 0 and avg_atr > 0:
+            self._active_timeout = self._compute_adaptive_timeout(atr, avg_atr)
+            logger.info(
+                f"[EntryTiming] Pending {action} signal @ ${price:.2f} - "
+                f"adaptive timeout: {self._active_timeout:.1f}s "
+                f"(ATR={atr:.2f}, avg={avg_atr:.2f}), "
+                f"pullback target: ${self.config.pullback_points:.2f}"
+            )
+        else:
+            self._active_timeout = self.config.timeout_seconds
+            logger.info(
+                f"[EntryTiming] Pending {action} signal @ ${price:.2f} - "
+                f"waiting for pullback of ${self.config.pullback_points:.2f} "
+                f"(timeout: {self._active_timeout:.1f}s)"
+            )
 
     def evaluate_entry(self, action: str, current_price: float) -> Dict:
         """
@@ -99,8 +152,9 @@ class EntryTimingManager:
                 'adjusted_price': current_price,
             }
 
-        elapsed = time.time() - self._signal_time
+        elapsed = time.monotonic() - self._signal_time
         signal_price = self._signal_price
+        timeout = self._active_timeout
 
         # Calculate pullback amount based on direction
         if self._signal_action == "BUY":
@@ -153,9 +207,9 @@ class EntryTimingManager:
             }
 
         # 3. Timeout - enter at market to avoid missing the move
-        if elapsed >= self.config.timeout_seconds:
+        if elapsed >= timeout:
             reason = (
-                f"Timeout ({self.config.timeout_seconds}s) reached - "
+                f"Timeout ({timeout:.1f}s) reached - "
                 f"entering at market. Best pullback seen: "
                 f"${abs(self._best_pullback_price - signal_price):.2f}"
             )
@@ -171,7 +225,7 @@ class EntryTimingManager:
         return {
             'should_enter': False,
             'reason': (
-                f"Waiting for pullback: {elapsed:.1f}s / {self.config.timeout_seconds}s, "
+                f"Waiting for pullback: {elapsed:.1f}s / {timeout:.1f}s, "
                 f"pullback so far: ${max(0, pullback_amount):.2f} / "
                 f"${self.config.pullback_points:.2f}"
             ),
@@ -185,6 +239,7 @@ class EntryTimingManager:
         self._signal_time = None
         self._best_pullback_price = None
         self._signal_details = None
+        self._active_timeout = self.config.timeout_seconds
 
     def cancel_pending(self) -> None:
         """Cancel any pending signal (e.g., if conditions changed)."""
@@ -198,13 +253,13 @@ class EntryTimingManager:
         """Return current entry timing status."""
         if not self.has_pending_signal:
             return {"pending": False}
-        elapsed = time.time() - self._signal_time
+        elapsed = time.monotonic() - self._signal_time
         return {
             "pending": True,
             "action": self._signal_action,
             "signal_price": self._signal_price,
             "elapsed_seconds": elapsed,
-            "timeout_seconds": self.config.timeout_seconds,
+            "timeout_seconds": self._active_timeout,
             "best_pullback_price": self._best_pullback_price,
             "signal_details": self._signal_details,
         }

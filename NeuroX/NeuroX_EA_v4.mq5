@@ -108,7 +108,7 @@ int      g_pyHeartbeatAge    = -1;
 
 // --- Dynamic Trailing SL: Position tracking ---
 // Store entry time for each position (indexed by ticket)
-#define MAX_TRACKED_POSITIONS 20
+#define MAX_TRACKED_POSITIONS 50
 ulong          g_trackedTickets[MAX_TRACKED_POSITIONS];
 datetime       g_trackedEntryTimes[MAX_TRACKED_POSITIONS];
 double         g_trackedEntryPrices[MAX_TRACKED_POSITIONS];
@@ -678,17 +678,31 @@ void ExecuteSignal()
 //+------------------------------------------------------------------+
 void TrackNewPosition(ulong ticket, double entryPrice, double volume = 0.01)
 {
-    if(g_trackedCount < MAX_TRACKED_POSITIONS)
+    // v7.5: FIFO overflow protection - if array is full, remove oldest entry
+    if(g_trackedCount >= MAX_TRACKED_POSITIONS)
     {
-        g_trackedTickets[g_trackedCount] = ticket;
-        g_trackedEntryTimes[g_trackedCount] = TimeCurrent();
-        g_trackedEntryPrices[g_trackedCount] = entryPrice;
-        g_trackedVolumes[g_trackedCount] = volume;
-        g_trackedCount++;
-        Print("[PythonBridge] Tracking position ticket=", ticket,
-              " entry=", DoubleToString(entryPrice, 2),
-              " vol=", DoubleToString(volume, 2));
+        Print("[PythonBridge] WARNING: Position tracking overflow! Removing oldest entry (FIFO). ",
+              "Ticket=", g_trackedTickets[0], " to make room for ticket=", ticket);
+        // Shift all entries left by one (remove index 0 = oldest)
+        for(int j = 0; j < g_trackedCount - 1; j++)
+        {
+            g_trackedTickets[j] = g_trackedTickets[j + 1];
+            g_trackedEntryTimes[j] = g_trackedEntryTimes[j + 1];
+            g_trackedEntryPrices[j] = g_trackedEntryPrices[j + 1];
+            g_trackedVolumes[j] = g_trackedVolumes[j + 1];
+        }
+        g_trackedCount--;
     }
+
+    g_trackedTickets[g_trackedCount] = ticket;
+    g_trackedEntryTimes[g_trackedCount] = TimeCurrent();
+    g_trackedEntryPrices[g_trackedCount] = entryPrice;
+    g_trackedVolumes[g_trackedCount] = volume;
+    g_trackedCount++;
+    Print("[PythonBridge] Tracking position ticket=", ticket,
+          " entry=", DoubleToString(entryPrice, 2),
+          " vol=", DoubleToString(volume, 2),
+          " tracked=", g_trackedCount, "/", MAX_TRACKED_POSITIONS);
 }
 
 //+------------------------------------------------------------------+
@@ -1152,24 +1166,45 @@ void ClosePosition(long ticket, double lotPercent)
                 closeVolume = MathMax(closeVolume, minLot);
                 closeVolume = MathMin(closeVolume, volume);
 
+                bool closeSuccess = false;
                 if(g_position.PositionType() == POSITION_TYPE_BUY)
                 {
                     double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-                    if(g_trade.Sell(closeVolume, _Symbol, price, 0, 0,
-                                    "SmartExit|Close"))
-                    {
-                        Print("[PythonBridge] SmartExit: Closed ", closeVolume,
-                              " lots of ticket ", ticket);
-                    }
+                    closeSuccess = g_trade.Sell(closeVolume, _Symbol, price, 0, 0,
+                                    "SmartExit|Close");
                 }
                 else
                 {
                     double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-                    if(g_trade.Buy(closeVolume, _Symbol, price, 0, 0,
-                                   "SmartExit|Close"))
+                    closeSuccess = g_trade.Buy(closeVolume, _Symbol, price, 0, 0,
+                                   "SmartExit|Close");
+                }
+
+                // v7.5: Verify close success and write confirmation
+                if(closeSuccess && g_trade.ResultRetcode() == TRADE_RETCODE_DONE)
+                {
+                    Print("[PythonBridge] SmartExit: Closed ", closeVolume,
+                          " lots of ticket ", ticket,
+                          " (retcode=", g_trade.ResultRetcode(), ")");
+                }
+                else
+                {
+                    uint retcode = g_trade.ResultRetcode();
+                    Print("[PythonBridge] SmartExit: CLOSE FAILED for ticket ", ticket,
+                          " volume=", closeVolume,
+                          " retcode=", retcode,
+                          " comment=", g_trade.ResultComment());
+                    // Write FAILED confirmation back to Python so it knows
+                    // the partial close did not succeed
+                    string failMsg = StringFormat("%s,FAILED,%d,%.2f,CLOSE_FAILED_RETCODE_%d\n",
+                                                 TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+                                                 ticket, closeVolume, retcode);
+                    int fileHandle = FileOpen(InpConfirmFile, FILE_WRITE|FILE_READ|FILE_TXT|FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_COMMON);
+                    if(fileHandle != INVALID_HANDLE)
                     {
-                        Print("[PythonBridge] SmartExit: Closed ", closeVolume,
-                              " lots of ticket ", ticket);
+                        FileSeek(fileHandle, 0, SEEK_END);
+                        FileWriteString(fileHandle, failMsg);
+                        FileClose(fileHandle);
                     }
                 }
                 return;

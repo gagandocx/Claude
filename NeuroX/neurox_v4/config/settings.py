@@ -369,6 +369,9 @@ class EntryTimingConfig:
     pullback_points: float = 0.30            # Pullback target in dollars (for gold)
     timeout_seconds: float = 10              # Max wait time before entering at market
     breakout_threshold_points: float = 1.0   # Enter immediately if price breaks away by this much
+    adaptive_timeout: bool = True            # Adapt timeout based on ATR (volatility)
+    adaptive_timeout_min: float = 3.0        # Minimum adaptive timeout (seconds)
+    adaptive_timeout_max: float = 30.0       # Maximum adaptive timeout (seconds)
 
 
 # ─────────────────────────────────────────────

@@ -494,9 +494,11 @@ class PythonMLBridge:
                                     # v7.4: Feed Platt calibrator with trade outcome
                                     if self.confidence_calibrator:
                                         raw_conf = active.get("confidence", 0.5)
+                                        trade_regime = active.get("regime", None)
                                         self.confidence_calibrator.record_outcome(
                                             raw_prob=raw_conf,
                                             actual_outcome=1 if won else 0,
+                                            regime=trade_regime,
                                         )
                                         self.confidence_calibrator.save_state()
                                     # v7.5: Record true label for meta-learner accumulation
@@ -519,26 +521,20 @@ class PythonMLBridge:
                                                     feat_input, pred_probs, won
                                                 )
                                     # v7.4: Feed Sharpe-based model weighting
-                                    # Attribute PnL proportionally to models that voted
-                                    # in the direction of the trade (not equally to all)
+                                    # v7.5: Use marginal contribution analysis for attribution
                                     if self.config.enable_sharpe_weights and hasattr(self.signal_generator, 'ensemble'):
                                         ensemble = self.signal_generator.ensemble
                                         individual_preds = active.get("individual_preds", {})
                                         if individual_preds:
-                                            # Only attribute PnL to models that predicted
-                                            # the trade direction (prob > 1/3 threshold)
-                                            contributing_models = {
-                                                name: prob for name, prob in individual_preds.items()
-                                                if prob > 1.0 / 3.0
-                                            }
-                                            if contributing_models:
-                                                # Normalize contributions to sum to 1
-                                                total_contribution = sum(contributing_models.values())
-                                                for mn, contrib in contributing_models.items():
-                                                    weight = contrib / total_contribution
+                                            # Use marginal contribution for attribution
+                                            marginal = ensemble.compute_marginal_contributions(
+                                                individual_preds, direction
+                                            )
+                                            if marginal:
+                                                for mn, weight in marginal.items():
                                                     ensemble.update_pnl_attribution(mn, pnl * weight)
                                             else:
-                                                # Fallback: no model passed threshold, attribute equally
+                                                # Fallback: attribute equally
                                                 for mn in ensemble._model_names:
                                                     ensemble.update_pnl_attribution(mn, pnl / len(ensemble._model_names))
                                         else:
@@ -563,7 +559,8 @@ class PythonMLBridge:
                                 slippage_val = conf.get("slippage", "")
                                 if self.signal_generator._active_position and actual_price > 0:
                                     self.signal_generator._active_position["entry_price"] = actual_price
-                                    self.signal_generator._active_position["entry_time"]  = time.time()  # float! was strftime string causing TypeError
+                                    self.signal_generator._active_position["entry_time"]  = time.monotonic()
+                                    self.signal_generator._active_position["entry_wall_time"] = time.time()
                                     direction = self.signal_generator._active_position.get("direction","BUY")
                                     # ── Instant entry confirmation ───────────────
                                     self.logger.info("=" * 55)
@@ -909,6 +906,10 @@ class PythonMLBridge:
                 htf_bias=htf_bias,
                 cross_pair_info=cross_pair_info,
                 prices_m1=df_m1,
+                spread_points=(
+                    self.spread_monitor.get_current_spread()
+                    if self.spread_monitor else None
+                ),
             )
 
             # 9a. Store feature_input and prediction_probs on active position
@@ -924,13 +925,16 @@ class PythonMLBridge:
             # 9b. Apply Platt scaling confidence calibration (v7.4)
             if self.confidence_calibrator and signal.action != "HOLD":
                 raw_confidence = signal.confidence
-                calibrated = self.confidence_calibrator.calibrate(
-                    np.array([raw_confidence])
+                # v7.5: Use regime-conditional calibration
+                calibrated = self.confidence_calibrator.calibrate_for_regime(
+                    np.array([raw_confidence]),
+                    regime=signal.regime,
                 )[0]
                 signal.confidence = float(calibrated)
                 if abs(calibrated - raw_confidence) > 0.01:
                     self.logger.debug(
-                        f"[PlattCal] Confidence: {raw_confidence:.3f} -> {calibrated:.3f}"
+                        f"[PlattCal] Confidence: {raw_confidence:.3f} -> {calibrated:.3f} "
+                        f"(regime: {signal.regime})"
                     )
 
             # 10. Brain evaluation — fully autonomous decision layer
@@ -1021,6 +1025,8 @@ class PythonMLBridge:
                             "symbol": signal.symbol,
                             "individual_preds": _individual_preds,
                         },
+                        atr=atr,
+                        avg_atr=float(np.mean(self._atr_history)) if self._atr_history else atr,
                     )
                 # Evaluate whether to enter now
                 entry_result = self.entry_timing.evaluate_entry(
@@ -1079,13 +1085,15 @@ class PythonMLBridge:
                             "position_id": self.signal_generator._position_id_counter,
                             "direction": status['action'],
                             "entry_price": current_price,
-                            "entry_time": time.time(),
+                            "entry_time": time.monotonic(),
+                            "entry_wall_time": time.time(),
                             "signal_context": {
                                 "confidence": details.get("confidence", 0.5),
                                 "session": details.get("regime", "unknown"),
                                 "sl_distance": details.get("sl_pips", 0) * 0.1,
                             },
                             "individual_preds": details.get("individual_preds", {}),
+                            "regime": details.get("regime", "unknown"),
                         }
 
             # 10c. Write signal to bridge
