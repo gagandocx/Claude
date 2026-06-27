@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Create NeuroX_EA_v4.mq5, neurox_run_v4.bat, and Python_Bridge_EA_v4.mq5 (root copy). The EA gets version '7.40' and updated header comment. The bat file downloads from neurox_v4/ paths to python_bridge_v4/ folder and runs from there.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Step 1: Create NeuroX/NeuroX_EA_v4.mq5 as a copy of NeuroX/NeuroX_EA.mq5 with these changes: (a) header comment changed to 'v7.4 - Calibrated: Platt scaling, micro-pullback, Sharpe weights', (b) #property version changed to '7.40', (c) title/copyright lines updated to reference v7.4. Keep all input parameters, logic, and bridge filenames (python_bridge_signal.csv, python_bridge_confirm.csv) exactly the same. Never use 'input' as a variable name.",
     "Step 2: Create NeuroX/neurox_run_v4.bat following the pattern of neurox_run.bat but: (a) title 'NeuroX v7.4', (b) downloads from GitHub raw URL path NeuroX/neurox_v4/... to local python_bridge_v4/ folder, (c) downloads all key files: main.py, config/settings.py, models/ensemble.py, strategies/signal_generator.py, strategies/trading_brain.py, strategies/confidence_calibrator.py, strategies/entry_timing.py, data/market_data.py, data/multi_timeframe.py, signals/bridge.py, models/tft_model.py, models/chronos_model.py, models/gradient_boost_extra.py, models/catboost_model.py, (d) also downloads NeuroX_EA_v4.mq5 to local dir, (e) compiles EA if MetaEditor found, (f) runs: cd python_bridge_v4 && python -u main.py --live. Use the base URL: https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/",
