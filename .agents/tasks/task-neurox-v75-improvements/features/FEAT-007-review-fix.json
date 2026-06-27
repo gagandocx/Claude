@@ -2,7 +2,7 @@
   "id": "FEAT-007-review-fix",
   "type": "fix",
   "description": "Review fixes: Fix online learning dead code, add meta-learner data cap, add pipeline TODO, make spread filter configurable, verify Monte Carlo performance.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Fix online_update() in models/ensemble.py to call model() directly instead of model.predict() for differentiable tensor output",
     "Add max_samples cap (5000) to save_stacked_predictions() in models/ensemble.py, dropping oldest when exceeded",
@@ -22,5 +22,5 @@
     "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -x --tb=short -q 2>&1 | tail -20"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 5 review items addressed. online_update() now correctly calls model() forward pass and returns True (14 models updated). Meta-learner cap verified at 5000 samples. Monte Carlo trades_forward=20 confirmed (no change needed). SpreadGateConfig.max_absolute_spread added. 532 tests pass."
 }
