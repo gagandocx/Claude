@@ -1,20 +1,20 @@
 //+------------------------------------------------------------------+
-//|                                            Python_Bridge_EA.mq5   |
+//|                                          Python_Bridge_EA_v3.mq5  |
 //|                              NeuroX - Signal Executor              |
 //|                                                                    |
-//|  v7.1 - Ultimate: $0.6 SL, $0.05 Trail, 61.6% WR, PF 4.02      |
+//|  v8.0 - Institutional Grade: Disagreement, Kelly, Monte Carlo    |
 //|                                                                    |
 //|  Reads trade signals from the NeuroX CSV file and                  |
 //|  executes trades with proper risk management. Writes execution     |
 //|  confirmations back for the Python system to read.                 |
 //|                                                                    |
 //|  Communication Protocol:                                           |
-//|    Python -> MT5: python_bridge_signal.csv (signals)               |
-//|    MT5 -> Python: python_bridge_confirm.csv (confirmations)        |
+//|    Python -> MT5: python_bridge_v3_signal.csv (signals)            |
+//|    MT5 -> Python: python_bridge_v3_confirm.csv (confirmations)     |
 //+------------------------------------------------------------------+
 #property copyright "NeuroX"
-#property version   "7.10"
-// v7.1 - Ultimate: $0.6 SL, $0.05 Trail, 61.6% WR, PF 4.02
+#property version   "8.00"
+// v8.0 - Institutional Grade: Disagreement, Kelly, Monte Carlo
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -24,10 +24,10 @@
 //+------------------------------------------------------------------+
 //| Input Parameters                                                   |
 //+------------------------------------------------------------------+
-input string   InpSignalFile       = "python_bridge_signal.csv";   // Signal file name
-input string   InpConfirmFile      = "python_bridge_confirm.csv";  // Confirmation file name
-input string   InpExitFile         = "python_bridge_exit.csv";     // Exit signal file name
-input string   InpHeartbeatFile    = "python_bridge_heartbeat.txt"; // Heartbeat file name
+input string   InpSignalFile       = "python_bridge_v3_signal.csv";   // Signal file name
+input string   InpConfirmFile      = "python_bridge_v3_confirm.csv";  // Confirmation file name
+input string   InpExitFile         = "python_bridge_v3_exit.csv";     // Exit signal file name
+input string   InpHeartbeatFile    = "python_bridge_v3_heartbeat.txt"; // Heartbeat file name
 input int      InpMaxSignalAge     = 300;       // Max signal age (seconds)
 input int      InpMaxHeartbeatAge  = 60;        // Max heartbeat age (seconds)
 input double   InpMaxLotSize       = 1.0;       // Maximum lot size
@@ -36,7 +36,7 @@ input int      InpMagicNumber      = 20240115;  // Magic number for orders
 input int      InpSlippage         = 30;        // Slippage in points
 input int      InpMaxOpenTrades    = 5;        // Max open trades (HF scalping)
 input bool     InpShowDashboard    = true;      // Show dashboard panel
-input string   InpStatusFile       = "python_bridge_status.txt"; // Status file name
+input string   InpStatusFile       = "python_bridge_v3_status.txt"; // Status file name
 
 // --- Dynamic Trailing Stop Parameters ---
 input double   InpBreakevenProfit  = 0.70;     // Profit $ to move SL to breakeven
@@ -56,6 +56,9 @@ input double   InpFixedSL          = 2.00;     // Fixed SL in $ (0=use signal's 
 input double   InpTrailDist1       = 0.50;     // Trail distance at Tier 2 ($)
 input double   InpTrailDist2       = 0.30;     // Trail distance at Tier 3 ($)
 input double   InpTrailDist3       = 0.20;     // Trail distance at Tier 4 ($)
+
+// --- Tick Data Writing (v8.0) ---
+input bool     InpWriteTickData    = true;      // Write tick data to CSV for Python
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                    |
@@ -122,6 +125,23 @@ datetime       g_momentumTime  = 0;
 // Trailing status for dashboard display
 string         g_trailStatus   = "No positions";
 
+// ── Tick Data Ring Buffer (v8.0) ─────────────────────────────────────────────
+// Stores last 5000 ticks for Python order flow analysis.
+// Written to python_bridge_v3_tick_data.csv periodically (every 100ms).
+#define TICK_BUFFER_SIZE 5000
+struct TickRecord
+{
+    datetime  tick_time;
+    double    bid;
+    double    ask;
+    long      tick_volume;
+    uint      tick_flags;
+};
+TickRecord     g_tickBuffer[TICK_BUFFER_SIZE];
+int            g_tickBufferIdx   = 0;    // Current write index (ring buffer)
+int            g_tickBufferCount = 0;    // Total ticks stored (max TICK_BUFFER_SIZE)
+datetime       g_lastTickWriteTime = 0;  // Last time tick data was flushed to CSV
+
 //+------------------------------------------------------------------+
 //| Read Brain settings from Python TradingBrain                      |
 //| File: python_bridge_brain_settings.csv                            |
@@ -129,7 +149,7 @@ string         g_trailStatus   = "No positions";
 //+------------------------------------------------------------------+
 void ReadBrainSettings()
 {
-    int fh = FileOpen("python_bridge_brain_settings.csv",
+    int fh = FileOpen("python_bridge_v3_brain_settings.csv",
                       FILE_READ | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
     if(fh == INVALID_HANDLE)
         return;   // Brain hasn't written settings yet — keep defaults
@@ -235,7 +255,7 @@ void OnTimer()
     if(TimeCurrent() - g_lastMT5HB >= 2)
     {
         g_lastMT5HB = TimeCurrent();
-        int hbFile = FileOpen("mt5_bridge_heartbeat.txt",
+        int hbFile = FileOpen("mt5_bridge_v3_heartbeat.txt",
                               FILE_WRITE | FILE_TXT | FILE_COMMON);
         if(hbFile != INVALID_HANDLE)
         {
@@ -277,10 +297,106 @@ void OnTimer()
 }
 
 //+------------------------------------------------------------------+
+//| Write tick data to CSV ring buffer for Python order flow analysis |
+//| Called every tick, flushes to disk every 100ms                    |
+//+------------------------------------------------------------------+
+void WriteTickData()
+{
+    if(!InpWriteTickData)
+        return;
+
+    MqlTick tick;
+    if(!SymbolInfoTick(_Symbol, tick))
+        return;
+
+    // Store tick in ring buffer
+    g_tickBuffer[g_tickBufferIdx].tick_time    = tick.time;
+    g_tickBuffer[g_tickBufferIdx].bid          = tick.bid;
+    g_tickBuffer[g_tickBufferIdx].ask          = tick.ask;
+    g_tickBuffer[g_tickBufferIdx].tick_volume  = tick.volume;
+    g_tickBuffer[g_tickBufferIdx].tick_flags   = tick.flags;
+
+    g_tickBufferIdx = (g_tickBufferIdx + 1) % TICK_BUFFER_SIZE;
+    if(g_tickBufferCount < TICK_BUFFER_SIZE)
+        g_tickBufferCount++;
+
+    // Flush to CSV every 100ms (compare with last write time)
+    datetime currentTime = TimeCurrent();
+    if(currentTime <= g_lastTickWriteTime)
+    {
+        // Less than 1 second since last write - use GetTickCount for ms precision
+        static uint lastTickMs = 0;
+        uint nowMs = GetTickCount();
+        if(nowMs - lastTickMs < 100)
+            return;
+        lastTickMs = nowMs;
+    }
+    g_lastTickWriteTime = currentTime;
+
+    // Write entire buffer to file
+    int fh = FileOpen("python_bridge_v3_tick_data.csv",
+                      FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
+    if(fh == INVALID_HANDLE)
+        return;
+
+    // Write header
+    FileWrite(fh, "timestamp", "bid", "ask", "volume", "flags");
+
+    // Write from oldest to newest
+    int startIdx = (g_tickBufferCount < TICK_BUFFER_SIZE) ? 0 : g_tickBufferIdx;
+    for(int i = 0; i < g_tickBufferCount; i++)
+    {
+        int idx = (startIdx + i) % TICK_BUFFER_SIZE;
+        FileWrite(fh,
+                  TimeToString(g_tickBuffer[idx].tick_time, TIME_DATE | TIME_SECONDS),
+                  DoubleToString(g_tickBuffer[idx].bid, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
+                  DoubleToString(g_tickBuffer[idx].ask, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
+                  IntegerToString(g_tickBuffer[idx].tick_volume),
+                  IntegerToString(g_tickBuffer[idx].tick_flags));
+    }
+
+    FileClose(fh);
+}
+
+//+------------------------------------------------------------------+
+//| Write current spread data for Python spread gating                |
+//| Single row, overwritten each tick                                  |
+//+------------------------------------------------------------------+
+void WriteSpreadData()
+{
+    MqlTick tick;
+    if(!SymbolInfoTick(_Symbol, tick))
+        return;
+
+    double spreadPoints = (tick.ask - tick.bid) / _Point;
+
+    int fh = FileOpen("python_bridge_v3_spread.csv",
+                      FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
+    if(fh == INVALID_HANDLE)
+        return;
+
+    // Write header
+    FileWrite(fh, "timestamp", "spread_points", "ask", "bid");
+
+    // Write single data row (overwritten each tick)
+    FileWrite(fh,
+              TimeToString(tick.time, TIME_DATE | TIME_SECONDS),
+              DoubleToString(spreadPoints, 1),
+              DoubleToString(tick.ask, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
+              DoubleToString(tick.bid, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+
+    FileClose(fh);
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                                |
 //+------------------------------------------------------------------+
 void OnTick()
 {
+    // --- v8.0: Write tick data and spread for Python order flow ---
+    WriteTickData();
+    WriteSpreadData();
+
     // --- Dynamic position management runs on EVERY tick ---
     ManageOpenPositions();
 
@@ -1356,24 +1472,12 @@ void UpdateDashboard()
     DashboardBackground("bg_main2", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
     // Layer 3 (top): third layer ensures absolutely no bleed-through
     DashboardBackground("bg_main3", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
-    // Title bar background (75px to fit logo + subtitle)
-    DashboardBackground("bg_title", panelX, panelY, panelWidth, 75, clrBgHeader, 255);
+    // Title bar background
+    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
 
-    // --- Logo (OBJ_BITMAP_LABEL: 300x60 dark background blends with panel) ---
-    string logoName = "PB_logo";
-    ObjectCreate(0, logoName, OBJ_BITMAP_LABEL, 0, 0, 0);
-    ObjectSetString(0, logoName, OBJPROP_BMPFILE, "\\Images\\neurox_logo.bmp");
-    ObjectSetInteger(0, logoName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-    ObjectSetInteger(0, logoName, OBJPROP_XDISTANCE, panelX + 15);
-    ObjectSetInteger(0, logoName, OBJPROP_YDISTANCE, y);
-    ObjectSetInteger(0, logoName, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, logoName, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, logoName, OBJPROP_BACK, false);
-    y += 62;
-
-    // --- Subtitle ---
-    DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.2-rc1", clrTitle, 8, "Consolas");
-    y += 18;
+    // --- Title ---
+    DashboardLabel("title", panelX + leftMargin, y, "NEUROX - HF SCALPER", clrTitle, 10, "Consolas Bold");
+    y += 28;
 
     // --- Symbol & Timeframe ---
     DashboardLabel("sym_lbl", panelX + leftMargin, y, "Symbol:", clrLabel);

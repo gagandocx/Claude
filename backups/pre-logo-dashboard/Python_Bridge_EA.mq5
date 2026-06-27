@@ -230,9 +230,9 @@ void OnTimer()
 
     // ── MT5 heartbeat for Python connection detection ──────────────────
     // Python reads this file every cycle to show [MT5 CONNECTED/DISCONNECTED].
-    // Throttled to once per 2 s to match Python's write_heartbeat() cadence.
+    // Written every 1s for instant connection status updates.
     static datetime g_lastMT5HB = 0;
-    if(TimeCurrent() - g_lastMT5HB >= 2)
+    if(TimeCurrent() - g_lastMT5HB >= 1)
     {
         g_lastMT5HB = TimeCurrent();
         int hbFile = FileOpen("mt5_bridge_heartbeat.txt",
@@ -269,11 +269,6 @@ void OnTimer()
     // Update dashboard
     if(InpShowDashboard)
         UpdateDashboard();
-
-    // ── v2: Write open positions CSV for Python reconciliation ─────────
-    // Python reads this on startup to sync its position state with MT5.
-    // Prevents the "ghost HOLD" problem if Python restarts mid-trade.
-    WritePositionsCSV();
 }
 
 //+------------------------------------------------------------------+
@@ -1356,24 +1351,12 @@ void UpdateDashboard()
     DashboardBackground("bg_main2", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
     // Layer 3 (top): third layer ensures absolutely no bleed-through
     DashboardBackground("bg_main3", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
-    // Title bar background (75px to fit logo + subtitle)
-    DashboardBackground("bg_title", panelX, panelY, panelWidth, 75, clrBgHeader, 255);
+    // Title bar background
+    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
 
-    // --- Logo (OBJ_BITMAP_LABEL: 300x60 dark background blends with panel) ---
-    string logoName = "PB_logo";
-    ObjectCreate(0, logoName, OBJ_BITMAP_LABEL, 0, 0, 0);
-    ObjectSetString(0, logoName, OBJPROP_BMPFILE, "\\Images\\neurox_logo.bmp");
-    ObjectSetInteger(0, logoName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-    ObjectSetInteger(0, logoName, OBJPROP_XDISTANCE, panelX + 15);
-    ObjectSetInteger(0, logoName, OBJPROP_YDISTANCE, y);
-    ObjectSetInteger(0, logoName, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, logoName, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, logoName, OBJPROP_BACK, false);
-    y += 62;
-
-    // --- Subtitle ---
-    DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.2-rc1", clrTitle, 8, "Consolas");
-    y += 18;
+    // --- Title ---
+    DashboardLabel("title", panelX + leftMargin, y, "NEUROX - HF SCALPER", clrTitle, 10, "Consolas Bold");
+    y += 28;
 
     // --- Symbol & Timeframe ---
     DashboardLabel("sym_lbl", panelX + leftMargin, y, "Symbol:", clrLabel);
@@ -1598,53 +1581,5 @@ void UpdateDashboard()
     }
 
     ChartRedraw(0);
-}
-
-//+------------------------------------------------------------------+
-//| Write open positions CSV for Python reconciliation (v2)            |
-//| Called every timer cycle. Lists all open positions so Python can   |
-//| recover state on restart (prevents "ghost HOLD" problem).          |
-//+------------------------------------------------------------------+
-void WritePositionsCSV()
-{
-    string filename = "python_bridge_positions.csv";
-    int fileHandle = FileOpen(filename, FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_ANSI, ',');
-    if(fileHandle == INVALID_HANDLE)
-        return;
-
-    // Write header
-    FileWrite(fileHandle, "ticket", "symbol", "direction", "lot_size",
-              "open_price", "open_time", "sl", "tp");
-
-    // Write all open positions
-    int totalPositions = PositionsTotal();
-    for(int i = 0; i < totalPositions; i++)
-    {
-        ulong posTicket = PositionGetTicket(i);
-        if(posTicket == 0)
-            continue;
-
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
-        long posType = PositionGetInteger(POSITION_TYPE);
-        double posLot = PositionGetDouble(POSITION_VOLUME);
-        double posPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-        datetime posTime = (datetime)PositionGetInteger(POSITION_TIME);
-        double posSL = PositionGetDouble(POSITION_SL);
-        double posTP = PositionGetDouble(POSITION_TP);
-
-        string direction = (posType == POSITION_TYPE_BUY) ? "BUY" : "SELL";
-
-        FileWrite(fileHandle,
-                  IntegerToString(posTicket),
-                  posSymbol,
-                  direction,
-                  DoubleToString(posLot, 2),
-                  DoubleToString(posPrice, 5),
-                  TimeToString(posTime, TIME_DATE | TIME_SECONDS),
-                  DoubleToString(posSL, 5),
-                  DoubleToString(posTP, 5));
-    }
-
-    FileClose(fileHandle);
 }
 //+------------------------------------------------------------------+

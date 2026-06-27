@@ -1351,12 +1351,24 @@ void UpdateDashboard()
     DashboardBackground("bg_main2", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
     // Layer 3 (top): third layer ensures absolutely no bleed-through
     DashboardBackground("bg_main3", panelX, panelY, panelWidth, panelHeight, clrBgPanel, 255);
-    // Title bar background
-    DashboardBackground("bg_title", panelX, panelY, panelWidth, 28, clrBgHeader, 255);
+    // Title bar background (75px to fit logo + subtitle)
+    DashboardBackground("bg_title", panelX, panelY, panelWidth, 75, clrBgHeader, 255);
 
-    // --- Title ---
-    DashboardLabel("title", panelX + leftMargin, y, "NEUROX - HF SCALPER", clrTitle, 10, "Consolas Bold");
-    y += 28;
+    // --- Logo (OBJ_BITMAP_LABEL: 300x60 dark background blends with panel) ---
+    string logoName = "PB_logo";
+    ObjectCreate(0, logoName, OBJ_BITMAP_LABEL, 0, 0, 0);
+    ObjectSetString(0, logoName, OBJPROP_BMPFILE, "\\Images\\neurox_logo.bmp");
+    ObjectSetInteger(0, logoName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+    ObjectSetInteger(0, logoName, OBJPROP_XDISTANCE, panelX + 15);
+    ObjectSetInteger(0, logoName, OBJPROP_YDISTANCE, y);
+    ObjectSetInteger(0, logoName, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, logoName, OBJPROP_HIDDEN, true);
+    ObjectSetInteger(0, logoName, OBJPROP_BACK, false);
+    y += 62;
+
+    // --- Subtitle ---
+    DashboardLabel("subtitle", panelX + leftMargin, y, "HF Scalper | v7.1", clrTitle, 8, "Consolas");
+    y += 18;
 
     // --- Symbol & Timeframe ---
     DashboardLabel("sym_lbl", panelX + leftMargin, y, "Symbol:", clrLabel);
