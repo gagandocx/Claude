@@ -9,8 +9,8 @@ echo.
 :: --- Configuration ---
 set "EA_SOURCE=%~dp0NeuroX_EA.mq5"
 set "LOGO_SOURCE=%~dp0neurox_logo.bmp"
-set "MT5_EXPERTS=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\EE1261C89A64D41685651B738DC52A84\MQL5\Experts\Advisors\"
-set "MT5_IMAGES=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\EE1261C89A64D41685651B738DC52A84\MQL5\Images\"
+set "MT5_EXPERTS=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\EE1261C89A64D41685651B738DC52A84\MQL5\Experts\Advisors"
+set "MT5_IMAGES=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\EE1261C89A64D41685651B738DC52A84\MQL5\Images"
 set "METAEDITOR="
 
 :: --- Find MetaEditor ---
@@ -37,7 +37,7 @@ if not exist "%EA_SOURCE%" (
     pause
     exit /b 1
 )
-copy /Y "%EA_SOURCE%" "%MT5_EXPERTS%" >nul
+copy /Y "%EA_SOURCE%" "%MT5_EXPERTS%\" >nul
 if %errorlevel% equ 0 (
     echo         Done.
 ) else (
@@ -51,7 +51,7 @@ echo.
 echo [3/4] Copying neurox_logo.bmp to MT5 Images folder...
 if exist "%LOGO_SOURCE%" (
     if not exist "%MT5_IMAGES%" mkdir "%MT5_IMAGES%"
-    copy /Y "%LOGO_SOURCE%" "%MT5_IMAGES%" >nul
+    copy /Y "%LOGO_SOURCE%" "%MT5_IMAGES%\" >nul
     if %errorlevel% equ 0 (
         echo         Done.
     ) else (
@@ -64,8 +64,8 @@ echo.
 
 :: --- Compile EA ---
 echo [4/4] Compiling NeuroX_EA.mq5...
-set "COMPILE_TARGET=%MT5_EXPERTS%NeuroX_EA.mq5"
-set "LOG_FILE=%MT5_EXPERTS%NeuroX_EA.log"
+set "COMPILE_TARGET=%MT5_EXPERTS%\NeuroX_EA.mq5"
+set "LOG_FILE=%MT5_EXPERTS%\NeuroX_EA.log"
 
 "%METAEDITOR%" /compile:"%COMPILE_TARGET%" /log
 echo.
