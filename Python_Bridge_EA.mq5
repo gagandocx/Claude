@@ -1388,19 +1388,14 @@ void UpdateDashboard()
     // ── Python Bridge: LIVE / OFFLINE ────────────────────────────────
     string pyConnStr;
     color  pyConnClr;
-    if(g_pyHeartbeatAge < 0)
+    if(g_pyHeartbeatAge >= 0 && g_pyHeartbeatAge <= 3)
     {
-        pyConnStr = "● OFFLINE  (Python not started)";
-        pyConnClr = clrRed;
-    }
-    else if(g_pyHeartbeatAge <= InpMaxHeartbeatAge)
-    {
-        pyConnStr = "● LIVE    " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnStr = "● LIVE";
         pyConnClr = clrLime;
     }
     else
     {
-        pyConnStr = "● OFFLINE  " + IntegerToString(g_pyHeartbeatAge) + "s ago";
+        pyConnStr = "● OFFLINE";
         pyConnClr = clrRed;
     }
     DashboardLabel("conn_py_lbl", panelX + leftMargin, y, "Python Bridge:", clrLabel);

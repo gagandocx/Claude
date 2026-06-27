@@ -1028,6 +1028,18 @@ class TradingBrain:
             edge_status   = e_status,
             config        = self.config,
         )
+        # ── Confidence-based lot scaling ─────────────────────────────────
+        if signal.confidence >= 0.80:
+            conf_mult = 1.0
+        elif signal.confidence >= 0.60:
+            conf_mult = 0.75
+        elif signal.confidence >= 0.40:
+            conf_mult = 0.50
+        else:
+            conf_mult = 0.25
+        final_lot = max(self.config.min_lot, final_lot * conf_mult)
+        logger.info(f"[Brain] Confidence lot scaling: conf={signal.confidence:.2f} multiplier={conf_mult:.2f}")
+
         r['sizing'] = f'lot={final_lot:.2f}'
 
         # ── Trade quality score ───────────────────────────────────────────
