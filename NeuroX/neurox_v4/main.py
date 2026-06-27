@@ -285,6 +285,10 @@ class PythonMLBridge:
         )
 
         # Pipeline threading (overlap data fetch with model compute)
+        # TODO: PipelineManager is ready but not yet wired into run_cycle().
+        # Integrating it requires refactoring the fetch/compute flow to use
+        # pipeline.submit_data_fetch() and pipeline.get_results() for overlapping
+        # I/O with model inference. Currently data fetches remain serial.
         self.pipeline_manager = (
             PipelineManager(PipelineConfig())
             if self.config.enable_pipeline else None

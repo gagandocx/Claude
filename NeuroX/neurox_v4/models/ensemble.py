@@ -694,19 +694,22 @@ class EnsembleManager:
                 optimizer.zero_grad()
 
                 with torch.enable_grad():
-                    output = model.predict(x_tensor)
-                    if isinstance(output, np.ndarray):
-                        # Model returned numpy, need to re-run forward pass
-                        # Skip this model for online update
-                        continue
+                    # Call the nn.Module forward pass directly (model())
+                    # instead of model.predict() which returns numpy.
+                    # This gives us differentiable tensors for gradient updates.
+                    output = model(x_tensor)
                     # output should be (batch, 3) logits or probabilities
-                    if output.requires_grad:
-                        loss = loss_fn(output, y_tensor)
-                        loss.backward()
-                        # Gradient clipping for stability
-                        torch.nn.utils.clip_grad_norm_(head_params, max_norm=1.0)
-                        optimizer.step()
-                        updated_count += 1
+                    if not isinstance(output, torch.Tensor):
+                        # Model did not return a tensor - skip
+                        continue
+                    if not output.requires_grad:
+                        continue
+                    loss = loss_fn(output, y_tensor)
+                    loss.backward()
+                    # Gradient clipping for stability
+                    torch.nn.utils.clip_grad_norm_(head_params, max_norm=1.0)
+                    optimizer.step()
+                    updated_count += 1
 
                 # Re-freeze everything
                 for param in model.parameters():
@@ -761,10 +764,15 @@ class EnsembleManager:
         - 'X': stacked predictions, shape (N, 51)
         - 'y': true labels, shape (N,)
 
+        Caps at 5000 samples max, dropping oldest when exceeded to prevent
+        unbounded disk growth.
+
         Args:
             stacked_preds: Stacked model predictions, shape (1, 51) or (51,)
             true_label: True class label (0, 1, or 2)
         """
+        MAX_META_SAMPLES = 5000
+
         if stacked_preds.ndim == 1:
             stacked_preds = stacked_preds.reshape(1, -1)
         elif stacked_preds.ndim == 2:
@@ -786,10 +794,15 @@ class EnsembleManager:
                 X_new = stacked_preds
                 y_new = label_arr
 
+            # Cap at MAX_META_SAMPLES, dropping oldest when exceeded
+            if len(y_new) > MAX_META_SAMPLES:
+                X_new = X_new[-MAX_META_SAMPLES:]
+                y_new = y_new[-MAX_META_SAMPLES:]
+
             np.savez(self._meta_data_path, X=X_new, y=y_new)
             logger.debug(
                 f"[Ensemble] Saved meta-learner sample "
-                f"(total: {len(y_new)} samples)"
+                f"(total: {len(y_new)} samples, max: {MAX_META_SAMPLES})"
             )
         except Exception as e:
             logger.debug(f"[Ensemble] Error saving meta-learner data: {e}")

@@ -1086,6 +1086,7 @@ class SpreadGateConfig:
     """
     spread_file: str = SPREAD_FILE           # Path to spread CSV from EA
     max_spread_multiplier: float = 1.5       # Enter only if spread < 1.5x average
+    max_absolute_spread: float = 80.0        # Max absolute spread in points (gold typical max)
     update_interval_ms: int = 500            # How often EA updates spread file
 
 

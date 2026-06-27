@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR,
                              SessionConfig, SpreadFilterConfig, AdaptiveMomentumConfig,
                              PriceStructureConfig, FVGConfig, LiquiditySweepConfig,
-                             AutoOptimizerConfig)
+                             AutoOptimizerConfig, SpreadGateConfig)
 from models.ensemble import EnsembleManager
 from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
@@ -94,6 +94,7 @@ class SignalGenerator:
         # Smart upgrade configs
         self.session_config = SessionConfig()
         self.spread_filter_config = SpreadFilterConfig()
+        self.spread_gate_config = SpreadGateConfig()
         self.adaptive_momentum_config = AdaptiveMomentumConfig()
         self.price_structure_config = PriceStructureConfig()
         self.fvg_config = FVGConfig()
@@ -1091,12 +1092,8 @@ class SignalGenerator:
         # v7.5: Use actual EA-reported spread if available (from SpreadMonitor)
         if spread_points is not None and spread_points > 0:
             # Use actual spread from EA via python_bridge_spread.csv
-            # Block if current spread > max_spread_multiplier * typical spread
-            # Typical gold spread is ~20-40 points; block above 3x average
-            avg_spread = self.spread_filter_config.avg_spread_window  # reuse as baseline
-            # If spread_points is in raw points (e.g. 30 for 3.0 pips on gold)
-            # Simple heuristic: block if > 80 points (abnormally wide for gold)
-            max_acceptable_spread = 80.0  # points (gold typical max)
+            # Block if current spread exceeds max absolute spread from config
+            max_acceptable_spread = self.spread_gate_config.max_absolute_spread
             if spread_points > max_acceptable_spread:
                 logger.warning(
                     "[SignalGen] HOLD - actual EA spread too wide: %.1f pts > %.1f pts max",
