@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Copy neurox/ to neurox_v4/, create the 3 new Python modules (confidence_calibrator.py, entry_timing.py, sharpe_weights in ensemble.py), integrate them into main.py and signal_generator.py, update VERSION to 7.4, and update config/settings.py with new config dataclasses.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1: Copy the entire NeuroX/neurox/ folder to NeuroX/neurox_v4/ preserving all files and subdirectory structure.",
     "Step 2: Create NeuroX/neurox_v4/strategies/confidence_calibrator.py implementing Platt scaling. The class ConfidenceCalibrator should: (a) maintain a sliding window (deque) of recent (raw_logit, actual_outcome) pairs (configurable size, default 200), (b) fit sigmoid calibration parameters A, B using scipy.optimize (logistic regression on logits), (c) provide calibrate(raw_probs) -> calibrated_probs method that applies P = 1/(1+exp(-(A*logit+B))), (d) persist state to/from platt_calibration_state.json, (e) fall back to pass-through if insufficient samples. Add a PlattCalibrationConfig dataclass.",
@@ -26,5 +26,5 @@
     "python -c \"import sys; sys.path.insert(0, '/projects/sandbox/Claude/NeuroX/neurox_v4'); from main import VERSION; assert VERSION == '7.4', f'Expected 7.4 got {VERSION}'\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All imports verified clean. scipy installed for Platt scaling optimization. Required pyenv global 3.12.13 setup. Additional pip packages needed: numpy scipy torch scikit-learn pandas yfinance feedparser lightgbm catboost transformers ta. Original neurox/ folder confirmed untouched (no git diff)."
 }
