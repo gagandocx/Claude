@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Create NeuroX_EA_v4.mq5, neurox_run_v4.bat, and Python_Bridge_EA_v4.mq5 (root copy). The EA gets version '7.40' and updated header comment. The bat file downloads from neurox_v4/ paths to python_bridge_v4/ folder and runs from there.",
+  "status": "pending",
+  "steps": [
+    "Step 1: Create NeuroX/NeuroX_EA_v4.mq5 as a copy of NeuroX/NeuroX_EA.mq5 with these changes: (a) header comment changed to 'v7.4 - Calibrated: Platt scaling, micro-pullback, Sharpe weights', (b) #property version changed to '7.40', (c) title/copyright lines updated to reference v7.4. Keep all input parameters, logic, and bridge filenames (python_bridge_signal.csv, python_bridge_confirm.csv) exactly the same. Never use 'input' as a variable name.",
+    "Step 2: Create NeuroX/neurox_run_v4.bat following the pattern of neurox_run.bat but: (a) title 'NeuroX v7.4', (b) downloads from GitHub raw URL path NeuroX/neurox_v4/... to local python_bridge_v4/ folder, (c) downloads all key files: main.py, config/settings.py, models/ensemble.py, strategies/signal_generator.py, strategies/trading_brain.py, strategies/confidence_calibrator.py, strategies/entry_timing.py, data/market_data.py, data/multi_timeframe.py, signals/bridge.py, models/tft_model.py, models/chronos_model.py, models/gradient_boost_extra.py, models/catboost_model.py, (d) also downloads NeuroX_EA_v4.mq5 to local dir, (e) compiles EA if MetaEditor found, (f) runs: cd python_bridge_v4 && python -u main.py --live. Use the base URL: https://raw.githubusercontent.com/gagandocx/Claude/feature/5-model-ensemble-tcn-lgbm/NeuroX/neurox_v4/",
+    "Step 3: Create Claude/Python_Bridge_EA_v4.mq5 at the repo root as an exact copy of NeuroX/NeuroX_EA_v4.mq5 (per project rules, these are kept in sync).",
+    "Step 4: Verify the .mq5 file has correct version string by checking content."
+  ],
+  "acceptance_criteria": [
+    "NeuroX/NeuroX_EA_v4.mq5 exists with #property version '7.40' and v7.4 header comment",
+    "NeuroX/neurox_run_v4.bat exists, downloads from neurox_v4/ paths, targets python_bridge_v4/ folder",
+    "Claude/Python_Bridge_EA_v4.mq5 exists at repo root and matches NeuroX/NeuroX_EA_v4.mq5",
+    "Bridge CSV filenames remain python_bridge_signal.csv and python_bridge_confirm.csv in the EA",
+    "The bat file references the correct branch and folder paths"
+  ],
+  "verification": [
+    "grep -c 'version.*7.40' /projects/sandbox/Claude/NeuroX/NeuroX_EA_v4.mq5",
+    "grep -c 'python_bridge_v4' /projects/sandbox/Claude/NeuroX/neurox_run_v4.bat",
+    "grep -c 'python_bridge_signal.csv' /projects/sandbox/Claude/NeuroX/NeuroX_EA_v4.mq5",
+    "diff /projects/sandbox/Claude/NeuroX/NeuroX_EA_v4.mq5 /projects/sandbox/Claude/Python_Bridge_EA_v4.mq5"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

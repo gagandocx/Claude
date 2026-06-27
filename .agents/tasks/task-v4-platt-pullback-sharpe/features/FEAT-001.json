@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Copy neurox/ to neurox_v4/, create the 3 new Python modules (confidence_calibrator.py, entry_timing.py, sharpe_weights in ensemble.py), integrate them into main.py and signal_generator.py, update VERSION to 7.4, and update config/settings.py with new config dataclasses.",
+  "status": "in_progress",
+  "steps": [
+    "Step 1: Copy the entire NeuroX/neurox/ folder to NeuroX/neurox_v4/ preserving all files and subdirectory structure.",
+    "Step 2: Create NeuroX/neurox_v4/strategies/confidence_calibrator.py implementing Platt scaling. The class ConfidenceCalibrator should: (a) maintain a sliding window (deque) of recent (raw_logit, actual_outcome) pairs (configurable size, default 200), (b) fit sigmoid calibration parameters A, B using scipy.optimize (logistic regression on logits), (c) provide calibrate(raw_probs) -> calibrated_probs method that applies P = 1/(1+exp(-(A*logit+B))), (d) persist state to/from platt_calibration_state.json, (e) fall back to pass-through if insufficient samples. Add a PlattCalibrationConfig dataclass.",
+    "Step 3: Create NeuroX/neurox_v4/strategies/entry_timing.py implementing micro-pullback logic. The class EntryTimingManager should: (a) accept a signal (BUY/SELL) and current price, (b) poll (non-blocking, time-based) for pullback of X points within configurable window (default 10s), (c) return 'enter_now' if pullback detected or timeout reached or price breaks away (breakout threshold), (d) integrate as an async-style check in the main loop without blocking other operations. Add EntryTimingConfig dataclass with pullback_points, timeout_seconds, breakout_threshold_points fields.",
+    "Step 4: Modify NeuroX/neurox_v4/models/ensemble.py to add Sharpe-based model weighting. Add: (a) a _pnl_tracker dict mapping model_name -> deque of per-trade PnL attributions, (b) compute_sharpe_weights() method that calculates rolling Sharpe ratio per model and returns normalized weights with min floor of 0.02, (c) update_pnl_attribution(model_name, pnl) method to feed trade results, (d) sharpe_reweight() method that replaces self.weights when enough data (>20 trades per model). The existing update_weights() for win-rate remains as fallback.",
+    "Step 5: Add config dataclasses to NeuroX/neurox_v4/config/settings.py: PlattCalibrationConfig (window_size=200, state_file='platt_calibration_state.json', min_samples=50), EntryTimingConfig (enabled=True, pullback_points=0.30, timeout_seconds=10, breakout_threshold_points=1.0), SharpeWeightConfig (enabled=True, lookback_trades=100, min_trades_per_model=20, reweight_interval=20, min_weight_floor=0.02). Import these in EnsembleConfig and MainConfig as needed.",
+    "Step 6: Modify NeuroX/neurox_v4/main.py: (a) change VERSION to '7.4', (b) import ConfidenceCalibrator and EntryTimingManager, (c) instantiate them in PythonMLBridge.__init__, (d) after ensemble prediction in run_cycle(), apply Platt calibration to probabilities before confidence calculation, (e) after signal generation (action != HOLD), apply entry timing check (micro-pullback wait), (f) after trade closes (in _poll_confirmations), feed result to calibrator and sharpe weight tracker, (g) add enable_platt_calibration, enable_entry_timing, enable_sharpe_weights boolean flags to MainConfig.",
+    "Step 7: Verify all imports work by running: cd neurox_v4 && python -c 'from strategies.confidence_calibrator import ConfidenceCalibrator; from strategies.entry_timing import EntryTimingManager; from models.ensemble import EnsembleManager; print(\"All v4 imports OK\")'."
+  ],
+  "acceptance_criteria": [
+    "neurox_v4/ folder exists with same structure as neurox/ plus new modules",
+    "neurox_v4/main.py has VERSION = '7.4'",
+    "neurox_v4/strategies/confidence_calibrator.py exists and implements Platt scaling with sigmoid calibration",
+    "neurox_v4/strategies/entry_timing.py exists and implements micro-pullback entry timing",
+    "neurox_v4/models/ensemble.py has sharpe_reweight() and compute_sharpe_weights() methods",
+    "neurox_v4/config/settings.py has PlattCalibrationConfig, EntryTimingConfig, SharpeWeightConfig dataclasses",
+    "All new modules import cleanly without errors"
+  ],
+  "verification": [
+    "cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"from strategies.confidence_calibrator import ConfidenceCalibrator; from strategies.entry_timing import EntryTimingManager; from models.ensemble import EnsembleManager; from config.settings import PlattCalibrationConfig, EntryTimingConfig, SharpeWeightConfig; print('All v4 imports OK')\"",
+    "python -c \"import sys; sys.path.insert(0, '/projects/sandbox/Claude/NeuroX/neurox_v4'); from main import VERSION; assert VERSION == '7.4', f'Expected 7.4 got {VERSION}'\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
