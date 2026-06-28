@@ -63,6 +63,7 @@
 import os
 import sys
 import time
+import shutil
 import logging
 import warnings
 
@@ -98,6 +99,77 @@ logger = logging.getLogger("FastGPU")
 #  DEVICE DETECTION
 # ─────────────────────────────────────────────
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# ─────────────────────────────────────────────
+#  GOOGLE DRIVE AUTO-DETECTION & CHECKPOINT HELPERS
+# ─────────────────────────────────────────────
+DRIVE_CHECKPOINT_DIR = "/content/drive/MyDrive/neurox_checkpoints"
+
+
+def is_drive_mounted() -> bool:
+    """Check if Google Drive is mounted at the standard Colab path."""
+    return os.path.isdir("/content/drive/MyDrive")
+
+
+def save_checkpoint_incremental(filepath: str, checkpoint_dir: str):
+    """
+    After saving a checkpoint locally, copy it to Google Drive if mounted.
+    This ensures progress is preserved even if Colab crashes.
+    """
+    if is_drive_mounted():
+        os.makedirs(DRIVE_CHECKPOINT_DIR, exist_ok=True)
+        filename = os.path.basename(filepath)
+        dst = os.path.join(DRIVE_CHECKPOINT_DIR, filename)
+        shutil.copy2(filepath, dst)
+        logger.info(f"      -> Backed up to Drive: {dst}")
+
+
+def checkpoint_exists(filename: str, checkpoint_dir: str) -> bool:
+    """
+    Check if a checkpoint already exists (from a previous run).
+    Checks local dir first, then Google Drive backup.
+    """
+    local_path = os.path.join(checkpoint_dir, filename)
+    if os.path.exists(local_path):
+        return True
+    # Also check Drive backup (useful after Colab restart wipes /content)
+    if is_drive_mounted():
+        drive_path = os.path.join(DRIVE_CHECKPOINT_DIR, filename)
+        if os.path.exists(drive_path):
+            # Restore from Drive to local
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            shutil.copy2(drive_path, local_path)
+            logger.info(f"      Restored from Drive: {filename}")
+            return True
+    return False
+
+
+# Mapping from display name to checkpoint filename
+NEURAL_CHECKPOINT_MAP = {
+    "Transformer": "transformer.pth",
+    "LSTM": "lstm.pth",
+    "TCN": "tcn.pth",
+    "PatchTST": "patch_tst.pth",
+    "TFT": "tft.pth",
+    "N-HiTS": "nhits.pth",
+    "iTransformer": "itransformer.pth",
+    "Mamba": "mamba.pth",
+    "DLinear": "dlinear.pth",
+    "xLSTM": "xlstm.pth",
+    "TimesNet": "timesnet.pth",
+    "Chronos": "chronos.pth",
+    "TimeMixer": "timemixer.pth",
+    "SOFTS": "softs.pth",
+}
+
+TREE_CHECKPOINT_MAP = {
+    "GradBoost": "gradient_boost.joblib",
+    "LightGBM": "xgboost_extra.joblib",
+    "CatBoost": "catboost.joblib",
+}
+
+META_CHECKPOINT = "meta_learner.joblib"
 
 
 def print_banner():
@@ -388,20 +460,61 @@ def train_all_fast():
     logger.info(f"\n[Step 2/5] Training 14 neural models on {device}...")
     if device.type == "cuda":
         logger.info(f"  Using GPU batch size: 256 (8x faster than CPU batch=32)")
+
+    # Detect Drive mount status
+    if is_drive_mounted():
+        logger.info(f"  Google Drive detected! Checkpoints will auto-backup to:")
+        logger.info(f"    {DRIVE_CHECKPOINT_DIR}")
+    else:
+        logger.info(f"  Google Drive NOT mounted. Checkpoints saved locally only.")
+        logger.info(f"  Mount Drive before training to protect against crashes.")
+
+    from config.settings import MODEL_DIR
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    logger.info(f"  Local checkpoint dir: {MODEL_DIR}")
     logger.info("")
 
     trained = {}
+    skipped = 0
     for idx, (label, cls, cfg) in enumerate(NEURAL_MODELS, 1):
+        ckpt_filename = NEURAL_CHECKPOINT_MAP[label]
+
+        # Resume: skip if checkpoint already exists
+        if checkpoint_exists(ckpt_filename, MODEL_DIR):
+            logger.info(f"  [{idx:2d}/14] {label} - SKIPPED (checkpoint exists)")
+            # Load the existing checkpoint into a model instance
+            model = cls(cfg)
+            ckpt_path = os.path.join(MODEL_DIR, ckpt_filename)
+            model.load_state_dict(
+                torch.load(ckpt_path, map_location="cpu", weights_only=True),
+                strict=False,
+            )
+            trained[label] = model
+            skipped += 1
+            continue
+
         logger.info(f"  [{idx:2d}/14] {label}")
         trained[label] = train_model_fast(
             cls, cfg, X_train, y_train, X_val, y_val, label
         )
+
+        # Save checkpoint immediately after training
+        ckpt_path = os.path.join(MODEL_DIR, ckpt_filename)
+        torch.save(trained[label].state_dict(), ckpt_path)
+        logger.info(f"      Saved: {ckpt_path}")
+        save_checkpoint_incremental(ckpt_path, MODEL_DIR)
+
         # Free GPU memory between models
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
+    if skipped > 0:
+        logger.info(f"\n  Resumed: {skipped} models loaded from checkpoints")
+        logger.info(f"  Trained: {14 - skipped} new models")
+
     # ── 4. Train tree models + meta-learner ───────────────────────────────
     logger.info(f"\n[Step 3/5] Training tree models (GradBoost, LightGBM, CatBoost)...")
+    import joblib
 
     ensemble = EnsembleManager(
         transformer_config=TransformerConfig(input_features=n_feat),
@@ -433,40 +546,88 @@ def train_all_fast():
         if attr and hasattr(ensemble, attr):
             setattr(ensemble, attr, model)
 
-    # Train tree models
-    logger.info("  Training Gradient Boosting (sklearn)...")
-    ensemble.fit_gradient_boost(X_train, y_train)
+    # Train Gradient Boosting
+    gb_file = TREE_CHECKPOINT_MAP["GradBoost"]
+    if checkpoint_exists(gb_file, MODEL_DIR):
+        logger.info("  GradBoost - SKIPPED (checkpoint exists)")
+        ensemble.gradient_boost = joblib.load(os.path.join(MODEL_DIR, gb_file))
+        ensemble.gb_fitted = True
+    else:
+        logger.info("  Training Gradient Boosting (sklearn)...")
+        ensemble.fit_gradient_boost(X_train, y_train)
+        gb_path = os.path.join(MODEL_DIR, gb_file)
+        joblib.dump(ensemble.gradient_boost, gb_path)
+        logger.info(f"      Saved: {gb_path}")
+        save_checkpoint_incremental(gb_path, MODEL_DIR)
 
-    logger.info("  Training LightGBM / XGBoost...")
-    ensemble.fit_xgboost(X_train, y_train)
-    logger.info(f"    backend: {ensemble.xgboost_model.backend}")
+    # Train LightGBM/XGBoost
+    xgb_file = TREE_CHECKPOINT_MAP["LightGBM"]
+    if checkpoint_exists(xgb_file, MODEL_DIR):
+        logger.info("  LightGBM/XGBoost - SKIPPED (checkpoint exists)")
+        ensemble.xgboost_model.load(os.path.join(MODEL_DIR, xgb_file))
+        ensemble.xgb_fitted = ensemble.xgboost_model.fitted
+    else:
+        logger.info("  Training LightGBM / XGBoost...")
+        ensemble.fit_xgboost(X_train, y_train)
+        logger.info(f"    backend: {ensemble.xgboost_model.backend}")
+        xgb_path = os.path.join(MODEL_DIR, xgb_file)
+        ensemble.xgboost_model.save(xgb_path)
+        logger.info(f"      Saved: {xgb_path}")
+        save_checkpoint_incremental(xgb_path, MODEL_DIR)
 
-    logger.info("  Training CatBoost...")
-    ensemble.fit_catboost(X_train, y_train)
-    logger.info(f"    backend: {ensemble.catboost_model.backend}")
+    # Train CatBoost
+    cb_file = TREE_CHECKPOINT_MAP["CatBoost"]
+    if checkpoint_exists(cb_file, MODEL_DIR):
+        logger.info("  CatBoost - SKIPPED (checkpoint exists)")
+        ensemble.catboost_model.load(os.path.join(MODEL_DIR, cb_file))
+        ensemble.catboost_fitted = ensemble.catboost_model.fitted
+    else:
+        logger.info("  Training CatBoost...")
+        ensemble.fit_catboost(X_train, y_train)
+        logger.info(f"    backend: {ensemble.catboost_model.backend}")
+        cb_path = os.path.join(MODEL_DIR, cb_file)
+        ensemble.catboost_model.save(cb_path)
+        logger.info(f"      Saved: {cb_path}")
+        save_checkpoint_incremental(cb_path, MODEL_DIR)
 
     # ── 5. Fit meta-learner ───────────────────────────────────────────────
     logger.info(f"\n[Step 4/5] Fitting meta-learner (51-dim, 17x3 stacked)...")
 
-    neural_models = [trained[n] for n, _, _ in NEURAL_MODELS]
-    for m in neural_models:
-        m.eval()
+    meta_file = META_CHECKPOINT
+    if checkpoint_exists(meta_file, MODEL_DIR):
+        logger.info("  Meta-learner - SKIPPED (checkpoint exists)")
+        ensemble.meta_learner = joblib.load(os.path.join(MODEL_DIR, meta_file))
+        ensemble.meta_fitted = True
+    else:
+        neural_models = [trained[n] for n, _, _ in NEURAL_MODELS]
+        for m in neural_models:
+            m.eval()
 
-    with torch.no_grad():
-        Xv = torch.FloatTensor(X_val)
-        val_preds = [m.predict(Xv).numpy() for m in neural_models]
+        with torch.no_grad():
+            Xv = torch.FloatTensor(X_val)
+            val_preds = [m.predict(Xv).numpy() for m in neural_models]
 
-    val_preds += [
-        ensemble.predict_gradient_boost(X_val),
-        ensemble.predict_xgboost(X_val),
-        ensemble.predict_catboost(X_val),
-    ]
-    stacked_val = np.concatenate(val_preds, axis=1)
-    ensemble.fit_meta_learner(stacked_val, y_val)
-    logger.info("  Meta-learner fitted!")
+        val_preds += [
+            ensemble.predict_gradient_boost(X_val),
+            ensemble.predict_xgboost(X_val),
+            ensemble.predict_catboost(X_val),
+        ]
+        stacked_val = np.concatenate(val_preds, axis=1)
+        ensemble.fit_meta_learner(stacked_val, y_val)
+        logger.info("  Meta-learner fitted!")
+
+        # Save meta-learner immediately
+        meta_path = os.path.join(MODEL_DIR, meta_file)
+        joblib.dump(ensemble.meta_learner, meta_path)
+        logger.info(f"      Saved: {meta_path}")
+        save_checkpoint_incremental(meta_path, MODEL_DIR)
 
     # ── 6. Evaluate on test set ───────────────────────────────────────────
     logger.info(f"\n[Step 5/5] Evaluating all 17 models on test set...")
+
+    neural_models = [trained[n] for n, _, _ in NEURAL_MODELS]
+    for m in neural_models:
+        m.eval()
 
     with torch.no_grad():
         Xt = torch.FloatTensor(X_test)
@@ -500,10 +661,11 @@ def train_all_fast():
     logger.info(f"  {'Ensemble lift':<18} {ens_acc-best_ind:+.4f} vs best individual")
     logger.info("  " + "-" * 50)
 
-    # ── 7. Save all checkpoints ───────────────────────────────────────────
-    from config.settings import MODEL_DIR
-    logger.info(f"\n  Saving checkpoints to: {MODEL_DIR}")
-    os.makedirs(MODEL_DIR, exist_ok=True)
+    # ── 7. Final checkpoint verification ──────────────────────────────────
+    logger.info(f"\n  All checkpoints already saved incrementally to: {MODEL_DIR}")
+    if is_drive_mounted():
+        logger.info(f"  Drive backup: {DRIVE_CHECKPOINT_DIR}")
+    # Also do a final ensemble save to ensure consistency
     ensemble.save_models(MODEL_DIR)
 
     elapsed = time.time() - t0
@@ -513,9 +675,19 @@ def train_all_fast():
     logger.info("=" * 65)
     logger.info("")
     logger.info("  NEXT STEPS:")
-    logger.info(f"  1. Download checkpoints/ folder from: {MODEL_DIR}")
-    logger.info("  2. Copy to your trading PC: neurox_v4/checkpoints/")
-    logger.info("  3. Restart your EA - it will use the new models!")
+    if is_drive_mounted():
+        logger.info(f"  Checkpoints are already on Google Drive!")
+        logger.info(f"    {DRIVE_CHECKPOINT_DIR}")
+        logger.info(f"  1. Open Drive on your PC and download neurox_checkpoints/")
+        logger.info("  2. Copy to your trading PC: neurox_v4/checkpoints/")
+        logger.info("  3. Restart your EA - it will use the new models!")
+    else:
+        logger.info(f"  1. Download checkpoints/ folder from: {MODEL_DIR}")
+        logger.info("  2. Copy to your trading PC: neurox_v4/checkpoints/")
+        logger.info("  3. Restart your EA - it will use the new models!")
+    logger.info("")
+    logger.info("  CRASH RECOVERY: If Colab crashed mid-training, just re-run!")
+    logger.info("  Already-trained models will be loaded from checkpoints.")
     logger.info("")
     if elapsed < 900:  # < 15 min
         speedup = (12 * 60) / (elapsed / 60)  # vs 12 hours on CPU
