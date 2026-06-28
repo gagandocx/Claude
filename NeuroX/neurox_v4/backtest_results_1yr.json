@@ -1,0 +1,72 @@
+{
+  "summary": {
+    "total_trades": 440,
+    "winning_trades": 172,
+    "losing_trades": 268,
+    "win_rate_pct": 39.09,
+    "total_net_pnl_usd": -2917.32,
+    "total_return_pct": -29.17,
+    "profit_factor": 0.745,
+    "risk_reward_ratio": 1.161
+  },
+  "risk_metrics": {
+    "sharpe_ratio": -1.822,
+    "sortino_ratio": -3.633,
+    "calmar_ratio": -0.874,
+    "max_drawdown_usd": 3493.09,
+    "max_drawdown_pct": 33.39,
+    "max_consecutive_wins": 7,
+    "max_consecutive_losses": 14
+  },
+  "trade_details": {
+    "avg_win_usd": 49.65,
+    "avg_loss_usd": -42.75,
+    "largest_win_usd": 406.6,
+    "largest_loss_usd": -148.16,
+    "avg_bars_held": 6.0,
+    "avg_hold_hours": 6.0
+  },
+  "costs": {
+    "total_commission_and_spread_usd": 141.38,
+    "total_swap_usd": -0.28,
+    "avg_cost_per_trade_usd": 0.32,
+    "costs_as_pct_of_gross": 1.66
+  },
+  "direction_breakdown": {
+    "buy_trades": 279,
+    "buy_pnl_usd": -785.69,
+    "sell_trades": 161,
+    "sell_pnl_usd": -2131.63
+  },
+  "exit_reasons": {
+    "STOP_LOSS": 253,
+    "TRAILING_STOP": 142,
+    "RSI_EXTREME": 45
+  },
+  "monthly_pnl": {
+    "2025-07": 32.51,
+    "2025-08": 250.55,
+    "2025-09": -645.21,
+    "2025-10": 248.47,
+    "2025-11": -358.61,
+    "2025-12": -222.86,
+    "2026-01": -6.81,
+    "2026-02": -648.52,
+    "2026-03": -676.37,
+    "2026-04": -274.68,
+    "2026-05": -445.24,
+    "2026-06": -170.54
+  },
+  "final_balance_usd": 7082.68,
+  "fusion_markets_conditions": {
+    "spread_usd": 0.05,
+    "commission_per_lot_rt": 3.5,
+    "slippage_usd": 0.02,
+    "swap_long_per_lot_night": -3.5,
+    "swap_short_per_lot_night": -1.5
+  },
+  "data_info": {
+    "timeframe": "1h",
+    "note": "1h bars used as proxy (M1 data only available for 7 days from free sources). Fusion Markets cost model applied for realistic execution simulation."
+  }
+}
