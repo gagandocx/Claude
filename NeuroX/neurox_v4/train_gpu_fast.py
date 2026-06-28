@@ -10,10 +10,10 @@
   Open a new Colab notebook, set Runtime -> GPU (T4), then:
 
   # Cell 1 - Clone and install (run once, ~2 min)
-  !git clone https://github.com/gagandocx/Claude.git /content/Claude
+  !git clone -b fast-gpu-training --single-branch https://github.com/gagandocx/Claude.git /content/Claude
   %cd /content/Claude/NeuroX/neurox_v4
   !pip install -q torch scikit-learn==1.9.0 lightgbm catboost \
-      xgboost yfinance ta pandas numpy tqdm joblib hmmlearn
+      xgboost yfinance ta pandas numpy tqdm joblib hmmlearn scipy
 
   # Cell 2 - Train all 17 models on GPU (~5-10 min on T4)
   !python train_gpu_fast.py
