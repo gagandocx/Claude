@@ -1,0 +1,292 @@
+{
+  "params": {
+    "sl_distance": 0.6,
+    "session_multipliers": {
+      "asian": 1.0,
+      "london": 1.2,
+      "newyork": 1.0,
+      "overlap": 1.2,
+      "off_session": 1.0
+    },
+    "min_confidence": 0.25,
+    "momentum_lookback": 8,
+    "rsi_overbought": 62,
+    "rsi_oversold": 38,
+    "trail_distances": {
+      "tight": 0.5,
+      "medium": 1.0,
+      "wide": 2.0
+    },
+    "cooldown_seconds": 2,
+    "max_positions": 1
+  },
+  "prev_params": null,
+  "trades_since_optimize": 26,
+  "cycle_count": 0,
+  "rollback_pending": false,
+  "trade_count": 26,
+  "trades": [
+    {
+      "session": "asian",
+      "confidence": 0.5781900411443694,
+      "sl_distance": 0.55,
+      "result_pnl": 2.39990234375,
+      "direction": "BUY",
+      "rsi_at_entry": 54.21520271752905,
+      "entry_time": "2026-06-26T02:52:14.028536",
+      "exit_time": "2026-06-26 03:01:07"
+    },
+    {
+      "session": "asian",
+      "confidence": 0.432229431417029,
+      "sl_distance": 0.58,
+      "result_pnl": -6.89990234375,
+      "direction": "SELL",
+      "rsi_at_entry": 53.61055242166543,
+      "entry_time": "2026-06-26T03:01:08.306209",
+      "exit_time": "2026-06-26 03:08:11"
+    },
+    {
+      "session": "asian",
+      "confidence": 0.4250016197220181,
+      "sl_distance": 0.58,
+      "result_pnl": 1.300048828125,
+      "direction": "BUY",
+      "rsi_at_entry": 67.42946310895127,
+      "entry_time": "2026-06-26T03:08:12.141182",
+      "exit_time": "2026-06-26 03:17:01"
+    },
+    {
+      "session": "asian",
+      "confidence": 0.4908612472950403,
+      "sl_distance": 0.5900000000000001,
+      "result_pnl": 3.0,
+      "direction": "SELL",
+      "rsi_at_entry": 62.98117577558717,
+      "entry_time": "2026-06-26T03:17:01.659994",
+      "exit_time": "2026-06-26 03:30:03"
+    },
+    {
+      "session": "asian",
+      "confidence": 0.6450851231880451,
+      "sl_distance": 0.45999999999999996,
+      "result_pnl": 6.0,
+      "direction": "BUY",
+      "rsi_at_entry": 53.707776522963265,
+      "entry_time": "2026-06-26T03:30:04.248877",
+      "exit_time": "2026-06-26 03:50:27"
+    },
+    {
+      "session": "asian",
+      "confidence": 0.5496807891072418,
+      "sl_distance": 0.42000000000000004,
+      "result_pnl": 6.2001953125,
+      "direction": "SELL",
+      "rsi_at_entry": 48.91608948894767,
+      "entry_time": "2026-06-26T03:52:59.962196",
+      "exit_time": "2026-06-26 04:13:14"
+    },
+    {
+      "session": "london",
+      "confidence": 0.2585104633490597,
+      "sl_distance": 0.36000000000000004,
+      "result_pnl": -1.800048828125,
+      "direction": "SELL",
+      "rsi_at_entry": 37.90203854586851,
+      "entry_time": "2026-06-26T04:13:15.021197",
+      "exit_time": "2026-06-26 04:20:39"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6119269385003872,
+      "sl_distance": 0.34,
+      "result_pnl": 6.199951171875,
+      "direction": "BUY",
+      "rsi_at_entry": 47.90192276259399,
+      "entry_time": "2026-06-26T04:20:39.884241",
+      "exit_time": "2026-06-26 04:42:35"
+    },
+    {
+      "session": "london",
+      "confidence": 0.5455374306932135,
+      "sl_distance": 0.36000000000000004,
+      "result_pnl": -0.300048828125,
+      "direction": "SELL",
+      "rsi_at_entry": 61.935747270759606,
+      "entry_time": "2026-06-26T04:42:35.905992",
+      "exit_time": "2026-06-26 04:58:32"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6154917970182163,
+      "sl_distance": 0.31000000000000005,
+      "result_pnl": -4.89990234375,
+      "direction": "BUY",
+      "rsi_at_entry": 58.22924768846304,
+      "entry_time": "2026-06-26T04:58:33.248502",
+      "exit_time": "2026-06-26 05:07:24"
+    },
+    {
+      "session": "london",
+      "confidence": 0.41339126689723127,
+      "sl_distance": 0.32000000000000006,
+      "result_pnl": -0.199951171875,
+      "direction": "SELL",
+      "rsi_at_entry": 40.61404546284028,
+      "entry_time": "2026-06-26T05:07:25.197292",
+      "exit_time": "2026-06-26 05:13:58"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6593113203444594,
+      "sl_distance": 1.0,
+      "result_pnl": 15.39990234375,
+      "direction": "BUY",
+      "rsi_at_entry": 55.40917745223126,
+      "entry_time": "2026-06-26T05:13:58.916492",
+      "exit_time": "2026-06-26 05:34:02"
+    },
+    {
+      "session": "london",
+      "confidence": 0.521588125733596,
+      "sl_distance": 0.61,
+      "result_pnl": 0.0,
+      "direction": "BUY",
+      "rsi_at_entry": 67.3570955321494,
+      "entry_time": "2026-06-26T05:34:03.241625",
+      "exit_time": "2026-06-26 05:56:40"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6335511047018737,
+      "sl_distance": 1.0,
+      "result_pnl": 0.5,
+      "direction": "BUY",
+      "rsi_at_entry": 60.36270266848235,
+      "entry_time": "2026-06-26T05:56:40.911219",
+      "exit_time": "2026-06-26 05:57:39"
+    },
+    {
+      "session": "london",
+      "confidence": 0.5335511047018737,
+      "sl_distance": 0.52,
+      "result_pnl": -5.7001953125,
+      "direction": "SELL",
+      "rsi_at_entry": 48.320031231080456,
+      "entry_time": "2026-06-26T05:57:40.191600",
+      "exit_time": "2026-06-26 06:04:58"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6256714960238475,
+      "sl_distance": 0.51,
+      "result_pnl": -6.60009765625,
+      "direction": "BUY",
+      "rsi_at_entry": 64.24937596052149,
+      "entry_time": "2026-06-26T06:04:59.333351",
+      "exit_time": "2026-06-26 06:13:10"
+    },
+    {
+      "session": "london",
+      "confidence": 0.5138660964422364,
+      "sl_distance": 0.45999999999999996,
+      "result_pnl": -1.300048828125,
+      "direction": "SELL",
+      "rsi_at_entry": 43.73861223935004,
+      "entry_time": "2026-06-26T06:13:10.822185",
+      "exit_time": "2026-06-26 06:16:32"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6102446465491427,
+      "sl_distance": 0.36000000000000004,
+      "result_pnl": -0.89990234375,
+      "direction": "SELL",
+      "rsi_at_entry": 38.75283474018135,
+      "entry_time": "2026-06-26T06:35:25.934561",
+      "exit_time": "2026-06-26 06:38:25"
+    },
+    {
+      "session": "london",
+      "confidence": 0.582173628872673,
+      "sl_distance": 1.0,
+      "result_pnl": 5.10009765625,
+      "direction": "BUY",
+      "rsi_at_entry": 59.515875874475874,
+      "entry_time": "2026-06-26T06:38:25.714758",
+      "exit_time": "2026-06-26 06:52:20"
+    },
+    {
+      "session": "london",
+      "confidence": 0.4014213256866882,
+      "sl_distance": 0.4,
+      "result_pnl": 2.10009765625,
+      "direction": "SELL",
+      "rsi_at_entry": 53.22338611399389,
+      "entry_time": "2026-06-26T06:52:20.889742",
+      "exit_time": "2026-06-26 06:56:18"
+    },
+    {
+      "session": "london",
+      "confidence": 0.5897901226640255,
+      "sl_distance": 0.34,
+      "result_pnl": 17.829902343749836,
+      "direction": "BUY",
+      "rsi_at_entry": 41.535815427388535,
+      "entry_time": "2026-06-26T07:50:25.432229",
+      "exit_time": "2026-06-26 07:51:17"
+    },
+    {
+      "session": "london",
+      "confidence": 0.6505229085602839,
+      "sl_distance": 0.43,
+      "result_pnl": 18.10009765625,
+      "direction": "BUY",
+      "rsi_at_entry": 36.445991176151814,
+      "entry_time": "2026-06-26T08:51:40.439225",
+      "exit_time": "2026-06-26 09:12:45"
+    },
+    {
+      "session": "overlap",
+      "confidence": 0.3611318730210933,
+      "sl_distance": 0.8,
+      "result_pnl": -1.39990234375,
+      "direction": "BUY",
+      "rsi_at_entry": 57.57345658344976,
+      "entry_time": "2026-06-26T09:13:13.086642",
+      "exit_time": "2026-06-26 09:15:33"
+    },
+    {
+      "session": "overlap",
+      "confidence": 0.2971819946036125,
+      "sl_distance": 0.77,
+      "result_pnl": -0.10009765625,
+      "direction": "SELL",
+      "rsi_at_entry": 54.65151891299348,
+      "entry_time": "2026-06-26T09:15:33.684209",
+      "exit_time": "2026-06-26 09:26:56"
+    },
+    {
+      "session": "overlap",
+      "confidence": 0.41754971502787946,
+      "sl_distance": 0.6900000000000001,
+      "result_pnl": -8.7001953125,
+      "direction": "BUY",
+      "rsi_at_entry": 56.705195848495244,
+      "entry_time": "2026-06-26T09:26:57.500532",
+      "exit_time": "2026-06-26 09:30:05"
+    },
+    {
+      "session": "overlap",
+      "confidence": 0.4323606925238269,
+      "sl_distance": 0.81,
+      "result_pnl": -13.0,
+      "direction": "SELL",
+      "rsi_at_entry": 39.95382234848088,
+      "entry_time": "2026-06-26T09:30:05.794243",
+      "exit_time": "2026-06-26 09:35:16"
+    }
+  ],
+  "post_optimize_trades": [],
+  "pre_optimize_performance": null
+}

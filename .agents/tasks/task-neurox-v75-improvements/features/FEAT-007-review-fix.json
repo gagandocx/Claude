@@ -1,0 +1,26 @@
+{
+  "id": "FEAT-007-review-fix",
+  "type": "fix",
+  "description": "Review fixes: Fix online learning dead code, add meta-learner data cap, add pipeline TODO, make spread filter configurable, verify Monte Carlo performance.",
+  "status": "completed",
+  "steps": [
+    "Fix online_update() in models/ensemble.py to call model() directly instead of model.predict() for differentiable tensor output",
+    "Add max_samples cap (5000) to save_stacked_predictions() in models/ensemble.py, dropping oldest when exceeded",
+    "Add TODO comment in main.py noting pipeline_manager is ready but not yet wired into run_cycle",
+    "Add max_absolute_spread field to SpreadGateConfig in config/settings.py and use it in signal_generator.py instead of hardcoded 80",
+    "Verify Monte Carlo trades_forward=20 (acceptable, no change needed)"
+  ],
+  "acceptance_criteria": [
+    "online_update() calls model forward pass directly (model(x_tensor)) instead of model.predict()",
+    "save_stacked_predictions() caps at 5000 samples, dropping oldest",
+    "main.py has TODO comment about pipeline not yet wired into run_cycle",
+    "SpreadGateConfig has max_absolute_spread field used in signal_generator",
+    "All tests still pass"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"import main; print('OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -x --tb=short -q 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": "All 5 review items addressed. online_update() now correctly calls model() forward pass and returns True (14 models updated). Meta-learner cap verified at 5000 samples. Monte Carlo trades_forward=20 confirmed (no change needed). SpreadGateConfig.max_absolute_spread added. 532 tests pass."
+}

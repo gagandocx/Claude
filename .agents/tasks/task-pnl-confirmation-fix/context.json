@@ -1,0 +1,16 @@
+{
+  "project_type": "Python + MQL5 AI Trading EA for MetaTrader 5",
+  "language": "Python + MQL5",
+  "build_system": "None (script-based, pip for dependencies)",
+  "test_framework": "pytest",
+  "build_command": "cd /projects/sandbox/Claude/python_bridge && python -c \"import main\"",
+  "test_command": "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -q",
+  "verification_instructions": "Run pytest, verify bridge.py CONFIRMATION_HEADERS updated, verify EA WriteConfirmation writes profit field",
+  "setup_instructions": "pip install numpy pandas ta yfinance (already installed)",
+  "environment_constraints": "No MQL5 compiler available - validate by code review only. input is RESERVED keyword in MQL5.",
+  "relevant_files": [
+    "Python_Bridge_EA.mq5",
+    "python_bridge/signals/bridge.py",
+    "python_bridge/main.py"
+  ]
+}

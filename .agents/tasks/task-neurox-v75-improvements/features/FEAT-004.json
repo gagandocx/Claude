@@ -1,0 +1,36 @@
+{
+  "id": "FEAT-004",
+  "type": "feat",
+  "description": "Trading Brain Enhancements: Session-Split Edge Tracking, Empirical Likelihood Calibration, Equity Curve Trading (Meta-Strategy), Daily Reset Context Preservation, and Regime-Adaptive Model Override Threshold.",
+  "status": "completed",
+  "steps": [
+    "Add session-split edge tracking to EdgeTracker in strategies/trading_brain.py: Add a _session_edges dict mapping session name (LONDON, NEW_YORK, ASIAN, LONDON_NY_OVERLAP, OFF_HOURS) to separate deque-based trackers. When record() is called, also record to the session-specific tracker. Add method get_session_edge(session_name) that returns (win_rate, pf, n_trades) for that session. The brain's evaluate() method should use session-specific edge status when enough session trades exist (>10)",
+    "Add empirical likelihood calibration to BayesianConfidence: After 50+ trades, replace the static _LIKELIHOODS table with empirically computed likelihoods from actual trade outcomes. Add method calibrate_from_history(trade_history) that computes P(evidence|win) and P(evidence|loss) from real data. Store calibrated likelihoods and use them instead of hardcoded values when available",
+    "Add equity curve trading (meta-strategy): Create class EquityCurveTrader in trading_brain.py that tracks the equity curve and implements: (a) If equity is below 20-period EMA, reduce lot size by 50%. (b) If equity is below 50-period EMA, reduce by 75%. (c) If equity crosses ABOVE the EMA from below, restore normal sizing (re-entry signal). This is the 'trading the equity curve' concept. Integrate into PositionSizer as an additional multiplier",
+    "Fix daily reset losing context: In TradingBrain.reset_daily(), preserve the equity curve position and cumulative metrics (Sharpe, Sortino). Only reset daily_pnl and daily_pnl_peak. Add a method soft_reset() that preserves rolling risk metrics across day boundaries while resetting the daily P&L counter. Change main.py to call soft_reset() instead of reset_daily()",
+    "Add regime-adaptive model override threshold: In signal_generator.py, make the model_override_threshold (currently static 0.60) adapt based on detected regime. In trending regimes, lower to 0.50 (trade more). In ranging regimes, raise to 0.70 (be selective). In volatile regimes, raise to 0.75. Add this logic where momentum_threshold is compared in generate_signal(). Also make momentum_threshold scale with ATR: threshold = base_threshold * (current_atr / avg_atr), clamped to [0.30, 1.50]",
+    "Add Monte Carlo serial correlation: In strategies/monte_carlo.py simulate_scenarios(), add serial correlation to the simulation. Instead of i.i.d. outcomes, model that losses tend to cluster (autocorrelation ~0.2). After a loss, increase the probability of the next outcome being a loss by correlation_factor. Add serial_correlation field to MonteCarloConfig (default 0.15)",
+    "Add cross-position correlation tracking (future-proof): In risk_manager.py, add a method check_correlation_risk(positions) that warns if multiple open positions are on the same or correlated instruments. Since currently only XAUUSD is traded with max 1 position, this is a lightweight placeholder that logs and returns True (safe). Add CorrelationRiskConfig to settings.py",
+    "Update main.py to use soft_reset() for daily reset and integrate regime-adaptive override threshold",
+    "Add A/B testing framework: Create NeuroX/neurox_v4/strategies/ab_testing.py with class ABTestFramework that: (a) defines parameter variants (A=current, B=candidate), (b) randomly assigns trades to A or B variant, (c) tracks performance of each variant, (d) after N trades computes statistical significance (z-test on win rates), (e) logs which variant is winning. Add ABTestConfig to settings.py with enabled (False by default), min_trades_per_variant (30), significance_level (0.05)"
+  ],
+  "acceptance_criteria": [
+    "EdgeTracker has session-split tracking with per-session win rate/PF",
+    "BayesianConfidence can calibrate likelihoods from historical trade data",
+    "EquityCurveTrader class exists and returns lot multiplier based on equity curve position",
+    "soft_reset() preserves rolling metrics while resetting daily P&L",
+    "Momentum threshold scales with ATR in signal_generator.py",
+    "Model override threshold adapts to regime",
+    "Monte Carlo simulation includes serial correlation",
+    "ABTestFramework class exists with variant assignment and significance testing",
+    "All integrations in main.py and trading_brain.py work without import errors"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"from strategies.trading_brain import TradingBrain, EquityCurveTrader; print('OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"from strategies.ab_testing import ABTestFramework; print('OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c \"import main; print('main.py imports OK')\"",
+    "Run: cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -x --tb=short -q 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": "All acceptance criteria met. 455 tests pass (2 pre-existing failures: test_estimated_close_sets_pending_flag and test_price_structure_config_defaults -- both fail on base branch). EquityCurveTrader integrated as lot multiplier in evaluate(). Soft reset preserves edge tracker, metrics, learner, and equity curve state. Monte Carlo serial correlation uses iterative approach for loss clustering. The BayesianConfidence __init__ is placed after compute_posterior in the class body (valid Python, tested to work). CorrelationRiskConfig uses Dict type annotation requiring added Dict import to settings.py typing."
+}

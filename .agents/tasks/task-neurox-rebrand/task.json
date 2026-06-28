@@ -1,0 +1,7 @@
+{
+  "task_id": "task-neurox-rebrand",
+  "task_description": "Create a new NeuroX/ folder in the repo with all files rebranded from python_bridge naming to NeuroX naming. The folder contains neurox/, neurox_v2/, neurox_v3/ (Python packages), NeuroX_EA*.mq5 (EA files), neurox_run*.bat (launchers), and neurox_setup.bat (setup script). All internal references updated except bridge protocol CSV filenames which must stay as-is.",
+  "status": "completed",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

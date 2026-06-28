@@ -1,0 +1,7 @@
+{
+  "task_id": "task-v3-institutional-system",
+  "task_description": "Create a complete v3 (v8.0) institutional-grade trading system with all Tier 1-2-3 features: order flow/tick data, regime-specific model routing, walk-forward retraining, adversarial filtering, spread-aware entry, microstructure features, correlation regime detection, adaptive confidence threshold, model disagreement signal, Kelly criterion sizing, and Monte Carlo risk simulation. Creates python_bridge_v3/ and Python_Bridge_EA_v3.mq5 without modifying any existing code.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

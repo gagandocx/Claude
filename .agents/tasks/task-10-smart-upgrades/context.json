@@ -1,0 +1,25 @@
+{
+  "project_type": "Python ML Bridge trading system with MQ5 Expert Advisors for MetaTrader 5",
+  "language": "Python (primary), MQL5 (EA execution)",
+  "build_system": "pip with requirements.txt, no Makefile",
+  "test_framework": "pytest with mock-heavy tests in python_bridge/tests/",
+  "build_command": "cd /projects/sandbox/Claude/python_bridge && pip install -r requirements.txt",
+  "test_command": "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -q",
+  "verification_instructions": "Run pytest on the test suite. 5 pre-existing candle pattern tests fail (known issue - candle blocking was intentionally disabled for M1 scalper mode). All new tests must pass.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r python_bridge/requirements.txt",
+  "environment_constraints": "No MT5 terminal available. Validation is through pytest only. No Docker.",
+  "contribution_requirements": "Follow existing code patterns: dataclass configs in settings.py, logging with logger.info/warning, numpy/pandas for calculations",
+  "key_patterns": "SignalGenerator.generate_signal() is the main pipeline entry point. It checks momentum direction, gets ensemble predictions, detects regime, applies risk filters (S/R, RSI, HTF), then calculates SL/TP and lot size. RiskManager handles position sizing with Kelly criterion. Config uses @dataclass classes in settings.py. Bridge writes status via bridge.write_status(type, message). Tests use pytest fixtures with mock data.",
+  "relevant_files": [
+    "python_bridge/strategies/signal_generator.py",
+    "python_bridge/strategies/risk_manager.py",
+    "python_bridge/config/settings.py",
+    "python_bridge/data/alternative_data.py",
+    "python_bridge/signals/bridge.py",
+    "python_bridge/main.py",
+    "Python_Bridge_EA.mq5",
+    "python_bridge/tests/test_signal_generator.py"
+  ],
+  "directory_structure": "python_bridge/ contains: config/ (settings.py), strategies/ (signal_generator.py, risk_manager.py, regime_detector.py, smart_exits.py), data/ (market_data.py, alternative_data.py, multi_timeframe.py, news_calendar.py, sentiment.py), models/ (ensemble.py, rl_agent.py), signals/ (bridge.py), dashboard/ (performance_tracker.py, dashboard_renderer.py), tests/, training/. Root has MQ5 EA files."
+}

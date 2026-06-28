@@ -1,0 +1,25 @@
+{
+  "project_type": "Python ML trading system (NeuroX) with MQL5 EA bridge for MetaTrader 5",
+  "language": "Python 3 + MQL5",
+  "build_system": "pip + requirements.txt (no Makefile/Docker). MQL5 compiled via MetaEditor (not available in sandbox).",
+  "test_framework": "pytest (tests/ folder exists in neurox/ but is sparse)",
+  "build_command": "cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -c 'import main'",
+  "test_command": "cd /projects/sandbox/Claude/NeuroX/neurox_v4 && python -m pytest tests/ -v 2>/dev/null || python -c 'import main; print(\"import OK\")'",
+  "verification_instructions": "1. Confirm neurox_v4/ folder exists with all files from neurox/ plus new modules. 2. Verify main.py VERSION='7.4'. 3. Verify new modules import cleanly. 4. Verify NeuroX_EA_v4.mq5 has version '7.40'. 5. Verify neurox_run_v4.bat downloads from neurox_v4/ paths. 6. Verify Python_Bridge_EA_v4.mq5 exists at repo root.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r requirements.txt (requires torch, scikit-learn, pandas, numpy, etc.)",
+  "environment_constraints": "Open internet available. No MetaEditor for MQL5 compilation. Validation is syntactic/import-based for Python, text-based for .mq5.",
+  "contribution_requirements": "Each version is a separate folder. Never modify neurox/ (v7.1 original). Bridge CSV filenames stay: python_bridge_signal.csv, python_bridge_confirm.csv. Never use 'input' as variable name in MQL5. Candle patterns log only, never block signals.",
+  "key_patterns": "1. Ensemble produces Dict with 'probabilities', 'confidence', 'agreement', 'individual_preds'. 2. Signal generator creates TradeSignal objects with action/confidence/sl/tp/lot. 3. Bridge writes CSV to MT5 common files. 4. main.py has PythonMLBridge class with run_cycle() loop. 5. v2/v3 pattern: copy folder, modify, create separate EA and bat file.",
+  "relevant_files": [
+    "NeuroX/neurox/main.py",
+    "NeuroX/neurox/models/ensemble.py",
+    "NeuroX/neurox/strategies/signal_generator.py",
+    "NeuroX/neurox/config/settings.py",
+    "NeuroX/neurox/signals/bridge.py",
+    "NeuroX/NeuroX_EA.mq5",
+    "NeuroX/neurox_run.bat",
+    "NeuroX/neurox_run_v3.bat"
+  ],
+  "directory_structure": "Claude/NeuroX/neurox/ = v7.1 source. neurox_v2/, neurox_v3/ = other versions. NeuroX_EA*.mq5 = EA files. neurox_run*.bat = launchers. Claude/Python_Bridge_EA_v*.mq5 = root-level EA copies."
+}

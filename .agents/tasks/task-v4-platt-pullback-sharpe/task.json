@@ -1,0 +1,14 @@
+{
+  "task_id": "task-v4-platt-pullback-sharpe",
+  "task_description": "Create NeuroX v4 (version 7.4) as a separate folder alongside existing versions. Copy neurox/ to neurox_v4/ and add three new features: (1) Platt scaling confidence calibration, (2) micro-pullback smart entry timing, (3) Sharpe-ratio-based model weights. Also create NeuroX_EA_v4.mq5, neurox_run_v4.bat, and Python_Bridge_EA_v4.mq5.",
+  "status": "completed",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "All v4 imports verified clean. VERSION = '7.4' confirmed. All three features functional and integrated. Review issues (v1 and v2) resolved: entry timing signal loss fixed with TradeSignal reconstruction, Sharpe PnL now attributed proportionally to models that agreed with trade direction, Platt state file uses absolute path, NLL threshold set to 0.75, HOLD-cycle entries now re-establish _active_position with individual_preds for proper P&L tracking. Original neurox/ folder untouched. EA and bat file verified correct."
+  }
+}
