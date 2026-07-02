@@ -1,0 +1,19 @@
+{
+  "project_type": "Python quantitative trading system with MQL5 EA output",
+  "language": "Python (backtesting/optimization), MQL5 (production EA)",
+  "build_system": "pip/uv for Python packages",
+  "test_framework": "Python scripts with assertion-based validation",
+  "build_command": "python3 -c 'import pandas, numpy, scipy; print(\"deps ok\")'",
+  "test_command": "python3 /projects/sandbox/Claude/hft_scalper/run_backtest.py",
+  "verification_instructions": "Run the full backtest pipeline and verify PnL > 0, drawdown < 10%, Sharpe > 2",
+  "snapshot_or_generated_files": "Backtest results in hft_scalper/results/, final EA in hft_scalper/output/",
+  "setup_instructions": "pip install pandas numpy scipy scikit-learn numba",
+  "environment_constraints": "OPEN_INTERNET - full package install available. Python 3.11 with pyenv/uv/pip. 367MB tick data file with 6M ticks.",
+  "contribution_requirements": "Fresh implementation - do NOT reference any existing EA files in the repo",
+  "key_patterns": "Tick data format: time_msc (unix ms), bid, ask, last, volume, flags, flags_str, volume_real. Data spans April 1-29 2026, ~6M ticks. Price range ~4540-4680 XAUUSD.",
+  "relevant_files": [
+    "/projects/sandbox/Claude/tick_data/XAUUSD_RealTicks.csv",
+    "/projects/sandbox/Claude/hft_scalper/"
+  ],
+  "directory_structure": "tick_data/ contains raw broker ticks. hft_scalper/ will contain all new code (analysis, strategies, backtest engine, optimization, final EA output)."
+}

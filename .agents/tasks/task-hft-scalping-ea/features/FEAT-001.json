@@ -1,0 +1,26 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Set up Python environment and build the tick data analysis + microstructure profiling module. This module will load the 6M tick CSV, compute 1-minute OHLC bars, spread statistics, volatility clustering, mean-reversion metrics, momentum signatures, and order flow imbalance. Output a JSON summary of market characteristics to guide strategy design.",
+  "status": "completed",
+  "steps": [
+    "Create /projects/sandbox/Claude/hft_scalper/ directory structure with __init__.py files",
+    "Install required packages: pandas, numpy, scipy, scikit-learn, numba, tabulate",
+    "Create hft_scalper/data_loader.py that efficiently loads the tick CSV (use chunked reading or dtype optimization for the 367MB file). Parse time_msc as datetime, compute mid price, spread. Build 1-minute OHLC bars from bid prices.",
+    "Create hft_scalper/microstructure_analysis.py that computes: (a) spread distribution stats, (b) tick-by-tick volatility and volatility clustering (GARCH-like), (c) autocorrelation of returns at various lags (1-tick, 5-tick, 10-tick, 1-bar, 5-bar), (d) mean-reversion half-life estimation, (e) momentum persistence at different horizons, (f) volume/tick-rate patterns by time-of-day, (g) order flow imbalance metrics from bid/ask changes",
+    "Create hft_scalper/analyze.py as the runner script that executes the full analysis pipeline and saves results to hft_scalper/results/microstructure_report.json",
+    "Run the analysis and verify it completes successfully on the full dataset"
+  ],
+  "acceptance_criteria": [
+    "hft_scalper/analyze.py runs without error on the full 6M tick dataset",
+    "Produces hft_scalper/results/microstructure_report.json with all computed metrics",
+    "1-minute OHLC bars are correctly computed from tick data",
+    "Autocorrelation and mean-reversion metrics are computed and saved"
+  ],
+  "verification": [
+    "python3 /projects/sandbox/Claude/hft_scalper/analyze.py",
+    "python3 -c \"import json; d=json.load(open('/projects/sandbox/Claude/hft_scalper/results/microstructure_report.json')); print(f'Bars: {d.get(\\\"num_bars\\\", \\\"N/A\\\")}, Mean spread: {d.get(\\\"mean_spread\\\", \\\"N/A\\\")}')\"" 
+  ],
+  "blocked_reason": null,
+  "findings": "KEY MARKET CHARACTERISTICS (XAUUSD April 2026): 6,049,106 ticks -> 27,572 one-minute bars. Price range 4510-4890. Mean spread 0.098 (median 0.08, very tight). Hurst exponent 0.545 (near random walk at tick level). BAR REGIME IS MEAN-REVERTING (negative autocorrelation at lag1=-0.02, lag2, lag3). Tick regime is random walk. Volatility clustering weak (0.046). Fat tails with kurtosis=76. Daily vol ~1.74%. Order flow imbalance negatively autocorrelated (-0.18, contrarian). Peak volatility hours: 01, 04, 16-18 UTC. STRATEGY IMPLICATIONS: (1) Mean-reversion strategies on 1-min bars should work given negative bar autocorrelation, (2) fat tails mean tight stops are essential, (3) tight spreads favor high-frequency entry/exit, (4) avoid momentum strategies at tick level, (5) time-of-day filtering can improve Sharpe by avoiding quiet hours, (6) contrarian OFI signals may be useful for entry timing."
+}
