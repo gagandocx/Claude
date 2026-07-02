@@ -9,6 +9,6 @@
     "tests": "pass",
     "test_quality": "pass",
     "docker_build": "skipped",
-    "summary": "Full pipeline runs successfully: data analysis (5.9s), strategy backtesting (93.8s), ensemble comparison completed. EA is 685 lines of valid MQL5 with all safety features. OrderFlow strategy achieved $2,519 PnL (252% return) with Sharpe 3.9. Ensemble achieved $430 PnL with 80% win rate and only 10.5% max drawdown - best risk-adjusted returns. All output files generated correctly."
+    "summary": "Full pipeline runs successfully. After review fixes (SL/TP ordering, spread tracking, UTC time): Ensemble $307 PnL, 80% win rate, -6.9% max DD, Sharpe 3.08, PF 2.96, positive OOS +$29. OrderFlow $2,519 PnL, 45% WR, -29% DD, Sharpe 3.9 (highest raw PnL but overfit). EA is 700+ lines of valid MQL5 with all safety features. Review issues addressed."
   }
 }
