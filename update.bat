@@ -1,173 +1,269 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM ============================================
-REM   NeuroX v9.4 Update Script
-REM   Downloads and installs NeuroX EA + ExportRealTicks
-REM ============================================
+:: ------------------------------------------------------------
+::  NeuroX v9.4 - Force Update Script
+::  1. Force download: always downloads latest ZIP from GitHub
+::  2. Copy EAs + includes to MT5 terminals
+::  3. Compile EAs (NeuroX_EA_v9 + NeuroX_Standalone_v9)
+:: ------------------------------------------------------------
 
-set "DEST_FOLDER=F:\Automation\EA Testing\NeuroX\NeuroX v9.0"
+title NeuroX v9.4 - Force Update
+color 0B
 
-REM --- MT5 Terminal Configuration ---
+echo.
+echo ============================================================
+echo   NeuroX v9.4 - Force Update
+echo   Always downloads latest from GitHub (replaces all files)
+echo ============================================================
+echo.
+
+:: ------------------------------------------------------------
+:: CONFIGURATION
+:: ------------------------------------------------------------
+set "REPO_DIR=%~dp0"
+if "!REPO_DIR:~-1!"=="\" set "REPO_DIR=!REPO_DIR:~0,-1!"
+set "EA_FILE=NeuroX_EA_v9.mq5"
+set "STANDALONE_FILE=NeuroX_Standalone_v9.mq5"
+set "ZIP_URL=https://github.com/gagandocx/NeuroX-v9/archive/refs/heads/main.zip"
+set "ZIP_FILE=%TEMP%\neurox_update.zip"
+set "ZIP_EXTRACT=%TEMP%\neurox_update"
+
+:: MT5 Terminal: EA runs here
 set "MT5_TERMINAL_ID=930119AA53207C8778B41171FBFFB46F"
 set "MT5_BASE=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\%MT5_TERMINAL_ID%"
 set "MT5_EXPERTS=%MT5_BASE%\MQL5\Experts\Advisors"
 set "MT5_INCLUDE=%MT5_BASE%\MQL5\Include\NeuroX"
 set "MT5_SCRIPTS=%MT5_BASE%\MQL5\Scripts"
-set "METAEDITOR=%MT5_BASE%\MetaEditor64.exe"
 
-REM --- Download URLs ---
-set "NEUROX_REPO=https://github.com/gagandocx/NeuroX-v9/archive/refs/heads/main.zip"
-set "NEUROX_ZIP=%DEST_FOLDER%\NeuroX-v9.zip"
-set "NEUROX_EXTRACT=%DEST_FOLDER%\NeuroX-v9-main"
+:: ExportRealTicks configuration
 set "EXPORT_TICKS_URL=https://raw.githubusercontent.com/gagandocx/Claude/main/ExportRealTicks.mq5"
 set "EXPORT_TICKS_FILE=ExportRealTicks.mq5"
 
-echo ============================================
-echo   NeuroX v9.4 Updater
-echo ============================================
-echo.
-echo MT5 Terminal: %MT5_BASE%
-echo Destination:  %DEST_FOLDER%
+:: MetaEditor include resolution terminal (copy includes here too)
+set "MT5_EDITOR_ID=D0E8209F77C8CF37AD8BF550E51FF075"
+set "MT5_EDITOR_BASE=C:\Users\gagan\AppData\Roaming\MetaQuotes\Terminal\%MT5_EDITOR_ID%"
+set "MT5_EDITOR_INCLUDE=%MT5_EDITOR_BASE%\MQL5\Include\NeuroX"
+
+:: Find MetaEditor
+set "METAEDITOR="
+for %%P in (
+    "C:\Program Files\Fusion Markets MetaTrader 5\metaeditor64.exe"
+    "C:\Program Files (x86)\Fusion Markets MetaTrader 5\metaeditor64.exe"
+    "C:\Program Files\MetaTrader 5\metaeditor64.exe"
+) do (
+    if exist %%P set "METAEDITOR=%%~P"
+)
+
+:: ------------------------------------------------------------
+:: STEP 1: Force Download ZIP from GitHub
+:: ------------------------------------------------------------
+echo [1/3] Force downloading latest version from GitHub...
+echo        URL: %ZIP_URL%
 echo.
 
-REM --- Step 1: Create directories if needed ---
-echo [Step 1] Preparing directories...
-if not exist "%DEST_FOLDER%" (
-    mkdir "%DEST_FOLDER%"
-    if !ERRORLEVEL! neq 0 (
-        echo ERROR: Could not create folder: %DEST_FOLDER%
-        pause
-        exit /b 1
+cd /d "%REPO_DIR%"
+
+:: Back up .env if it exists
+set "ENV_BACKED_UP=0"
+if exist "%REPO_DIR%\.env" (
+    copy /Y "%REPO_DIR%\.env" "%TEMP%\neurox_env_backup" >nul 2>&1
+    if !ERRORLEVEL! equ 0 (
+        set "ENV_BACKED_UP=1"
+        echo        [OK] .env file backed up.
     )
 )
-if not exist "%MT5_EXPERTS%" (
-    mkdir "%MT5_EXPERTS%"
-)
-if not exist "%MT5_INCLUDE%" (
-    mkdir "%MT5_INCLUDE%"
-)
-if not exist "%MT5_SCRIPTS%" (
-    mkdir "%MT5_SCRIPTS%"
-)
-echo   Directories ready.
-echo.
 
-REM --- Step 2: Download NeuroX v9 ZIP ---
-echo [Step 2] Downloading NeuroX v9 from GitHub...
-if exist "%NEUROX_ZIP%" del "%NEUROX_ZIP%"
-powershell -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%NEUROX_REPO%' -OutFile '%NEUROX_ZIP%' -UseBasicParsing"
+:: Clean up any previous temp files
+if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>&1
+if exist "%ZIP_EXTRACT%" rd /s /q "%ZIP_EXTRACT%" >nul 2>&1
+
+:: Download ZIP using PowerShell
+echo        Downloading...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%ZIP_URL%' -OutFile '%ZIP_FILE%' -UseBasicParsing; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
 if !ERRORLEVEL! neq 0 (
-    echo   PowerShell failed, trying curl...
-    curl.exe -L --ssl-reqd -o "%NEUROX_ZIP%" "%NEUROX_REPO%"
-    if !ERRORLEVEL! neq 0 (
-        echo ERROR: Failed to download NeuroX v9 ZIP.
-        pause
-        exit /b 1
-    )
+    echo        [ERROR] Failed to download ZIP. Check your internet connection.
+    goto :error_exit
 )
-if not exist "%NEUROX_ZIP%" (
-    echo ERROR: NeuroX ZIP file not found after download.
-    pause
-    exit /b 1
-)
-echo   NeuroX v9 ZIP downloaded.
-echo.
 
-REM --- Step 2b: Download ExportRealTicks.mq5 ---
-echo [Step 2b] Downloading ExportRealTicks.mq5 from GitHub...
-powershell -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%EXPORT_TICKS_URL%' -OutFile '%DEST_FOLDER%\%EXPORT_TICKS_FILE%' -UseBasicParsing"
+if not exist "%ZIP_FILE%" (
+    echo        [ERROR] ZIP file not found after download.
+    goto :error_exit
+)
+
+echo        [OK] ZIP downloaded successfully.
+
+:: Extract ZIP using PowerShell
+echo        Extracting...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%ZIP_EXTRACT%' -Force; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
 if !ERRORLEVEL! neq 0 (
-    echo   PowerShell failed, trying curl...
-    curl.exe -L --ssl-reqd -o "%DEST_FOLDER%\%EXPORT_TICKS_FILE%" "%EXPORT_TICKS_URL%"
-    if !ERRORLEVEL! neq 0 (
-        echo ERROR: Failed to download ExportRealTicks.mq5.
-        pause
-        exit /b 1
-    )
+    echo        [ERROR] Failed to extract ZIP file.
+    goto :error_exit
 )
-if not exist "%DEST_FOLDER%\%EXPORT_TICKS_FILE%" (
-    echo ERROR: ExportRealTicks.mq5 not found after download.
-    pause
-    exit /b 1
-)
-echo   ExportRealTicks.mq5 downloaded.
-echo.
 
-REM --- Step 3: Extract NeuroX ZIP ---
-echo [Step 3] Extracting NeuroX v9 ZIP...
-if exist "%NEUROX_EXTRACT%" rmdir /s /q "%NEUROX_EXTRACT%"
-powershell -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%NEUROX_ZIP%' -DestinationPath '%DEST_FOLDER%' -Force"
+:: Verify extracted folder exists
+if not exist "%ZIP_EXTRACT%\NeuroX-v9-main" (
+    echo        [ERROR] Expected folder 'NeuroX-v9-main' not found in ZIP.
+    goto :error_exit
+)
+
+echo        [OK] ZIP extracted successfully.
+
+:: Copy all files from extracted folder to REPO_DIR (force overwrite)
+echo        Copying files (force overwrite)...
+xcopy "%ZIP_EXTRACT%\NeuroX-v9-main\*" "%REPO_DIR%\" /E /Y /Q >nul
 if !ERRORLEVEL! neq 0 (
-    echo ERROR: Failed to extract NeuroX ZIP.
-    pause
-    exit /b 1
+    echo        [ERROR] Failed to copy files from ZIP.
+    goto :error_exit
 )
-echo   Extracted successfully.
+
+echo        [OK] All files replaced with latest from GitHub.
+
+:: Restore .env if it was backed up
+if "!ENV_BACKED_UP!"=="1" (
+    copy /Y "%TEMP%\neurox_env_backup" "%REPO_DIR%\.env" >nul 2>&1
+    echo        [OK] .env file restored.
+    del /f /q "%TEMP%\neurox_env_backup" >nul 2>&1
+)
+
+:: Clean up temp files
+if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>&1
+if exist "%ZIP_EXTRACT%" rd /s /q "%ZIP_EXTRACT%" >nul 2>&1
+
 echo.
 
-REM --- Step 4: Copy EAs to MT5 Experts folder ---
-echo [Step 4] Copying Expert Advisors to MT5...
-if exist "%NEUROX_EXTRACT%\Experts\*" (
-    xcopy "%NEUROX_EXTRACT%\Experts\*" "%MT5_EXPERTS%\" /s /y /q
-    echo   EAs copied to %MT5_EXPERTS%
+:: ------------------------------------------------------------
+:: STEP 2: Copy EAs + Includes to MT5
+:: ------------------------------------------------------------
+echo [2/3] Copying files to MT5 terminals...
+echo.
+
+set "EA_SOURCE=%REPO_DIR%\%EA_FILE%"
+set "STANDALONE_SOURCE=%REPO_DIR%\%STANDALONE_FILE%"
+
+:: Create directories
+if not exist "%MT5_EXPERTS%" mkdir "%MT5_EXPERTS%"
+if not exist "%MT5_INCLUDE%" mkdir "%MT5_INCLUDE%"
+if not exist "%MT5_EDITOR_INCLUDE%" mkdir "%MT5_EDITOR_INCLUDE%"
+if not exist "%MT5_SCRIPTS%" mkdir "%MT5_SCRIPTS%"
+
+:: Copy NeuroX EA to MT5
+if exist "%EA_SOURCE%" (
+    copy /Y "%EA_SOURCE%" "%MT5_EXPERTS%\" >nul 2>&1
+    echo        [OK] %EA_FILE% copied to: %MT5_EXPERTS%
 ) else (
-    echo   WARNING: No Experts folder found in extracted files.
+    echo        [WARNING] %EA_FILE% not found. Skipping.
 )
-echo.
 
-REM --- Step 4b: Copy Include files to MT5 ---
-echo [Step 4b] Copying Include files to MT5...
-if exist "%NEUROX_EXTRACT%\Include\*" (
-    xcopy "%NEUROX_EXTRACT%\Include\*" "%MT5_INCLUDE%\" /s /y /q
-    echo   Include files copied to %MT5_INCLUDE%
+:: Copy NeuroX Standalone to MT5
+if exist "%STANDALONE_SOURCE%" (
+    copy /Y "%STANDALONE_SOURCE%" "%MT5_EXPERTS%\" >nul 2>&1
+    echo        [OK] %STANDALONE_FILE% copied to: %MT5_EXPERTS%
 ) else (
-    echo   WARNING: No Include folder found in extracted files.
+    echo        [WARNING] %STANDALONE_FILE% not found. Skipping.
 )
-echo.
 
-REM --- Step 4c: Copy ExportRealTicks.mq5 to MT5 Scripts folder ---
-echo [Step 4c] Copying ExportRealTicks.mq5 to MT5 Scripts...
-copy /y "%DEST_FOLDER%\%EXPORT_TICKS_FILE%" "%MT5_SCRIPTS%\%EXPORT_TICKS_FILE%"
+:: Copy includes to EA terminal
+if exist "%REPO_DIR%\Include\*.mqh" (
+    copy /Y "%REPO_DIR%\Include\*.mqh" "%MT5_INCLUDE%\" >nul 2>&1
+    echo        [OK] Includes copied to: %MT5_INCLUDE%
+)
+
+:: Copy includes to MetaEditor resolution terminal
+if exist "%REPO_DIR%\Include\*.mqh" (
+    copy /Y "%REPO_DIR%\Include\*.mqh" "%MT5_EDITOR_INCLUDE%\" >nul 2>&1
+    echo        [OK] Includes copied to: %MT5_EDITOR_INCLUDE% (MetaEditor)
+)
+
+:: Download and copy ExportRealTicks.mq5 to MT5 Scripts folder
+echo.
+echo        Downloading ExportRealTicks.mq5...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%EXPORT_TICKS_URL%' -OutFile '%MT5_SCRIPTS%\%EXPORT_TICKS_FILE%' -UseBasicParsing; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
 if !ERRORLEVEL! neq 0 (
-    echo ERROR: Failed to copy ExportRealTicks.mq5 to MT5 Scripts folder.
-    pause
-    exit /b 1
-)
-echo   ExportRealTicks.mq5 copied to %MT5_SCRIPTS%
-echo.
-
-REM --- Step 5: Compile EAs using MetaEditor ---
-echo [Step 5] Compiling Expert Advisors...
-if exist "%METAEDITOR%" (
-    for %%f in ("%MT5_EXPERTS%\*.mq5") do (
-        echo   Compiling %%~nxf ...
-        "%METAEDITOR%" /compile:"%%f" /log /inc:"%MT5_BASE%\MQL5"
-    )
-    echo   Compilation complete.
+    echo        [WARNING] Failed to download ExportRealTicks.mq5. Skipping.
 ) else (
-    echo   WARNING: MetaEditor64.exe not found at %METAEDITOR%
-    echo   Skipping compilation. Please compile manually from MT5.
+    if exist "%MT5_SCRIPTS%\%EXPORT_TICKS_FILE%" (
+        echo        [OK] %EXPORT_TICKS_FILE% downloaded to: %MT5_SCRIPTS%
+    ) else (
+        echo        [WARNING] %EXPORT_TICKS_FILE% not found after download. Skipping.
+    )
 )
+
 echo.
 
-REM --- Step 6: Cleanup ---
-echo [Step 6] Cleaning up temporary files...
-if exist "%NEUROX_ZIP%" del "%NEUROX_ZIP%"
-if exist "%NEUROX_EXTRACT%" rmdir /s /q "%NEUROX_EXTRACT%"
-echo   Cleanup done.
+:: ------------------------------------------------------------
+:: STEP 3: Compile EAs
+:: ------------------------------------------------------------
+echo [3/3] Compiling...
 echo.
 
-REM --- Done ---
-echo ============================================
-echo   NeuroX v9.4 Update Complete!
-echo ============================================
+if not defined METAEDITOR (
+    echo        [INFO] MetaEditor not found. Open MetaEditor and press F7 to compile manually.
+    goto :done
+)
+
+:: Compile NeuroX EA
+if exist "%MT5_EXPERTS%\%EA_FILE%" (
+    set "COMPILE_TARGET=%MT5_EXPERTS%\%EA_FILE%"
+    echo        Compiling: !COMPILE_TARGET!
+    "%METAEDITOR%" /compile:"!COMPILE_TARGET!" /log >nul 2>&1
+    timeout /t 8 /nobreak >nul
+
+    set "LOG_FILE=%MT5_EXPERTS%\NeuroX_EA_v9.log"
+    if exist "!LOG_FILE!" (
+        findstr /i " error " "!LOG_FILE!" >nul
+        if !errorlevel! equ 0 (
+            echo        [WARNING] %EA_FILE% compilation has errors. Check log.
+        ) else (
+            echo        [OK] %EA_FILE% compiled successfully.
+        )
+    ) else (
+        echo        [OK] %EA_FILE% compile complete.
+    )
+) else (
+    echo        [WARNING] %EA_FILE% not in Experts folder. Skipping compile.
+)
+
 echo.
-echo   EAs installed to:       %MT5_EXPERTS%
-echo   Includes installed to:  %MT5_INCLUDE%
-echo   Scripts installed to:   %MT5_SCRIPTS%
+
+:: Compile NeuroX Standalone
+if exist "%MT5_EXPERTS%\%STANDALONE_FILE%" (
+    set "COMPILE_TARGET=%MT5_EXPERTS%\%STANDALONE_FILE%"
+    echo        Compiling: !COMPILE_TARGET!
+    "%METAEDITOR%" /compile:"!COMPILE_TARGET!" /log >nul 2>&1
+    timeout /t 8 /nobreak >nul
+
+    set "LOG_FILE=%MT5_EXPERTS%\NeuroX_Standalone_v9.log"
+    if exist "!LOG_FILE!" (
+        findstr /i " error " "!LOG_FILE!" >nul
+        if !errorlevel! equ 0 (
+            echo        [WARNING] %STANDALONE_FILE% compilation has errors. Check log.
+        ) else (
+            echo        [OK] %STANDALONE_FILE% compiled successfully.
+        )
+    ) else (
+        echo        [OK] %STANDALONE_FILE% compile complete.
+    )
+) else (
+    echo        [WARNING] %STANDALONE_FILE% not in Experts folder. Skipping compile.
+)
+
+:done
 echo.
-echo   ExportRealTicks.mq5 is ready in MT5 Scripts.
-echo ============================================
+echo ============================================================
+echo   Update Complete!
+echo   All files replaced with latest v9.4 from GitHub.
+echo   Attach EA to chart and trade.
+echo ============================================================
 echo.
 pause
+exit /b 0
+
+:error_exit
+echo.
+echo ============================================================
+echo   Update Failed! Check errors above.
+echo ============================================================
+echo.
+pause
+exit /b 1
