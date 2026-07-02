@@ -2,43 +2,63 @@
 setlocal
 
 set "REPO_URL=https://raw.githubusercontent.com/gagandocx/Claude/main/ExportRealTicks.mq5"
+set "DEST_FOLDER=F:\Automation\EA Testing\NeuroX\NeuroX v9.0"
 set "FILENAME=ExportRealTicks.mq5"
+set "DEST_FILE=%DEST_FOLDER%\%FILENAME%"
 
-REM Attempt to find the MT5 Scripts folder
-set "MT5_SCRIPTS="
-if exist "%APPDATA%\MetaQuotes\Terminal" (
-    for /d %%D in ("%APPDATA%\MetaQuotes\Terminal\*") do (
-        if exist "%%D\MQL5\Scripts" (
-            set "MT5_SCRIPTS=%%D\MQL5\Scripts"
-        )
-    )
-)
+echo ============================================
+echo   ExportRealTicks.mq5 Updater
+echo ============================================
+echo.
+echo Destination: %DEST_FILE%
+echo.
 
-echo Downloading %FILENAME% from GitHub...
-
-REM Download using PowerShell Invoke-WebRequest
-powershell -Command "Invoke-WebRequest -Uri '%REPO_URL%' -OutFile '%FILENAME%'" 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo PowerShell download failed, trying curl...
-    curl -L -o "%FILENAME%" "%REPO_URL%"
+REM Create destination folder if it doesn't exist
+if not exist "%DEST_FOLDER%" (
+    mkdir "%DEST_FOLDER%"
     if %ERRORLEVEL% neq 0 (
-        echo ERROR: Download failed. Check your internet connection.
+        echo ERROR: Could not create folder: %DEST_FOLDER%
         pause
         exit /b 1
     )
 )
 
-echo Downloaded %FILENAME% to current directory.
+echo Downloading %FILENAME% from GitHub...
+echo.
 
-REM Copy to MT5 Scripts folder if found
-if defined MT5_SCRIPTS (
-    copy /Y "%FILENAME%" "%MT5_SCRIPTS%\%FILENAME%" >nul
-    echo Copied %FILENAME% to %MT5_SCRIPTS%
-) else (
-    echo MT5 Scripts folder not found. File saved to current directory only.
-    echo You can manually copy it to: %%APPDATA%%\MetaQuotes\Terminal\[ID]\MQL5\Scripts\
+REM Method 1: PowerShell with TLS 1.2 and ExecutionPolicy Bypass
+echo Trying PowerShell...
+powershell -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%REPO_URL%' -OutFile '%DEST_FILE%' -UseBasicParsing"
+if %ERRORLEVEL% equ 0 (
+    if exist "%DEST_FILE%" (
+        echo SUCCESS: Downloaded via PowerShell.
+        goto :done
+    )
+)
+
+echo PowerShell failed, trying curl...
+echo.
+
+REM Method 2: curl.exe (built into Windows 10+)
+curl.exe -L --ssl-reqd --tls-max 1.2 -o "%DEST_FILE%" "%REPO_URL%"
+if %ERRORLEVEL% equ 0 (
+    if exist "%DEST_FILE%" (
+        echo SUCCESS: Downloaded via curl.
+        goto :done
+    )
 )
 
 echo.
-echo Done!
+echo ERROR: Download failed with both methods.
+echo Please check your internet connection and try again.
+pause
+exit /b 1
+
+:done
+echo.
+echo ============================================
+echo   File saved to:
+echo   %DEST_FILE%
+echo ============================================
+echo.
 pause
