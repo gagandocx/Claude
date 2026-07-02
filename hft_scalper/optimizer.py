@@ -150,7 +150,7 @@ def quick_optimize(
     strategy_class: type,
     bars: pd.DataFrame,
     config: BacktestConfig = None,
-    metric: str = "total_pnl",
+    metric: str = "calmar_ratio",
 ) -> Tuple[Dict[str, Any], BacktestResult, BacktestResult]:
     """
     Quick optimization with reduced parameter grid.
@@ -178,5 +178,5 @@ def quick_optimize(
     # Use calmar_ratio as metric (PnL / max_drawdown) for best risk-adjusted returns
     return optimize_strategy(
         strategy_class, bars, param_grid,
-        config=config, metric="total_pnl", max_combinations=150
+        config=config, metric="calmar_ratio", max_combinations=150
     )

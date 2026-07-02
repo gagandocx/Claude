@@ -118,8 +118,38 @@ def run_backtest(bars: pd.DataFrame, signals: np.ndarray, config: Optional[Backt
         if position != 0:
             # Check stop loss and take profit hit within bar
             if position == 1:  # Long position
-                # Stop loss hit? (price went below SL)
-                if lows[i] <= stop_loss:
+                sl_hit = lows[i] <= stop_loss
+                tp_hit = highs[i] >= take_profit
+
+                if sl_hit and tp_hit:
+                    # Both SL and TP could be hit in the same bar.
+                    # Resolve by checking which level the open is closer to:
+                    # - Distance from open down to SL vs distance from open up to TP
+                    # The shorter distance was likely hit first.
+                    dist_to_sl = opens[i] - stop_loss
+                    dist_to_tp = take_profit - opens[i]
+                    if dist_to_sl <= dist_to_tp:
+                        # SL was closer to open, hit first
+                        exit_price = stop_loss - config.slippage_points
+                        pnl_points = exit_price - entry_price
+                        exit_reason = "sl"
+                    else:
+                        # TP was closer to open, hit first
+                        exit_price = take_profit
+                        pnl_points = exit_price - entry_price
+                        exit_reason = "tp"
+                    pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt
+                    equity += pnl_dollar
+                    trades.append(Trade(
+                        entry_bar=entry_bar, exit_bar=i, direction=1,
+                        entry_price=entry_price, exit_price=exit_price,
+                        stop_loss=stop_loss, take_profit=take_profit,
+                        pnl=pnl_dollar, pnl_points=pnl_points,
+                        commission=config.commission_per_lot_rt, exit_reason=exit_reason
+                    ))
+                    position = 0
+                elif sl_hit:
+                    # Stop loss hit (price went below SL)
                     exit_price = stop_loss - config.slippage_points
                     pnl_points = exit_price - entry_price
                     pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt
@@ -132,8 +162,8 @@ def run_backtest(bars: pd.DataFrame, signals: np.ndarray, config: Optional[Backt
                         commission=config.commission_per_lot_rt, exit_reason="sl"
                     ))
                     position = 0
-                # Take profit hit? (price went above TP)
-                elif highs[i] >= take_profit:
+                elif tp_hit:
+                    # Take profit hit (price went above TP)
                     exit_price = take_profit
                     pnl_points = exit_price - entry_price
                     pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt
@@ -162,8 +192,37 @@ def run_backtest(bars: pd.DataFrame, signals: np.ndarray, config: Optional[Backt
                     position = 0
 
             elif position == -1:  # Short position
-                # Stop loss hit? (price went above SL)
-                if highs[i] >= stop_loss:
+                sl_hit = highs[i] >= stop_loss
+                tp_hit = lows[i] <= take_profit
+
+                if sl_hit and tp_hit:
+                    # Both SL and TP could be hit in the same bar.
+                    # Resolve by checking which level the open is closer to:
+                    # - Distance from open up to SL vs distance from open down to TP
+                    dist_to_sl = stop_loss - opens[i]
+                    dist_to_tp = opens[i] - take_profit
+                    if dist_to_sl <= dist_to_tp:
+                        # SL was closer to open, hit first
+                        exit_price = stop_loss + config.slippage_points
+                        pnl_points = entry_price - exit_price
+                        exit_reason = "sl"
+                    else:
+                        # TP was closer to open, hit first
+                        exit_price = take_profit
+                        pnl_points = entry_price - exit_price
+                        exit_reason = "tp"
+                    pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt
+                    equity += pnl_dollar
+                    trades.append(Trade(
+                        entry_bar=entry_bar, exit_bar=i, direction=-1,
+                        entry_price=entry_price, exit_price=exit_price,
+                        stop_loss=stop_loss, take_profit=take_profit,
+                        pnl=pnl_dollar, pnl_points=pnl_points,
+                        commission=config.commission_per_lot_rt, exit_reason=exit_reason
+                    ))
+                    position = 0
+                elif sl_hit:
+                    # Stop loss hit (price went above SL)
                     exit_price = stop_loss + config.slippage_points
                     pnl_points = entry_price - exit_price
                     pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt
@@ -176,8 +235,8 @@ def run_backtest(bars: pd.DataFrame, signals: np.ndarray, config: Optional[Backt
                         commission=config.commission_per_lot_rt, exit_reason="sl"
                     ))
                     position = 0
-                # Take profit hit? (price went below TP)
-                elif lows[i] <= take_profit:
+                elif tp_hit:
+                    # Take profit hit (price went below TP)
                     exit_price = take_profit
                     pnl_points = entry_price - exit_price
                     pnl_dollar = pnl_points * config.contract_size * config.lot_size - config.commission_per_lot_rt

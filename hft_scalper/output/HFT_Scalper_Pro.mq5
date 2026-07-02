@@ -49,6 +49,8 @@ input int      InpSessionStart1         = 4;       // Session 1 Start Hour (UTC)
 input int      InpSessionEnd1           = 4;       // Session 1 End Hour (UTC)
 input int      InpSessionStart2         = 8;       // Session 2 Start Hour (UTC)
 input int      InpSessionEnd2           = 21;      // Session 2 End Hour (UTC)
+input int      InpUTCOffset             = 0;       // UTC Offset (hours, for brokers without TimeGMT)
+input bool     InpUseTimeGMT            = true;    // Use TimeGMT() (disable if broker unsupported)
 
 input group "=== General Settings ==="
 input int      InpMagicNumber           = 202604;  // Magic Number
@@ -83,6 +85,11 @@ double         g_spreadHistory[];
 //--- Spread fade state
 bool           g_wasWide;
 double         g_wideStartPrice;
+
+//--- Spread ring buffer for historical per-bar tracking
+double         g_spreadRingBuffer[];
+int            g_spreadRingIndex;
+int            g_spreadRingCount;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -127,6 +134,12 @@ int OnInit()
    ArrayResize(g_spreadHistory, InpSpreadLookback + 1);
    ArrayInitialize(g_ofiRaw, 0.0);
    ArrayInitialize(g_spreadHistory, 0.0);
+   
+   //--- Initialize spread ring buffer for per-bar spread tracking
+   ArrayResize(g_spreadRingBuffer, InpSpreadLookback + 1);
+   ArrayInitialize(g_spreadRingBuffer, 0.0);
+   g_spreadRingIndex = 0;
+   g_spreadRingCount = 0;
    
    //--- Set timer for periodic equity checks
    EventSetTimer(InpTimerSeconds);
@@ -208,6 +221,21 @@ void OnTick()
    if(currentBarTime == lastBarTime)
       return;
    lastBarTime = currentBarTime;
+   
+   //--- Record per-bar spread into ring buffer (capture spread at bar close)
+   double barSpread = (double)SymbolInfoInteger(g_symbol, SYMBOL_SPREAD) * _Point;
+   if(barSpread < _Point)
+   {
+      //--- Fallback: use previous bar's high-low range as spread proxy
+      double prevHigh = iHigh(g_symbol, PERIOD_M1, 1);
+      double prevLow = iLow(g_symbol, PERIOD_M1, 1);
+      barSpread = (prevHigh - prevLow) * 0.1;
+   }
+   int bufSize = InpSpreadLookback + 1;
+   g_spreadRingBuffer[g_spreadRingIndex] = barSpread;
+   g_spreadRingIndex = (g_spreadRingIndex + 1) % bufSize;
+   if(g_spreadRingCount < bufSize)
+      g_spreadRingCount++;
    
    //--- Safety checks
    if(!g_tradingEnabled)
@@ -432,33 +460,30 @@ int GetSpreadFadeSignal()
    int barsNeeded = InpSpreadLookback + 1;
    if(Bars(g_symbol, PERIOD_M1) < barsNeeded) return 0;
    
-   //--- Get spread history (using high-low as proxy in live trading)
-   double spreads[];
-   ArrayResize(spreads, barsNeeded);
+   //--- Need enough historical spread data in the ring buffer
+   if(g_spreadRingCount < barsNeeded)
+      return 0;
    
-   for(int i = 0; i < barsNeeded; i++)
-   {
-      //--- Use the spread from symbol info or approximate from bar range
-      double high = iHigh(g_symbol, PERIOD_M1, i);
-      double low = iLow(g_symbol, PERIOD_M1, i);
-      double range = high - low;
-      //--- In live trading, use actual spread; in backtesting, approximate
-      spreads[i] = (double)SymbolInfoInteger(g_symbol, SYMBOL_SPREAD) * _Point;
-      if(spreads[i] < _Point)
-         spreads[i] = range * 0.1;  // Fallback approximation
-   }
+   //--- Get current bar spread (most recently stored value)
+   int bufSize = InpSpreadLookback + 1;
+   int currentIdx = (g_spreadRingIndex - 1 + bufSize) % bufSize;
+   double currentSpread = g_spreadRingBuffer[currentIdx];
    
    //--- Compute median spread from lookback (excluding current bar)
    double sortedSpreads[];
    ArrayResize(sortedSpreads, InpSpreadLookback);
    for(int i = 0; i < InpSpreadLookback; i++)
-      sortedSpreads[i] = spreads[i + 1];
+   {
+      //--- Walk backwards from the bar before current
+      int idx = (currentIdx - 1 - i + bufSize) % bufSize;
+      sortedSpreads[i] = g_spreadRingBuffer[idx];
+   }
    ArraySort(sortedSpreads);
    
    double medianSpread = sortedSpreads[InpSpreadLookback / 2];
    if(medianSpread < _Point) return 0;
    
-   double spreadRatio = spreads[0] / medianSpread;
+   double spreadRatio = currentSpread / medianSpread;
    
    //--- Detect wide spread -> contraction pattern
    if(spreadRatio >= InpWideThreshold && !g_wasWide)
@@ -513,8 +538,17 @@ double GetATR(int period)
 bool IsValidSession()
 {
    MqlDateTime dt;
-   TimeCurrent(dt);
-   int hour = dt.hour;  // Server time - adjust to UTC if needed
+   //--- Use TimeGMT for accurate UTC time; fall back to TimeCurrent with offset
+   if(InpUseTimeGMT)
+      TimeGMT(dt);
+   else
+   {
+      datetime serverTime = TimeCurrent();
+      //--- Apply UTC offset: subtract broker offset to get UTC
+      datetime utcTime = serverTime - InpUTCOffset * 3600;
+      TimeToStruct(utcTime, dt);
+   }
+   int hour = dt.hour;
    
    //--- Session 1: single hour
    if(hour == InpSessionStart1)

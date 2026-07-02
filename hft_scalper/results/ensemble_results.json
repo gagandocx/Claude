@@ -28,53 +28,53 @@
   "comparison": {
     "Ensemble": {
       "full": {
-        "total_pnl": 430.59,
-        "total_trades": 15,
-        "winning_trades": 12,
-        "losing_trades": 3,
+        "total_pnl": 307.18,
+        "total_trades": 10,
+        "winning_trades": 8,
+        "losing_trades": 2,
         "win_rate": 80.0,
-        "profit_factor": 2.98,
-        "max_drawdown": -147.31,
-        "max_drawdown_pct": -10.517,
-        "sharpe_ratio": 3.761,
-        "sortino_ratio": 0.454,
-        "avg_trade_pnl": 28.71,
-        "avg_winner": 54.0,
-        "avg_loser": -72.48,
-        "max_consecutive_losses": 2,
+        "profit_factor": 2.955,
+        "max_drawdown": -86.99,
+        "max_drawdown_pct": -6.889,
+        "sharpe_ratio": 3.081,
+        "sortino_ratio": 0.381,
+        "avg_trade_pnl": 30.72,
+        "avg_winner": 58.04,
+        "avg_loser": -78.56,
+        "max_consecutive_losses": 1,
         "avg_trade_duration_bars": 15.4,
-        "calmar_ratio": 4.094,
-        "expectancy": 28.71
+        "calmar_ratio": 4.459,
+        "expectancy": 30.72
       },
       "validation": {
-        "total_pnl": 29.36,
+        "total_pnl": 29.11,
         "total_trades": 1,
         "winning_trades": 1,
         "losing_trades": 0,
         "win_rate": 100.0,
-        "profit_factor": 29358.429,
+        "profit_factor": 29108.733,
         "max_drawdown": 0.0,
         "max_drawdown_pct": 0.0,
         "sharpe_ratio": 3.447,
         "sortino_ratio": 0.0,
-        "avg_trade_pnl": 29.36,
-        "avg_winner": 29.36,
+        "avg_trade_pnl": 29.11,
+        "avg_winner": 29.11,
         "avg_loser": 0.0,
         "max_consecutive_losses": 0,
-        "avg_trade_duration_bars": 30.0,
+        "avg_trade_duration_bars": 7.0,
         "calmar_ratio": 0.0,
-        "expectancy": 29.36
+        "expectancy": 29.11
       },
       "params": {
-        "ofi_period": 20,
+        "ofi_period": 40,
         "ofi_threshold": 2.0,
-        "slow_period": 60,
+        "slow_period": 40,
         "trend_strength_threshold": 0.1,
         "min_score": 2,
         "sl_atr_mult_high": 1.5,
-        "tp_atr_mult_high": 2.5
+        "tp_atr_mult_high": 3.0
       },
-      "composite_score": 21.876
+      "composite_score": 19.154
     },
     "OrderFlow": {
       "full": {
