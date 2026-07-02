@@ -6,6 +6,7 @@ from .order_flow import OrderFlowStrategy
 from .spread_fade import SpreadFadeStrategy
 from .momentum_mtf import MomentumMTFStrategy
 from .volatility_breakout import VolatilityBreakoutStrategy
+from .ensemble import EnsembleStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -14,4 +15,5 @@ __all__ = [
     "SpreadFadeStrategy",
     "MomentumMTFStrategy",
     "VolatilityBreakoutStrategy",
+    "EnsembleStrategy",
 ]

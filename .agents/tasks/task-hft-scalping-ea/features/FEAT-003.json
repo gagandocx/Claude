@@ -1,25 +1,30 @@
 {
   "id": "FEAT-003",
   "type": "feat",
-  "description": "Take the winning strategy from FEAT-002 backtesting and produce a production-ready MQL5 Expert Advisor. The EA must implement the exact same logic that won in backtesting, with all optimized parameters hardcoded as defaults (but configurable via inputs). Include proper money management, session filters, and safety mechanisms.",
-  "status": "pending",
+  "description": "Build an advanced ensemble/hybrid EA that combines the best elements from all tested strategies. The OrderFlow strategy had highest PnL ($2,519) but overfits slightly. MomentumMTF was the only one profitable in both train AND validation. SpreadFade had best per-trade expectancy ($20.83). The final EA should use an ensemble approach: (1) OrderFlow contrarian as primary signal, (2) MomentumMTF as trend filter/confirmation, (3) Dynamic position sizing based on signal confidence. Also re-run the combined strategy through the backtest engine to validate the ensemble approach produces better risk-adjusted returns than any individual strategy.",
+  "status": "completed",
   "steps": [
-    "Read the backtest results from hft_scalper/results/ to identify the winning strategy and its optimized parameters",
-    "Create hft_scalper/output/HFT_Scalper_Pro.mq5 - a complete, production-ready MQL5 EA implementing the winning strategy. Must include: (a) All strategy logic translated to MQL5, (b) Configurable input parameters with winning values as defaults, (c) Proper order management with magic number, (d) Session filter (London + NY sessions only, configurable), (e) Max spread filter, (f) Max daily loss protection, (g) Max drawdown protection (auto-disable if exceeded), (h) Trailing stop logic, (i) Position sizing based on account equity and risk%, (j) Proper error handling and retry logic for order sends, (k) Logging/comments on trades for analysis, (l) OnTimer() for time-based exits if applicable",
-    "Create hft_scalper/output/EA_README.md documenting: strategy logic explanation, recommended settings, broker requirements (low spread, fast execution), risk warnings, and the backtest metrics that were achieved",
-    "Create hft_scalper/output/backtest_summary.md with full performance report: equity curve description, monthly breakdown, key metrics, and strategy parameter sensitivity analysis"
+    "Read the existing strategy code in hft_scalper/strategies/ to understand the implementation patterns",
+    "Create hft_scalper/strategies/ensemble.py - a new strategy that combines signals: (a) OrderFlow contrarian generates primary entries when OFI z-score exceeds threshold, (b) MomentumMTF slow_period trend filter confirms direction (only take trades aligned with 40-bar momentum), (c) SpreadFade condition as additional confidence boost (tighter stops when spread confirms). Score entries 1-3 based on how many signals agree. Only trade when score >= 2. Use tighter stops (1.5x ATR) when all 3 agree (high confidence), wider stops (2.5x ATR) when only 2 agree.",
+    "Create hft_scalper/run_ensemble_backtest.py - run the ensemble strategy through the same backtest engine with walk-forward validation. Save results to hft_scalper/results/ensemble_results.json",
+    "Run the ensemble backtest and compare with individual strategies. If ensemble is better, use it for the EA. If not, use the best individual (OrderFlow or MomentumMTF depending on risk-adjusted return).",
+    "Create hft_scalper/output/HFT_Scalper_Pro.mq5 - production-ready MQL5 EA implementing the WINNING approach (ensemble or best individual). Must include: (a) Complete strategy logic translated to MQL5 with CTrade class, (b) All optimized parameters as configurable inputs with best values as defaults, (c) Session filter (trade only hours 04,08-11,13-21 UTC - the active hours), (d) Max spread filter (default: 0.30 = 3x median spread), (e) Max daily loss protection ($50 default, configurable), (f) Max account drawdown protection (30% of equity, auto-disable), (g) ATR-based trailing stop, (h) Position sizing: fixed 0.1 lot default but with risk% option, (i) Magic number for trade identification, (j) Proper error handling with retry on OrderSend failures, (k) Trade comments with signal score for journal analysis, (l) OnTimer() for periodic equity checks",
+    "Create hft_scalper/output/EA_README.md with: strategy logic explanation, all input parameters with descriptions, recommended broker requirements (ECN, low spread gold, <10ms execution), risk warnings, installation instructions for MT5, backtest results summary",
+    "Create hft_scalper/output/backtest_summary.md with: full performance comparison table, equity curve analysis, winning strategy explanation, parameter sensitivity notes, forward testing recommendations"
   ],
   "acceptance_criteria": [
-    "HFT_Scalper_Pro.mq5 compiles conceptually (valid MQL5 syntax, proper structure)",
-    "All winning strategy parameters from backtesting are embedded as input defaults",
-    "Safety mechanisms (max drawdown, max daily loss, spread filter) are implemented",
-    "EA_README.md clearly explains the strategy and settings",
-    "backtest_summary.md shows the achieved performance metrics"
+    "Ensemble backtest completes and results saved to hft_scalper/results/ensemble_results.json",
+    "HFT_Scalper_Pro.mq5 is syntactically valid MQL5 (has OnInit, OnTick, OnDeinit, uses CTrade)",
+    "All winning parameters embedded as input defaults in the EA",
+    "Safety mechanisms (max drawdown, max daily loss, spread filter, session filter) all present",
+    "EA_README.md provides complete documentation",
+    "backtest_summary.md shows full performance metrics"
   ],
   "verification": [
-    "python3 -c \"f=open('/projects/sandbox/Claude/hft_scalper/output/HFT_Scalper_Pro.mq5').read(); assert 'OnTick' in f; assert 'input' in f; assert 'OrderSend' in f or 'CTrade' in f; print(f'EA size: {len(f)} chars, looks valid')\"",
-    "python3 -c \"import os; files=os.listdir('/projects/sandbox/Claude/hft_scalper/output/'); print(f'Output files: {files}'); assert 'HFT_Scalper_Pro.mq5' in files\""
+    "python3 /projects/sandbox/Claude/hft_scalper/run_ensemble_backtest.py",
+    "python3 -c \"f=open('/projects/sandbox/Claude/hft_scalper/output/HFT_Scalper_Pro.mq5').read(); assert 'OnTick' in f; assert 'input' in f; assert 'CTrade' in f; assert 'MaxDailyLoss' in f or 'maxDailyLoss' in f; print(f'EA size: {len(f)} chars, valid MQL5 structure')\"",
+    "python3 -c \"import os; files=os.listdir('/projects/sandbox/Claude/hft_scalper/output/'); print(f'Output files: {files}'); assert len(files) >= 3\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Ensemble strategy achieved 80% win rate, Sharpe 3.76, max DD -10.5%, PnL $430.59 with positive OOS validation (+$29.36). Only 15 highly selective trades in the month. OrderFlow won on raw PnL ($2519) but has negative validation (-$220) and 29% DD. The EA implements the Ensemble approach as it provides the best risk-adjusted returns and is most likely to remain profitable forward. The MQL5 EA is 22,583 chars with all required safety mechanisms."
 }
