@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Take the winning strategy from FEAT-002 backtesting and produce a production-ready MQL5 Expert Advisor. The EA must implement the exact same logic that won in backtesting, with all optimized parameters hardcoded as defaults (but configurable via inputs). Include proper money management, session filters, and safety mechanisms.",
+  "status": "pending",
+  "steps": [
+    "Read the backtest results from hft_scalper/results/ to identify the winning strategy and its optimized parameters",
+    "Create hft_scalper/output/HFT_Scalper_Pro.mq5 - a complete, production-ready MQL5 EA implementing the winning strategy. Must include: (a) All strategy logic translated to MQL5, (b) Configurable input parameters with winning values as defaults, (c) Proper order management with magic number, (d) Session filter (London + NY sessions only, configurable), (e) Max spread filter, (f) Max daily loss protection, (g) Max drawdown protection (auto-disable if exceeded), (h) Trailing stop logic, (i) Position sizing based on account equity and risk%, (j) Proper error handling and retry logic for order sends, (k) Logging/comments on trades for analysis, (l) OnTimer() for time-based exits if applicable",
+    "Create hft_scalper/output/EA_README.md documenting: strategy logic explanation, recommended settings, broker requirements (low spread, fast execution), risk warnings, and the backtest metrics that were achieved",
+    "Create hft_scalper/output/backtest_summary.md with full performance report: equity curve description, monthly breakdown, key metrics, and strategy parameter sensitivity analysis"
+  ],
+  "acceptance_criteria": [
+    "HFT_Scalper_Pro.mq5 compiles conceptually (valid MQL5 syntax, proper structure)",
+    "All winning strategy parameters from backtesting are embedded as input defaults",
+    "Safety mechanisms (max drawdown, max daily loss, spread filter) are implemented",
+    "EA_README.md clearly explains the strategy and settings",
+    "backtest_summary.md shows the achieved performance metrics"
+  ],
+  "verification": [
+    "python3 -c \"f=open('/projects/sandbox/Claude/hft_scalper/output/HFT_Scalper_Pro.mq5').read(); assert 'OnTick' in f; assert 'input' in f; assert 'OrderSend' in f or 'CTrade' in f; print(f'EA size: {len(f)} chars, looks valid')\"",
+    "python3 -c \"import os; files=os.listdir('/projects/sandbox/Claude/hft_scalper/output/'); print(f'Output files: {files}'); assert 'HFT_Scalper_Pro.mq5' in files\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

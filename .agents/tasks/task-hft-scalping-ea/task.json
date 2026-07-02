@@ -1,0 +1,7 @@
+{
+  "task_id": "task-hft-scalping-ea",
+  "task_description": "Build a world-class HFT scalping system for XAUUSD 1-minute chart. Analyze 6M ticks of real broker data, backtest multiple strategies, optimize parameters, and produce the highest PnL strategy with minimal drawdown as a production MQL5 EA.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null
+}
