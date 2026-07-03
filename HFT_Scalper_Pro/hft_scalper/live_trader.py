@@ -300,11 +300,28 @@ class LiveTrader:
                 ticket,
             ])
 
-    def connect(self) -> bool:
-        """Connect to MT5 terminal with retry logic."""
+    def connect(self, account_config: Optional[Dict] = None) -> bool:
+        """Connect to MT5 terminal with retry logic.
+        
+        Args:
+            account_config: Optional dict with login, password, server, 
+                           and terminal_path for MT5 authentication.
+        """
         retry_count = 0
         while retry_count < self.max_retries:
-            if mt5.initialize():
+            # Build mt5.initialize() kwargs from account config
+            init_kwargs = {}
+            if account_config:
+                if account_config.get("login"):
+                    init_kwargs["login"] = int(account_config["login"])
+                if account_config.get("password"):
+                    init_kwargs["password"] = account_config["password"]
+                if account_config.get("server"):
+                    init_kwargs["server"] = account_config["server"]
+                if account_config.get("terminal_path"):
+                    init_kwargs["path"] = account_config["terminal_path"]
+
+            if mt5.initialize(**init_kwargs):
                 self.logger.info("Connected to MT5 terminal")
                 # Verify symbol is available
                 info = mt5.symbol_info(self.symbol)
@@ -892,6 +909,11 @@ Examples:
         "--log-dir", type=str, default=None,
         help="Directory for log files (default: same as script)"
     )
+    parser.add_argument(
+        "--account", type=str, default=None,
+        help="Path to account config JSON file with MT5 login credentials "
+             "(default: account_config.json in the same directory as this script)"
+    )
 
     args = parser.parse_args()
 
@@ -902,6 +924,34 @@ Examples:
     else:
         params = DEFAULT_PARAMS.copy()
         print("Using default parameters from aggressive_results.json")
+
+    # Load account config for MT5 login credentials
+    account_config = None
+    if args.account:
+        account_config_path = Path(args.account)
+    else:
+        # Default: look for account_config.json in same directory as this script
+        account_config_path = Path(__file__).parent / "account_config.json"
+
+    if account_config_path.exists():
+        try:
+            with open(account_config_path, "r") as f:
+                account_config = json.load(f)
+            print(f"Loaded account config from: {account_config_path}")
+            print(f"Account: login={account_config.get('login')} "
+                  f"server={account_config.get('server', 'N/A')}")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"WARNING: Failed to load account config from "
+                  f"{account_config_path}: {e}")
+            print("Falling back to default MT5 terminal connection.")
+            account_config = None
+    else:
+        if args.account:
+            print(f"WARNING: Account config file not found: {account_config_path}")
+            print("Falling back to default MT5 terminal connection.")
+        else:
+            print("No account_config.json found. "
+                  "Connecting to default MT5 terminal.")
 
     print(f"Symbol: {args.symbol}")
     print(f"Magic: {args.magic}")
@@ -922,7 +972,7 @@ Examples:
     _trader_instance = trader
 
     # Connect to MT5
-    if not trader.connect():
+    if not trader.connect(account_config=account_config):
         print("ERROR: Could not connect to MT5. Exiting.")
         sys.exit(1)
 
