@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Build the multi-symbol backtester, data loader, live trader, demo script, configuration, README, and update script. This makes the system runnable and deployable.",
+  "status": "pending",
+  "steps": [
+    "Create adaptive_system/data_loader.py - Universal multi-symbol data loader. Supports: (1) MT5 CSV tick exports (same format as existing XAUUSD_RealTicks.csv), (2) MT5 OHLC bar exports, (3) Synthetic data generation for testing (random walk with regime shifts). Auto-detects file format. Builds bars at any timeframe. Works for any symbol (XAUUSD, EURUSD, GBPJPY, USDJPY, BTCUSD, NAS100, etc.). Includes symbol metadata (pip size, contract size, typical spread).",
+    "Create adaptive_system/backtest_engine.py - Multi-symbol backtester. Runs the full adaptive pipeline: regime detection -> strategy selection -> signal generation -> position sizing -> risk check -> execution simulation. Supports: (1) Multiple symbols simultaneously with shared portfolio state, (2) Realistic execution (spread, slippage, commission per symbol), (3) Per-symbol and portfolio-level equity curves, (4) Detailed trade log with regime/strategy labels, (5) Performance breakdown by regime and strategy, (6) Walk-forward capability (train on window N, test on window N+1).",
+    "Create adaptive_system/live_trader.py - Multi-symbol MT5 live trader. Extends the existing live_trader.py pattern but with: (1) Multiple symbol monitoring in single loop, (2) Regime detection running per-symbol on each new bar, (3) Strategy selection and signal generation per-symbol, (4) Portfolio-level risk management before order placement, (5) Same MT5 order API pattern (TRADE_ACTION_DEAL, etc.), (6) State persistence (save/load regime state, online learner state, portfolio state), (7) Graceful shutdown with state save, (8) Auto-reconnection. Uses same argparse CLI pattern.",
+    "Create adaptive_system/config.py - System configuration: (1) Default parameters for all modules, (2) Per-symbol overrides (different spreads, session hours, contract sizes for forex vs metals vs indices), (3) Symbol presets for common instruments (XAUUSD, EURUSD, GBPJPY, USDJPY, NAS100, BTCUSD), (4) Risk profile presets (conservative, balanced, aggressive), (5) JSON config file load/save.",
+    "Create adaptive_system/run_demo.py - Self-contained demo/test script. Generates synthetic multi-symbol data with embedded regime changes, runs the full backtest pipeline, prints detailed results. Requires only numpy+pandas. This proves the system works without real tick data.",
+    "Create adaptive_system/run_backtest.py - Production backtest script that loads real tick/bar data from files, runs multi-symbol adaptive backtest, saves results to JSON.",
+    "Create adaptive_system/__init__.py with version and top-level imports",
+    "Create adaptive_system/README.md - Comprehensive documentation covering: architecture overview, how regime detection works, strategy descriptions, position sizing logic, online learning, how to run backtests, how to run live trading, configuration options, symbol setup, risk parameters.",
+    "Create HFT_Scalper_Pro/AdaptiveUpdate.bat - Update script for the adaptive system (same pattern as HFTUpdate.bat), downloads all adaptive_system files from GitHub to user's local directory."
+  ],
+  "acceptance_criteria": [
+    "python3 adaptive_system/run_demo.py executes successfully and prints backtest results",
+    "All Python files compile without syntax errors",
+    "The demo shows regime detection working (different regimes classified from synthetic data)",
+    "The demo shows strategy switching (different strategies used in different regimes)",
+    "The demo shows multi-symbol simulation (at least 3 symbols)",
+    "The demo produces a positive expectancy (system is not trivially broken)",
+    "AdaptiveUpdate.bat exists and references all system files"
+  ],
+  "verification": [
+    "Run python3 -m py_compile on every .py file in adaptive_system/",
+    "Run python3 HFT_Scalper_Pro/adaptive_system/run_demo.py and verify it completes without errors and prints results",
+    "Verify the demo output includes regime classification labels, strategy selections, and trade statistics"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

@@ -1,0 +1,28 @@
+{
+  "project_type": "Python trading system with MT5 integration, backtest engine, and live trader",
+  "language": "Python",
+  "build_system": "None (plain Python scripts). User runs scripts directly from flat directory on Windows.",
+  "test_framework": "No formal test framework. Validation is done by running backtest scripts that produce JSON results.",
+  "build_command": "python3 -c \"import sys; sys.path.insert(0, '.'); exec(open('run_quick_test.py').read().split('# Load data')[0])\"",
+  "test_command": "python3 -c \"print('Syntax check passed')\" && python3 -m py_compile adaptive_system/core/regime_detector.py && python3 adaptive_system/run_demo.py",
+  "verification_instructions": "1. Run python3 adaptive_system/run_demo.py to verify the system works with synthetic data. 2. Verify all Python files compile without errors using py_compile. 3. Check that imports work correctly in flat-layout mode.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install numpy pandas (already available in sandbox). On user's Windows PC: pip install numpy pandas MetaTrader5",
+  "environment_constraints": "Open internet available. No MT5 terminal (Windows-only). Cannot test live trading connectivity. Must validate with synthetic data and backtest logic only. User runs from flat directory (F:\\Automation\\EA Testing\\HFT\\HFT_v2\\) so all imports must work without package hierarchy.",
+  "contribution_requirements": "User downloads files via HFTUpdate.bat which pulls raw files from GitHub. New system goes in HFT_Scalper_Pro/adaptive_system/ directory. Must include its own HFTUpdate section or separate bat file.",
+  "key_patterns": "Existing system uses: numpy arrays for computation, pandas for data loading, dataclass for configs, signal arrays of shape (n,3) with [direction, sl_dist, tp_dist], BaseStrategy ABC pattern, ATR-based stops, RSI/EMA indicators computed manually (no TA-lib dependency), two-mode position sizing (grow/protect), CONTRACT_SIZE=100, 1:500 leverage, INITIAL_EQUITY=1000",
+  "relevant_files": [
+    "HFT_Scalper_Pro/hft_scalper/strategies/base.py",
+    "HFT_Scalper_Pro/hft_scalper/strategies/mean_reversion.py",
+    "HFT_Scalper_Pro/hft_scalper/strategies/momentum_mtf.py",
+    "HFT_Scalper_Pro/hft_scalper/strategies/volatility_breakout.py",
+    "HFT_Scalper_Pro/hft_scalper/strategies/order_flow.py",
+    "HFT_Scalper_Pro/hft_scalper/strategies/ensemble.py",
+    "HFT_Scalper_Pro/hft_scalper/live_trader.py",
+    "HFT_Scalper_Pro/hft_scalper/backtest_engine.py",
+    "HFT_Scalper_Pro/hft_scalper/data_loader.py",
+    "HFT_Scalper_Pro/hft_scalper/run_aggressive_backtest.py",
+    "HFT_Scalper_Pro/HFTUpdate.bat"
+  ],
+  "directory_structure": "HFT_Scalper_Pro/ contains: hft_scalper/ (existing single-pair system), HFTUpdate.bat (download script). The new system will be at HFT_Scalper_Pro/adaptive_system/ with a flat-import-friendly layout."
+}

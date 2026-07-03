@@ -1,0 +1,7 @@
+{
+  "task_id": "task-adaptive-multi-currency-system",
+  "task_description": "Build a new advanced multi-currency adaptive trading system that detects market regimes, switches strategies dynamically, manages a multi-symbol portfolio with correlation awareness, uses adaptive position sizing with online learning, and includes a full backtester and MT5 live trader. The system must be the most advanced and smart, quickly adapting to market conditions.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}

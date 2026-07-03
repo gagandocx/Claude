@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Build the core adaptive trading engine: regime detection, multi-strategy selector, adaptive position sizing, and online learning modules. This is the brain of the system.",
+  "status": "in_progress",
+  "steps": [
+    "Create HFT_Scalper_Pro/adaptive_system/ directory structure with all core modules",
+    "Create core/indicators.py - all technical indicators (RSI, ATR, EMA, Bollinger Bands, ADX, Stochastic, VWAP, Keltner Channels, Hurst Exponent) implemented in pure numpy. These are shared across all modules.",
+    "Create core/regime_detector.py - Market regime classification engine. Uses ADX + volatility ratio + trend slope + Hurst exponent to classify market into: TRENDING_UP, TRENDING_DOWN, RANGING_NARROW, RANGING_WIDE, VOLATILE_BREAKOUT, MEAN_REVERTING. Uses a rolling window approach with exponential weighting. Outputs regime enum + confidence score (0-1).",
+    "Create core/strategies.py - Multiple strategy implementations that each excel in specific regimes: (1) TrendFollower - EMA crossover + ADX filter for trending regimes, (2) MeanReversion - Bollinger Band + RSI for ranging/mean-reverting, (3) BreakoutTrader - ATR compression + volume spike for volatile breakout, (4) ScalpMomentum - Fast RSI + VWAP deviation for momentum, (5) FadeStrategy - Order flow imbalance contrarian for overextended moves. Each strategy outputs signal array (n,3) format matching existing system.",
+    "Create core/strategy_selector.py - Regime-aware strategy router. Maps each regime to its optimal strategy or combination. Maintains a performance scorecard per strategy per regime, using online Bayesian updating. Selects strategy with highest expected Sharpe in current regime. Includes a 'confidence gate' - if regime classification confidence < threshold, reduce position size or skip.",
+    "Create core/position_sizer.py - Advanced adaptive position sizing with: (1) Kelly Criterion with half-Kelly cap, (2) Volatility-adjusted sizing (ATR-normalized), (3) Equity curve feedback (grow/protect modes from existing system but enhanced), (4) Correlation penalty (reduce size when adding correlated positions), (5) Drawdown-reactive exponential decay (like existing dd_power system but with adaptive power), (6) Maximum risk per symbol and total portfolio caps.",
+    "Create core/online_learner.py - Lightweight online learning module (no sklearn/ML libraries). Implements: (1) Exponentially-weighted moving statistics for each strategy-regime pair performance, (2) Parameter adaptation using gradient-free optimization (success rate tracking with decay), (3) Regime transition probability matrix updated in real-time, (4) Win/loss streak pattern detection with adaptive response, (5) Market microstructure statistics (spread patterns, volatility cycles) that update continuously.",
+    "Create core/risk_manager.py - Portfolio-level risk management: (1) Per-symbol max exposure, (2) Total portfolio max exposure, (3) Correlation-based position limiting, (4) Drawdown halt (circuit breaker) at configurable threshold, (5) Intraday loss limit, (6) Overnight position reduction, (7) News/event time avoidance (configurable blackout hours per symbol), (8) Maximum concurrent positions across all symbols.",
+    "Create core/portfolio_manager.py - Multi-symbol coordination: (1) Symbol universe management (add/remove symbols), (2) Cross-symbol correlation tracking (rolling 50-bar correlation matrix), (3) Signal aggregation across symbols, (4) Capital allocation proportional to strategy confidence and inverse to correlation, (5) Rebalancing logic.",
+    "Create core/__init__.py with all exports"
+  ],
+  "acceptance_criteria": [
+    "All Python files in adaptive_system/core/ compile without errors (python3 -m py_compile each file)",
+    "Imports between modules resolve correctly",
+    "RegimeDetector can classify a numpy array of OHLCV data into regime enums",
+    "Each strategy can generate a signal array from a pandas DataFrame of bars",
+    "PositionSizer can compute lot size given equity, ATR, and portfolio state",
+    "OnlineLearner can update and query strategy performance statistics",
+    "RiskManager can approve/reject a proposed trade based on portfolio state"
+  ],
+  "verification": [
+    "Run python3 -m py_compile on every .py file in adaptive_system/core/",
+    "Run python3 -c \"from adaptive_system.core import *; print('All core imports OK')\" from HFT_Scalper_Pro directory"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
