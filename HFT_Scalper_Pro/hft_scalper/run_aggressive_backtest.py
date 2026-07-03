@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from itertools import product
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from hft_scalper.data_loader import load_ticks, build_ohlc_bars
+from data_loader import load_ticks, build_ohlc_bars
 
 
 @dataclass

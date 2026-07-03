@@ -23,7 +23,7 @@ TICK_DTYPES = {
     "volume_real": np.float64,
 }
 
-DEFAULT_TICK_PATH = Path(__file__).parent.parent / "tick_data" / "XAUUSD_RealTicks.csv"
+DEFAULT_TICK_PATH = Path(__file__).parent / "tick_data" / "XAUUSD_RealTicks.csv"
 
 
 def load_ticks(path: Optional[Union[str, Path]] = None, nrows: Optional[int] = None) -> pd.DataFrame:
