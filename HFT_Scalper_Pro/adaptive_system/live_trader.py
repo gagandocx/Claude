@@ -135,6 +135,7 @@ class AdaptiveLiveTrader:
         self.equity = 0.0
         self.peak_equity = 0.0
         self.open_positions: List[Dict] = []
+        self._previous_positions: List[Dict] = []  # Track previous tick's positions
         self.consec_wins = 0
         self.consec_losses = 0
         self._daily_pnl = 0.0
@@ -431,6 +432,98 @@ class AdaptiveLiveTrader:
                 round(risk_pct, 6), round(profit, 2), ticket,
             ])
 
+    def _detect_closed_trades(self):
+        """
+        Detect trades that closed since last check and feed results
+        back to the online learning components (StrategySelector scorecard
+        and PerformanceTracker).
+
+        Compares current open positions to previous snapshot to find
+        positions that are no longer open.
+        """
+        if not self._previous_positions:
+            return
+
+        # Find tickets that were open last tick but are not open now
+        current_tickets = {p["ticket"] for p in self.open_positions}
+        previous_tickets = {p["ticket"] for p in self._previous_positions}
+
+        closed_tickets = previous_tickets - current_tickets
+        if not closed_tickets:
+            return
+
+        for prev_pos in self._previous_positions:
+            if prev_pos["ticket"] not in closed_tickets:
+                continue
+
+            ticket = prev_pos["ticket"]
+            symbol = prev_pos["symbol"]
+            profit = prev_pos.get("profit", 0.0)
+
+            # Try to get final profit from MT5 history
+            if MT5_AVAILABLE:
+                try:
+                    deals = mt5.history_deals_get(position=ticket)
+                    if deals and len(deals) > 0:
+                        profit = sum(d.profit + d.commission + d.swap for d in deals)
+                except Exception:
+                    pass
+
+            # Extract strategy/regime from comment if available
+            strategy_name = "unknown"
+            regime_name = "RANGING_NARROW"
+
+            # Try to parse from the trade log
+            if MT5_AVAILABLE:
+                try:
+                    orders = mt5.history_orders_get(position=ticket)
+                    if orders and len(orders) > 0:
+                        comment = orders[0].comment if orders[0].comment else ""
+                        # Comment format: "Adaptive_{strategy}_{regime[:8]}"
+                        parts = comment.split("_")
+                        if len(parts) >= 3 and parts[0] == "Adaptive":
+                            strategy_name = parts[1]
+                            regime_name = parts[2]
+                except Exception:
+                    pass
+
+            # Feed result back to online learner
+            try:
+                regime_enum = MarketRegime[regime_name] if regime_name in MarketRegime.__members__ else MarketRegime.RANGING_NARROW
+            except (KeyError, ValueError):
+                regime_enum = MarketRegime.RANGING_NARROW
+
+            if strategy_name != "unknown":
+                self._selector.record_result(strategy_name, regime_enum, profit)
+                self._perf_tracker.record_trade(strategy_name, regime_enum, profit)
+
+            # Update consecutive win/loss streaks
+            if profit > 0:
+                self.consec_wins += 1
+                self.consec_losses = 0
+            else:
+                self.consec_losses += 1
+                self.consec_wins = 0
+
+            self._daily_pnl += profit
+
+            self.logger.info(
+                f"TRADE CLOSED: {symbol} ticket={ticket}, "
+                f"P&L=${profit:.2f}, strategy={strategy_name}, "
+                f"consec_W={self.consec_wins} L={self.consec_losses}"
+            )
+
+            # Log closure to CSV
+            self._log_trade_csv(
+                symbol=symbol, event="EXIT",
+                direction=prev_pos.get("direction", 0),
+                lot=prev_pos.get("lot_size", 0),
+                price=0.0, sl=0.0, tp=0.0,
+                regime=regime_name, strategy=strategy_name,
+                confidence=0.0, risk_pct=0.0,
+                profit=profit, ticket=ticket,
+            )
+
     # ========================================================================
     # MAIN LOOP
     # ========================================================================
@@ -488,6 +581,12 @@ class AdaptiveLiveTrader:
 
                 # Get current positions
                 self.open_positions = self._get_open_positions()
+
+                # Detect closed trades and feed back to online learner
+                self._detect_closed_trades()
+
+                # Save current positions as previous for next iteration
+                self._previous_positions = [p.copy() for p in self.open_positions]
 
                 # Process each symbol
                 for symbol in self.symbols:

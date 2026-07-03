@@ -242,29 +242,11 @@ class MultiSymbolBacktester:
             regime_arrays[symbol] = regimes
 
         # ====================================================================
-        # STRATEGY SELECTION: Determine which strategy to use per bar
+        # STRATEGY SELECTION: Use StrategySelector for regime-to-strategy routing
         # ====================================================================
-        # Map regime to primary strategy - use strategies that work well on synthetic data
-        # ScalpMomentum excels in trending markets (quick scalps with the trend)
-        # TrendFollower is better for real markets with sustained pullback entries
-        regime_to_strategy = {
-            MarketRegime.TRENDING_UP: "ScalpMomentum",
-            MarketRegime.TRENDING_DOWN: "ScalpMomentum",
-            MarketRegime.RANGING_NARROW: "MeanReversion",
-            MarketRegime.RANGING_WIDE: "MeanReversion",
-            MarketRegime.VOLATILE_BREAKOUT: "ScalpMomentum",
-            MarketRegime.MEAN_REVERTING: "MeanReversion",
-        }
-
-        # Secondary strategy per regime (fallback if primary has no signal)
-        regime_to_secondary = {
-            MarketRegime.TRENDING_UP: "ScalpMomentum",
-            MarketRegime.TRENDING_DOWN: "ScalpMomentum",
-            MarketRegime.RANGING_NARROW: "FadeStrategy",
-            MarketRegime.RANGING_WIDE: "FadeStrategy",
-            MarketRegime.VOLATILE_BREAKOUT: "ScalpMomentum",
-            MarketRegime.MEAN_REVERTING: "FadeStrategy",
-        }
+        # Use the same StrategySelector that governs live trading so that
+        # backtest results are representative of actual live behavior.
+        strategy_selector = StrategySelector()
 
         # Position sizing
         sizers: Dict[str, PositionSizer] = {}
@@ -293,7 +275,7 @@ class MultiSymbolBacktester:
 
             # Check and close positions that hit SL/TP
             self._check_exits(bar_idx, data_dict, symbol_meta, commission_per_lot,
-                              slippage_pips, perf_tracker)
+                              slippage_pips, perf_tracker, strategy_selector)
 
             # Process each symbol
             for symbol, bars_df in data_dict.items():
@@ -326,24 +308,36 @@ class MultiSymbolBacktester:
                     self.regime_counts[symbol][regime_name] = 0
                 self.regime_counts[symbol][regime_name] += 1
 
-                # Select strategy based on regime
-                primary_strat = regime_to_strategy.get(regime, "TrendFollower")
-                secondary_strat = regime_to_secondary.get(regime, "MeanReversion")
+                # Select strategy using StrategySelector (same logic as live trading)
+                selected_strategy, size_mult_from_selector = strategy_selector.select(regime, confidence)
+                strategy_name = selected_strategy.get_name()
 
-                # Get pre-computed signal
-                primary_signals = all_signals[symbol][primary_strat]
+                # Get pre-computed signal for selected strategy
+                primary_signals = all_signals[symbol][strategy_name]
                 direction = int(primary_signals[bar_idx, 0])
                 sl_dist = primary_signals[bar_idx, 1]
                 tp_dist = primary_signals[bar_idx, 2]
-                strategy_name = primary_strat
 
-                # If primary has no signal, try secondary
+                # If primary has no signal, try the second candidate from the mapping
+                # but only if the selector's scorecard says it's worth trying
                 if direction == 0:
-                    secondary_signals = all_signals[symbol][secondary_strat]
-                    direction = int(secondary_signals[bar_idx, 0])
-                    sl_dist = secondary_signals[bar_idx, 1]
-                    tp_dist = secondary_signals[bar_idx, 2]
-                    strategy_name = secondary_strat
+                    candidates = strategy_selector.config.regime_mapping.get(
+                        regime, list(STRATEGY_REGISTRY.keys())
+                    )
+                    for fallback_name in candidates:
+                        if fallback_name == strategy_name:
+                            continue
+                        # Skip fallback strategies that have proven poor in this regime
+                        fallback_record = strategy_selector.scorecard.get_record(fallback_name, regime)
+                        if fallback_record.trade_count >= 3 and fallback_record.sharpe_estimate < -0.5:
+                            continue
+                        secondary_signals = all_signals[symbol][fallback_name]
+                        direction = int(secondary_signals[bar_idx, 0])
+                        sl_dist = secondary_signals[bar_idx, 1]
+                        tp_dist = secondary_signals[bar_idx, 2]
+                        if direction != 0:
+                            strategy_name = fallback_name
+                            break
 
                 # Track strategy usage
                 if strategy_name not in self.strategy_counts[symbol]:
@@ -389,7 +383,7 @@ class MultiSymbolBacktester:
                     sl_distance=sl_dist,
                     atr=sl_dist / 1.5,
                     win_rate=win_rate,
-                    regime_size_mult=1.0 if confidence >= 0.5 else 0.5,
+                    regime_size_mult=size_mult_from_selector if confidence >= 0.5 else size_mult_from_selector * 0.5,
                 )
 
                 if not sizing_result.approved:
@@ -453,7 +447,8 @@ class MultiSymbolBacktester:
     def _check_exits(self, bar_idx: int, data_dict: Dict[str, pd.DataFrame],
                      symbol_meta: Dict[str, Dict], commission_per_lot: float,
                      slippage_pips: float,
-                     perf_tracker: StrategyPerformanceTracker):
+                     perf_tracker: StrategyPerformanceTracker,
+                     strategy_selector: Optional[StrategySelector] = None):
         """Check if any open positions hit SL or TP on the current bar."""
         closed_indices = []
 
@@ -522,6 +517,10 @@ class MultiSymbolBacktester:
                 # Update online learner
                 regime_enum = MarketRegime[pos.regime] if pos.regime in MarketRegime.__members__ else MarketRegime.RANGING_NARROW
                 perf_tracker.record_trade(pos.strategy, regime_enum, pnl)
+
+                # Update strategy selector scorecard for online learning
+                if strategy_selector is not None:
+                    strategy_selector.record_result(pos.strategy, regime_enum, pnl)
 
                 closed_indices.append(i)
 

@@ -73,9 +73,9 @@ class PositionSizingConfig:
     """Configuration for position sizing."""
     initial_equity: float = 1000.0
     leverage: float = 500.0
-    risk_grow: float = 0.15
+    risk_grow: float = 0.08
     risk_protect: float = 0.02
-    max_risk_cap: float = 0.25
+    max_risk_cap: float = 0.10
     min_risk_floor: float = 0.003
     dd_power: float = 12.0
     dd_power_adaptive: bool = True
@@ -83,9 +83,9 @@ class PositionSizingConfig:
     dd_halt: float = 0.20
     use_kelly: bool = True
     kelly_fraction: float = 0.5
-    loss_boost: float = 1.8
-    win_reduce: float = 0.5
-    streak_threshold: int = 2
+    loss_boost: float = 1.0
+    win_reduce: float = 0.7
+    streak_threshold: int = 3
     correlation_penalty_factor: float = 0.3
     max_correlation_reduction: float = 0.5
     max_risk_per_symbol: float = 0.05
@@ -185,9 +185,9 @@ def get_conservative_config() -> SystemConfig:
     Suitable for capital preservation and steady growth.
     """
     config = SystemConfig(risk_profile="conservative")
-    config.position_sizing.risk_grow = 0.08
+    config.position_sizing.risk_grow = 0.05
     config.position_sizing.risk_protect = 0.01
-    config.position_sizing.max_risk_cap = 0.12
+    config.position_sizing.max_risk_cap = 0.07
     config.position_sizing.dd_halt = 0.15
     config.position_sizing.dd_power = 15.0
     config.position_sizing.loss_boost = 1.0  # No Martingale
@@ -226,22 +226,22 @@ def get_aggressive_config() -> SystemConfig:
     Suitable for accounts seeking maximum growth with higher risk tolerance.
     """
     config = SystemConfig(risk_profile="aggressive")
-    config.position_sizing.risk_grow = 0.20
-    config.position_sizing.risk_protect = 0.04
-    config.position_sizing.max_risk_cap = 0.30
-    config.position_sizing.dd_halt = 0.30
+    config.position_sizing.risk_grow = 0.12
+    config.position_sizing.risk_protect = 0.03
+    config.position_sizing.max_risk_cap = 0.15
+    config.position_sizing.dd_halt = 0.25
     config.position_sizing.dd_power = 10.0
-    config.position_sizing.loss_boost = 2.0
-    config.position_sizing.max_risk_per_symbol = 0.08
-    config.position_sizing.max_risk_total = 0.20
+    config.position_sizing.loss_boost = 1.2  # Mild boost only
+    config.position_sizing.max_risk_per_symbol = 0.06
+    config.position_sizing.max_risk_total = 0.18
     config.position_sizing.kelly_fraction = 0.6
 
     config.risk_management.max_concurrent_positions = 8
-    config.risk_management.max_total_risk = 0.20
-    config.risk_management.max_risk_per_symbol = 0.08
-    config.risk_management.dd_halt_threshold = 0.30
-    config.risk_management.dd_reduce_threshold = 0.15
-    config.risk_management.daily_loss_limit = 0.08
+    config.risk_management.max_total_risk = 0.18
+    config.risk_management.max_risk_per_symbol = 0.06
+    config.risk_management.dd_halt_threshold = 0.25
+    config.risk_management.dd_reduce_threshold = 0.12
+    config.risk_management.daily_loss_limit = 0.06
 
     config.strategy.confidence_gate = 0.4
     config.strategy.low_confidence_size_mult = 0.6

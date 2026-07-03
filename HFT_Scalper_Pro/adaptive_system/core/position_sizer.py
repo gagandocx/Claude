@@ -29,9 +29,9 @@ class SizingConfig:
     contract_size: float = 100.0  # Default for gold; forex=100000
 
     # Risk parameters
-    risk_grow: float = 0.15        # Risk when at equity high (grow mode)
+    risk_grow: float = 0.08        # Risk when at equity high (grow mode)
     risk_protect: float = 0.02     # Base risk in protect mode
-    max_risk_cap: float = 0.25     # Maximum risk per trade (absolute cap)
+    max_risk_cap: float = 0.10     # Maximum risk per trade (absolute cap, 10%)
     min_risk_floor: float = 0.003  # Minimum risk per trade
 
     # Drawdown parameters
@@ -43,11 +43,14 @@ class SizingConfig:
     # Kelly Criterion
     use_kelly: bool = True
     kelly_fraction: float = 0.5    # Half-Kelly for safety
+    kelly_default_avg_win: float = 2.0   # Default avg win for Kelly before data
+    kelly_default_avg_loss: float = 1.5  # Default avg loss for Kelly before data
+    kelly_default_win_rate: float = 0.45 # Default win rate assumption
 
     # Streak adjustments
-    loss_boost: float = 1.8        # Multiply risk after consecutive losses (Martingale-lite)
-    win_reduce: float = 0.5        # Multiply risk after consecutive wins
-    streak_threshold: int = 2       # Consecutive count to trigger adjustment
+    loss_boost: float = 1.0        # Multiply risk after consecutive losses (1.0 = disabled, no martingale)
+    win_reduce: float = 0.7        # Multiply risk after consecutive wins (lock profits)
+    streak_threshold: int = 3       # Consecutive count to trigger adjustment
 
     # Correlation penalty
     correlation_penalty_factor: float = 0.3  # Reduce by this * correlation
@@ -197,10 +200,22 @@ class PositionSizer:
         # --- Step 2: Kelly Criterion adjustment ---
         kelly_risk = base_risk
         if cfg.use_kelly and avg_loss > 1e-10:
+            # Use provided stats if they look like real data,
+            # otherwise fall back to configured defaults
+            effective_win_rate = win_rate
+            effective_avg_win = avg_win
+            effective_avg_loss = avg_loss
+
+            # Detect uninformative defaults (avg_win == avg_loss == 1.0 means no data)
+            if abs(avg_win - 1.0) < 1e-6 and abs(avg_loss - 1.0) < 1e-6 and abs(win_rate - 0.5) < 1e-6:
+                effective_win_rate = cfg.kelly_default_win_rate
+                effective_avg_win = cfg.kelly_default_avg_win
+                effective_avg_loss = cfg.kelly_default_avg_loss
+
             # Kelly formula: f* = (bp - q) / b
             # b = avg_win / avg_loss, p = win_rate, q = 1 - win_rate
-            b = avg_win / avg_loss
-            p = win_rate
+            b = effective_avg_win / effective_avg_loss
+            p = effective_win_rate
             q = 1.0 - p
             kelly_full = (b * p - q) / b if b > 0 else 0.0
             kelly_half = kelly_full * cfg.kelly_fraction

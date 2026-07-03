@@ -52,12 +52,10 @@ class PerformanceRecord:
         self.total_pnl = self.total_pnl * (1.0 - self.alpha) + pnl
 
         if pnl > 0:
-            self.wins = self.wins * (1.0 - self.alpha) + 1.0
-            self.losses = self.losses * (1.0 - self.alpha)
+            self.wins += 1.0
             self.avg_win = self.avg_win * (1.0 - self.alpha) + self.alpha * pnl
         else:
-            self.losses = self.losses * (1.0 - self.alpha) + 1.0
-            self.wins = self.wins * (1.0 - self.alpha)
+            self.losses += 1.0
             self.avg_loss = self.avg_loss * (1.0 - self.alpha) + self.alpha * abs(pnl)
 
         # Update average PnL with exponential smoothing
@@ -162,11 +160,11 @@ class SelectorConfig:
     """Configuration for the strategy selector."""
     # Default regime-to-strategy mapping (used before learning kicks in)
     regime_mapping: Dict[MarketRegime, List[str]] = field(default_factory=lambda: {
-        MarketRegime.TRENDING_UP: ["TrendFollower", "ScalpMomentum"],
-        MarketRegime.TRENDING_DOWN: ["TrendFollower", "ScalpMomentum"],
+        MarketRegime.TRENDING_UP: ["ScalpMomentum", "TrendFollower"],
+        MarketRegime.TRENDING_DOWN: ["ScalpMomentum", "TrendFollower"],
         MarketRegime.RANGING_NARROW: ["MeanReversion", "FadeStrategy"],
         MarketRegime.RANGING_WIDE: ["MeanReversion", "FadeStrategy"],
-        MarketRegime.VOLATILE_BREAKOUT: ["BreakoutTrader", "FadeStrategy"],
+        MarketRegime.VOLATILE_BREAKOUT: ["BreakoutTrader", "ScalpMomentum"],
         MarketRegime.MEAN_REVERTING: ["MeanReversion", "FadeStrategy"],
     })
 
@@ -177,7 +175,7 @@ class SelectorConfig:
     # Enable ensemble mode (blend top-2 strategies)
     ensemble_mode: bool = False
     # Minimum trade count before trusting learned performance
-    min_trades_for_learning: float = 5.0
+    min_trades_for_learning: float = 3.0
     # Scorecard exponential decay alpha
     scorecard_alpha: float = 0.05
 

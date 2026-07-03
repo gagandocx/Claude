@@ -255,25 +255,25 @@ class RegimeDetector:
         # --- TRENDING_UP ---
         score = 0.0
         if adx > cfg.adx_trend_threshold:
-            score += 0.3 * min(adx / cfg.adx_strong_trend, 1.0)
+            score += 0.35 * min(adx / cfg.adx_strong_trend, 1.0)
         if di_plus > di_minus:
-            score += 0.2 * min((di_plus - di_minus) / 20.0, 1.0)
+            score += 0.25 * min((di_plus - di_minus) / 20.0, 1.0)
         if slope > cfg.slope_strong:
-            score += 0.3 * min(slope / (cfg.slope_strong * 2), 1.0)
+            score += 0.25 * min(slope / (cfg.slope_strong * 2), 1.0)
         if hurst > cfg.hurst_trending:
-            score += 0.2 * min((hurst - 0.5) * 4, 1.0)
+            score += 0.15 * min((hurst - 0.5) * 4, 1.0)
         scores[MarketRegime.TRENDING_UP] = max(0.0, score)
 
         # --- TRENDING_DOWN ---
         score = 0.0
         if adx > cfg.adx_trend_threshold:
-            score += 0.3 * min(adx / cfg.adx_strong_trend, 1.0)
+            score += 0.35 * min(adx / cfg.adx_strong_trend, 1.0)
         if di_minus > di_plus:
-            score += 0.2 * min((di_minus - di_plus) / 20.0, 1.0)
+            score += 0.25 * min((di_minus - di_plus) / 20.0, 1.0)
         if slope < -cfg.slope_strong:
-            score += 0.3 * min(abs(slope) / (cfg.slope_strong * 2), 1.0)
+            score += 0.25 * min(abs(slope) / (cfg.slope_strong * 2), 1.0)
         if hurst > cfg.hurst_trending:
-            score += 0.2 * min((hurst - 0.5) * 4, 1.0)
+            score += 0.15 * min((hurst - 0.5) * 4, 1.0)
         scores[MarketRegime.TRENDING_DOWN] = max(0.0, score)
 
         # --- RANGING_NARROW ---
@@ -322,13 +322,13 @@ class RegimeDetector:
         # --- MEAN_REVERTING ---
         score = 0.0
         if hurst < cfg.hurst_mean_revert:
-            score += 0.4 * (1.0 - hurst / cfg.hurst_mean_revert)
+            score += 0.15 * (1.0 - hurst / cfg.hurst_mean_revert)
         if adx < cfg.adx_weak_threshold:
-            score += 0.25
+            score += 0.35
         if vol_ratio < cfg.vol_ratio_high:
-            score += 0.15
+            score += 0.25
         if abs(slope) < cfg.slope_strong:
-            score += 0.2
+            score += 0.25
         scores[MarketRegime.MEAN_REVERTING] = max(0.0, score)
 
         return scores
