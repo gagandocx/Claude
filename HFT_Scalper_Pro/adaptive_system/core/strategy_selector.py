@@ -34,50 +34,71 @@ from .strategies import (
 
 @dataclass
 class PerformanceRecord:
-    """Exponentially-weighted performance statistics for a strategy-regime pair."""
-    wins: float = 0.0
-    losses: float = 0.0
+    """
+    Exponentially-weighted performance statistics for a strategy-regime pair.
+
+    Uses an EMA of the binary win/loss signal (1.0 for win, 0.0 for loss)
+    so that the most recent 10-15 trades dominate the win_rate estimate.
+    This ensures fast adaptation when market conditions change.
+    """
+    # EMA of win/loss binary signal (1=win, 0=loss) - this IS the win rate
+    ema_win_rate: float = 0.5  # Prior: assume 50/50 before any data
     total_pnl: float = 0.0
     avg_pnl: float = 0.0
     avg_win: float = 0.0
     avg_loss: float = 0.0
     sharpe_estimate: float = 0.0
     trade_count: float = 0.0
-    # Exponential decay factor
-    alpha: float = 0.05  # Weight for new observations
+    # Exponential decay factor - alpha=0.12 means ~8 recent trades carry 63% of weight
+    alpha: float = 0.12
+    _has_data: bool = False
 
     def update(self, pnl: float):
         """Update statistics with a new trade result."""
         self.trade_count = self.trade_count * (1.0 - self.alpha) + 1.0
         self.total_pnl = self.total_pnl * (1.0 - self.alpha) + pnl
 
+        # Binary win/loss signal fed into EMA
+        win_signal = 1.0 if pnl > 0 else 0.0
+
+        if not self._has_data:
+            # First observation: initialize directly
+            self.ema_win_rate = win_signal
+            self._has_data = True
+        else:
+            # Exponential moving average of binary win/loss
+            self.ema_win_rate = self.ema_win_rate * (1.0 - self.alpha) + self.alpha * win_signal
+
         if pnl > 0:
-            self.wins += 1.0
             self.avg_win = self.avg_win * (1.0 - self.alpha) + self.alpha * pnl
         else:
-            self.losses += 1.0
             self.avg_loss = self.avg_loss * (1.0 - self.alpha) + self.alpha * abs(pnl)
 
         # Update average PnL with exponential smoothing
         self.avg_pnl = self.avg_pnl * (1.0 - self.alpha) + self.alpha * pnl
 
         # Estimate Sharpe-like metric: mean_pnl / std_pnl (approximation)
-        win_rate = self.win_rate()
-        if win_rate > 0 and win_rate < 1.0 and self.avg_loss > 1e-10:
-            expectancy = win_rate * self.avg_win - (1.0 - win_rate) * self.avg_loss
+        wr = self.win_rate()
+        if wr > 0 and wr < 1.0 and self.avg_loss > 1e-10:
+            expectancy = wr * self.avg_win - (1.0 - wr) * self.avg_loss
             risk = max(self.avg_loss, 1e-6)
             self.sharpe_estimate = expectancy / risk
-        elif win_rate >= 1.0:
+        elif wr >= 0.95:
             self.sharpe_estimate = 2.0  # Cap at excellent
         else:
             self.sharpe_estimate = -1.0
 
     def win_rate(self) -> float:
-        """Calculate win rate."""
-        total = self.wins + self.losses
-        if total < 1e-10:
+        """
+        Calculate recency-weighted win rate using EMA of binary signal.
+
+        Returns a value between 0 and 1 that responds quickly to regime
+        changes. After ~10-12 trades in a new regime, the win_rate fully
+        reflects recent performance.
+        """
+        if not self._has_data:
             return 0.5  # Prior: assume 50/50
-        return self.wins / total
+        return max(0.0, min(1.0, self.ema_win_rate))
 
     def expected_pnl(self) -> float:
         """Calculate expected PnL per trade."""

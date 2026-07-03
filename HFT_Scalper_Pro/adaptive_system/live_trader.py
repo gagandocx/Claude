@@ -56,6 +56,24 @@ from config import SystemConfig, load_config, get_balanced_config
 
 
 # ============================================================================
+# REGIME CODE MAPPING
+# ============================================================================
+# MT5 comments are limited to 31 chars. Using 2-letter codes avoids truncation
+# issues and ensures correct regime attribution when parsing closed trades.
+
+REGIME_CODES: Dict[str, str] = {
+    "TRENDING_UP": "TU",
+    "TRENDING_DOWN": "TD",
+    "RANGING_NARROW": "RN",
+    "RANGING_WIDE": "RW",
+    "VOLATILE_BREAKOUT": "VB",
+    "MEAN_REVERTING": "MR",
+}
+
+REGIME_FROM_CODE: Dict[str, str] = {v: k for k, v in REGIME_CODES.items()}
+
+
+# ============================================================================
 # LIVE TRADER
 # ============================================================================
 
@@ -380,6 +398,9 @@ class AdaptiveLiveTrader:
 
         fill_type = self._fill_types.get(symbol, mt5.ORDER_FILLING_FOK)
 
+        # Use 2-letter regime code to avoid truncation ambiguity
+        regime_code = REGIME_CODES.get(regime, regime[:2])
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -390,7 +411,7 @@ class AdaptiveLiveTrader:
             "tp": tp,
             "deviation": 20,
             "magic": self.magic,
-            "comment": f"Adaptive_{strategy}_{regime[:8]}",
+            "comment": f"Adaptive_{strategy}_{regime_code}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": fill_type,
         }
@@ -479,11 +500,13 @@ class AdaptiveLiveTrader:
                     orders = mt5.history_orders_get(position=ticket)
                     if orders and len(orders) > 0:
                         comment = orders[0].comment if orders[0].comment else ""
-                        # Comment format: "Adaptive_{strategy}_{regime[:8]}"
+                        # Comment format: "Adaptive_{strategy}_{regime_code}"
                         parts = comment.split("_")
                         if len(parts) >= 3 and parts[0] == "Adaptive":
                             strategy_name = parts[1]
-                            regime_name = parts[2]
+                            regime_code = parts[2]
+                            # Decode 2-letter regime code back to full name
+                            regime_name = REGIME_FROM_CODE.get(regime_code, "RANGING_NARROW")
                 except Exception:
                     pass
 
