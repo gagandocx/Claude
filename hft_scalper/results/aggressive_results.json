@@ -26,7 +26,7 @@
     "loss_boost": 2.0,
     "win_reduce": 0.4
   },
-  "execution_time_seconds": 75.6,
+  "execution_time_seconds": 75.4,
   "execution_config": {
     "timeframe": "5min",
     "signals": [
