@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Build the multi-symbol backtester, data loader, live trader, demo script, configuration, README, and update script. This makes the system runnable and deployable.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Create adaptive_system/data_loader.py - Universal multi-symbol data loader. Supports: (1) MT5 CSV tick exports (same format as existing XAUUSD_RealTicks.csv), (2) MT5 OHLC bar exports, (3) Synthetic data generation for testing (random walk with regime shifts). Auto-detects file format. Builds bars at any timeframe. Works for any symbol (XAUUSD, EURUSD, GBPJPY, USDJPY, BTCUSD, NAS100, etc.). Includes symbol metadata (pip size, contract size, typical spread).",
     "Create adaptive_system/backtest_engine.py - Multi-symbol backtester. Runs the full adaptive pipeline: regime detection -> strategy selection -> signal generation -> position sizing -> risk check -> execution simulation. Supports: (1) Multiple symbols simultaneously with shared portfolio state, (2) Realistic execution (spread, slippage, commission per symbol), (3) Per-symbol and portfolio-level equity curves, (4) Detailed trade log with regime/strategy labels, (5) Performance breakdown by regime and strategy, (6) Walk-forward capability (train on window N, test on window N+1).",
