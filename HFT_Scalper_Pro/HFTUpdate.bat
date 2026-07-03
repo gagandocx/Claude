@@ -36,7 +36,7 @@ echo.
 :: ------------------------------------------------------------
 :: STEP 1: Download core Python files
 :: ------------------------------------------------------------
-echo [1/4] Downloading core Python files...
+echo [1/5] Downloading core Python files...
 echo.
 
 set "CORE_FILES=__init__.py analyze.py backtest_engine.py data_loader.py live_trader.py microstructure_analysis.py optimizer.py run_aggressive_backtest.py run_backtest.py run_ensemble_backtest.py LIVE_TRADING_README.md"
@@ -58,9 +58,34 @@ for %%F in (%CORE_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 2: Download strategy files
+:: STEP 2: Download account config sample (first-run setup)
 :: ------------------------------------------------------------
-echo [2/4] Downloading strategy files...
+echo [2/5] Downloading account config...
+echo.
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%BASE_URL%/account_config.sample.json' -OutFile '%TARGET_DIR%\account_config.sample.json' -UseBasicParsing; exit 0 } catch { exit 1 }"
+if !ERRORLEVEL! equ 0 (
+    echo        [OK] account_config.sample.json
+    set /a DOWNLOAD_COUNT+=1
+) else (
+    echo        [FAIL] account_config.sample.json
+    set /a ERROR_COUNT+=1
+)
+
+:: Only copy to account_config.json if it doesn't already exist (preserve user credentials)
+if not exist "%TARGET_DIR%\account_config.json" (
+    copy "%TARGET_DIR%\account_config.sample.json" "%TARGET_DIR%\account_config.json" >nul 2>&1
+    echo        [INIT] Created account_config.json from sample - edit with your credentials
+) else (
+    echo        [SKIP] account_config.json already exists - not overwriting
+)
+
+echo.
+
+:: ------------------------------------------------------------
+:: STEP 3: Download strategy files
+:: ------------------------------------------------------------
+echo [3/5] Downloading strategy files...
 echo.
 
 set "STRATEGY_FILES=__init__.py base.py ensemble.py mean_reversion.py momentum_mtf.py order_flow.py spread_fade.py volatility_breakout.py"
@@ -79,9 +104,9 @@ for %%F in (%STRATEGY_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 3: Download output files (EA + docs)
+:: STEP 4: Download output files (EA + docs)
 :: ------------------------------------------------------------
-echo [3/4] Downloading output files...
+echo [4/5] Downloading output files...
 echo.
 
 set "OUTPUT_FILES=HFT_Scalper_Pro.mq5 EA_README.md backtest_summary.md"
@@ -100,9 +125,9 @@ for %%F in (%OUTPUT_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 4: Download result files
+:: STEP 5: Download result files
 :: ------------------------------------------------------------
-echo [4/4] Downloading result files...
+echo [5/5] Downloading result files...
 echo.
 
 set "RESULT_FILES=aggressive_results.json ensemble_results.json equity_curves.json microstructure_report.json strategy_comparison.json winner_trade_log.json"
