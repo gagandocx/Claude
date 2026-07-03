@@ -28,6 +28,7 @@ if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
 if not exist "%TARGET_DIR%\strategies" mkdir "%TARGET_DIR%\strategies"
 if not exist "%TARGET_DIR%\output" mkdir "%TARGET_DIR%\output"
 if not exist "%TARGET_DIR%\results" mkdir "%TARGET_DIR%\results"
+if not exist "%TARGET_DIR%\tick_data" mkdir "%TARGET_DIR%\tick_data"
 
 echo   Source:  %BASE_URL%
 echo   Target:  %TARGET_DIR%
