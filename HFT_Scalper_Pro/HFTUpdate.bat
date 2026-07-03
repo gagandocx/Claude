@@ -34,6 +34,29 @@ echo   Target:  %TARGET_DIR%
 echo.
 
 :: ------------------------------------------------------------
+:: STEP 0: Download account config sample
+:: ------------------------------------------------------------
+echo [0/4] Downloading account config...
+echo.
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%BASE_URL%/account_config.sample.json' -OutFile '%TARGET_DIR%\account_config.sample.json' -UseBasicParsing; exit 0 } catch { exit 1 }"
+if !ERRORLEVEL! equ 0 (
+    echo        [OK] account_config.sample.json
+) else (
+    echo        [FAIL] account_config.sample.json
+)
+
+:: Copy to account_config.json only if it doesn't already exist
+if not exist "%TARGET_DIR%\account_config.json" (
+    copy "%TARGET_DIR%\account_config.sample.json" "%TARGET_DIR%\account_config.json" >nul 2>&1
+    echo        [OK] Created account_config.json from sample
+) else (
+    echo        [SKIP] account_config.json already exists
+)
+
+echo.
+
+:: ------------------------------------------------------------
 :: STEP 1: Download core Python files
 :: ------------------------------------------------------------
 echo [1/4] Downloading core Python files...
