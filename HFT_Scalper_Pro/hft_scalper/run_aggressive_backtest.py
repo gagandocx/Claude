@@ -319,7 +319,7 @@ def main():
     print()
 
     # Load data
-    tick_path = Path(__file__).parent.parent / "tick_data" / "XAUUSD_RealTicks.csv"
+    tick_path = Path(__file__).parent / "tick_data" / "XAUUSD_RealTicks.csv"
     ticks = load_ticks(tick_path)
     bars = build_ohlc_bars(ticks, freq="5min")
     print(f"\n5-min bars: {len(bars):,}")
