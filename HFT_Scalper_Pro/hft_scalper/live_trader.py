@@ -104,6 +104,9 @@ DEFAULT_PARAMS = {
     "risk_grow": 0.17,
     "risk_protect": 0.025,
     "dd_power": 13,
+    "at_high_thresh": 0.01,
+    "loss_boost": 2.0,
+    "win_reduce": 0.4,
     "cooldown": 3,
     "max_positions": 2,
     "use_4bar": True,
@@ -137,6 +140,7 @@ class LiveTrader:
         self.equity = 0.0
         self.peak_equity = 0.0
         self.consec_wins = 0
+        self.consec_losses = 0
         self.last_entry_bars = [-params["cooldown"] - 1] * params["max_positions"]
         self.bar_count = 0
         self.open_positions_count = 0
@@ -207,6 +211,7 @@ class LiveTrader:
         state = {
             "peak_equity": self.peak_equity,
             "consec_wins": self.consec_wins,
+            "consec_losses": self.consec_losses,
             "bar_count": self.bar_count,
             "last_entry_bars": self.last_entry_bars,
             "last_deal_time": self._last_deal_time,
@@ -230,6 +235,7 @@ class LiveTrader:
                 state = json.load(f)
             self.peak_equity = state.get("peak_equity", self.equity)
             self.consec_wins = state.get("consec_wins", 0)
+            self.consec_losses = state.get("consec_losses", 0)
             self.bar_count = state.get("bar_count", 0)
             saved_entry_bars = state.get("last_entry_bars", None)
             if saved_entry_bars and len(saved_entry_bars) == self.params["max_positions"]:
@@ -237,7 +243,8 @@ class LiveTrader:
             self._last_deal_time = state.get("last_deal_time", 0)
             self.logger.info(
                 f"Restored state: peak_equity={self.peak_equity:.2f}, "
-                f"consec_wins={self.consec_wins}, bar_count={self.bar_count}"
+                f"consec_wins={self.consec_wins}, consec_losses={self.consec_losses}, "
+                f"bar_count={self.bar_count}"
             )
         except Exception as e:
             self.logger.error(f"Failed to load state file: {e}. Starting fresh.")
@@ -492,27 +499,42 @@ class LiveTrader:
 
         return signal, signal_type
 
-    def _compute_position_size(self, sl_dist: float, dd_scale: float) -> Tuple[float, float]:
+    def _compute_position_size(self, sl_dist: float, current_dd: float) -> Tuple[float, float]:
         """
         Compute position size - EXACT same logic as run_backtest().
 
-        Two-mode blend: grow when near peak, protect when in drawdown.
+        Two-mode position sizing matching the original 1911% backtest:
+        - Mode 1 (at equity high): if drawdown < at_high_thresh, use full risk_grow
+        - Mode 2 (in drawdown): risk = risk_protect * (equity/peak)^dd_power
+        - loss_boost: after consecutive losses (>=2), multiply risk by loss_boost (Martingale-lite)
+        - win_reduce: after consecutive wins (>=2), multiply risk by win_reduce (lock profits)
+
         Returns (lot_size, risk_pct)
         """
         risk_grow = self.params["risk_grow"]
         risk_protect = self.params["risk_protect"]
-        streak_n = self.params["streak_n"]
-        streak_mult = self.params["streak_mult"]
+        dd_power = self.params["dd_power"]
+        at_high_thresh = self.params["at_high_thresh"]
+        loss_boost = self.params["loss_boost"]
+        win_reduce = self.params["win_reduce"]
         max_risk_cap = self.params["max_risk_cap"]
 
-        # Two-mode blend: grow when near peak, protect when in drawdown
-        risk = risk_protect + (risk_grow - risk_protect) * dd_scale
+        # Two-mode position sizing (matches original backtest exactly)
+        if current_dd <= at_high_thresh:
+            # Mode 1: At or near equity high - be aggressive
+            risk = risk_grow
+        else:
+            # Mode 2: In drawdown - exponential decay
+            eq_ratio = self.equity / self.peak_equity if self.peak_equity > 0 else 1.0
+            risk = risk_protect * (eq_ratio ** dd_power)
 
-        # Streak boost in grow mode
-        if self.consec_wins >= streak_n and dd_scale > 0.8:
-            risk = risk * streak_mult
+        # Streak adjustment (matches original backtest)
+        if self.consec_losses >= 2:
+            risk *= loss_boost  # Martingale-lite: double risk after losses in GROW mode
+        elif self.consec_wins >= 2:
+            risk *= win_reduce  # Lock profits: reduce risk after wins
 
-        risk = max(0.002, min(max_risk_cap, risk))
+        risk = max(0.003, min(max_risk_cap, risk))
 
         # Lot sizing based on risk
         lot = (self.equity * risk) / (sl_dist * CONTRACT_SIZE)
@@ -605,7 +627,9 @@ class LiveTrader:
             profit = deal.profit + deal.swap + deal.commission
             if profit > 0:
                 self.consec_wins += 1
+                self.consec_losses = 0
             else:
+                self.consec_losses += 1
                 self.consec_wins = 0
 
             # Determine direction of the closed position
@@ -752,9 +776,9 @@ class LiveTrader:
                     continue
 
                 # === TWO-MODE POSITION SIZING (exact copy from backtest) ===
-                eq_ratio = self.equity / self.peak_equity if self.peak_equity > 0 else 1.0
-                # Exponential transition: (equity/peak)^dd_power
-                dd_scale = eq_ratio ** self.params["dd_power"]
+                current_dd = 0.0
+                if self.peak_equity > 0:
+                    current_dd = (self.peak_equity - self.equity) / self.peak_equity
 
                 # SL/TP distances
                 sl_dist = atr_val * self.params["sl_mult"]
@@ -765,7 +789,7 @@ class LiveTrader:
                     tp_dist = 0.3
 
                 # Position size calculation
-                lot, risk_pct = self._compute_position_size(sl_dist, dd_scale)
+                lot, risk_pct = self._compute_position_size(sl_dist, current_dd)
 
                 # Calculate SL/TP prices
                 tick = mt5.symbol_info_tick(self.symbol)
@@ -786,7 +810,7 @@ class LiveTrader:
                 self.logger.info(
                     f"SIGNAL: {signal_type} | dir={'BUY' if signal == 1 else 'SELL'} | "
                     f"lot={lot} | sl_dist={sl_dist:.2f} | tp_dist={tp_dist:.2f} | "
-                    f"risk={risk_pct:.4f} | dd_scale={dd_scale:.6f} | "
+                    f"risk={risk_pct:.4f} | current_dd={current_dd:.6f} | "
                     f"rsi8={indicators['rsi_fast'][bar_idx]:.1f} | "
                     f"rsi14={indicators['rsi_slow'][bar_idx]:.1f} | "
                     f"atr={atr_val:.4f}"
@@ -806,7 +830,7 @@ class LiveTrader:
                         rsi_fast=indicators["rsi_fast"][bar_idx],
                         rsi_slow=indicators["rsi_slow"][bar_idx],
                         atr_val=atr_val,
-                        dd_scale=dd_scale,
+                        dd_scale=current_dd,
                         risk_pct=risk_pct,
                     )
                     # Update cooldown tracking
