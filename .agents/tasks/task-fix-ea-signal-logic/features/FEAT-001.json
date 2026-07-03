@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Complete rewrite of HFT_Scalper_Pro.mq5 to exactly match the Python backtest logic from run_aggressive_backtest.py. The EA must produce the same signal frequency (~847 trades / ~30 per day on M1 XAUUSD) as the Python version.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Rewrite RSI calculation to use MT5 built-in iRSI() indicator handles (which use Wilder smoothing internally) for both period 8 and period 14. Create handles in OnInit() and copy values in OnTick(). The Python compute_rsi() uses Wilder smoothing: avg_g = (avg_g * (period - 1) + gains[i]) / period. MT5's iRSI() does the same internally.",
     "Rewrite ATR calculation to use MT5 built-in iATR() indicator handle (period 14, Wilder smoothing). Create handle in OnInit(), copy buffer in OnTick().",
@@ -45,5 +45,5 @@
     "Confirm no daily loss or max spread checks remain"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Complete rewrite of HFT_Scalper_Pro.mq5. Removed: trailing stop, daily loss limit, max drawdown emergency stop, max spread filter, TimeGMT usage, manual RSI/ATR calculation. Added: iRSI/iATR indicator handles with Wilder smoothing, bar-count based cooldown, proper 4-bar reversal checking completed bars 1-5, session filter using iTime with UTC offset parameter, exact Python position sizing formula. All 15 acceptance criteria verified by code review."
 }
