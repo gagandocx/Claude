@@ -39,7 +39,7 @@ echo.
 echo [1/4] Downloading core Python files...
 echo.
 
-set "CORE_FILES=__init__.py analyze.py backtest_engine.py data_loader.py microstructure_analysis.py optimizer.py run_aggressive_backtest.py run_backtest.py run_ensemble_backtest.py"
+set "CORE_FILES=__init__.py analyze.py backtest_engine.py data_loader.py live_trader.py microstructure_analysis.py optimizer.py run_aggressive_backtest.py run_backtest.py run_ensemble_backtest.py LIVE_TRADING_README.md"
 
 set "DOWNLOAD_COUNT=0"
 set "ERROR_COUNT=0"
