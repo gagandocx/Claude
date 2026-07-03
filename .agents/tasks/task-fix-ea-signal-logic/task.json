@@ -1,0 +1,7 @@
+{
+  "task_id": "task-fix-ea-signal-logic",
+  "task_description": "Rewrite HFT_Scalper_Pro.mq5 EA to exactly match the Python backtest logic from run_aggressive_backtest.py, fixing RSI calculation, signal generation, 4-bar reversal, session filter, cooldown, and position sizing to produce ~847 trades (~30/day) instead of only 2 trades.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

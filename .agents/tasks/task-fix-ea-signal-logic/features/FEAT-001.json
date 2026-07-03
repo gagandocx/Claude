@@ -1,0 +1,49 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Complete rewrite of HFT_Scalper_Pro.mq5 to exactly match the Python backtest logic from run_aggressive_backtest.py. The EA must produce the same signal frequency (~847 trades / ~30 per day on M1 XAUUSD) as the Python version.",
+  "status": "in_progress",
+  "steps": [
+    "Rewrite RSI calculation to use MT5 built-in iRSI() indicator handles (which use Wilder smoothing internally) for both period 8 and period 14. Create handles in OnInit() and copy values in OnTick(). The Python compute_rsi() uses Wilder smoothing: avg_g = (avg_g * (period - 1) + gains[i]) / period. MT5's iRSI() does the same internally.",
+    "Rewrite ATR calculation to use MT5 built-in iATR() indicator handle (period 14, Wilder smoothing). Create handle in OnInit(), copy buffer in OnTick().",
+    "Rewrite signal generation to match Python EXACTLY. Three independent signal sources, checked in order with early return: (1) RSI(8) < 25 -> buy, RSI(8) > 75 -> sell; (2) RSI(14) < 30 -> buy, RSI(14) > 70 -> sell; (3) 4-bar reversal: check if last 4 bars each closed lower than the one before (buy) or higher (sell). Each source works independently - if the first one triggers, use that signal without checking others.",
+    "Fix 4-bar reversal bar indexing. In Python: close[i-j] < close[i-j-1] for j in range(4) checks bars i, i-1, i-2, i-3 each lower than previous. In MQL5 bar indexing (bar 0 = current), this means: iClose(symbol,tf,1) < iClose(symbol,tf,2) AND iClose(symbol,tf,2) < iClose(symbol,tf,3) AND iClose(symbol,tf,3) < iClose(symbol,tf,4) AND iClose(symbol,tf,4) < iClose(symbol,tf,5) for all_down (4 consecutive bars each closed lower than the bar before it). Note: we check from bar 1 (last completed bar) not bar 0 (current incomplete bar).",
+    "Fix session filter to work reliably in MT5 Strategy Tester. In tester, TimeGMT() may not work correctly. Use TimeCurrent() with a broker UTC offset input parameter. The Python uses hours[i] >= 7 and hours[i] <= 20. The EA should extract the hour from the current bar time (iTime) and apply the offset.",
+    "Rewrite cooldown logic to match Python exactly. Python tracks last_entry_bars per slot and checks (i - last_entry_bars[s]) >= cooldown (3 bars). In MQL5 on M1, track the bar time of last entry per slot and check that at least 3 bars (3 minutes) have passed. Use bar counting rather than time arithmetic for reliability.",
+    "Rewrite two-mode position sizing to exactly match Python: eq_ratio = equity / peak_equity; dd_scale = eq_ratio^dd_power; risk = risk_protect + (risk_grow - risk_protect) * dd_scale; streak boost if consec_wins >= streak_n and dd_scale > 0.8: risk *= streak_mult; cap risk between 0.002 and max_risk_cap (0.25); lot = (equity * risk) / (sl_dist * CONTRACT_SIZE) where CONTRACT_SIZE = SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE) which is 100 for XAUUSD.",
+    "Match the Python's exact parameter defaults in EA inputs: rsi_entry=25, sl_mult=2.0, tp_mult=3.0, risk_grow=0.17, risk_protect=0.025, dd_power=13, cooldown=3, max_positions=2, session_start=7, session_end=20, dd_halt=14.9%, streak_n=3, streak_mult=1.3, max_risk_cap=0.25, atr_period=14.",
+    "Remove the trailing stop feature (the Python backtest does NOT use trailing stops - it only uses fixed SL/TP). Remove the InpUseTrailingStop input and ManageTrailingStops() function.",
+    "Remove the max daily loss safety check (not in Python). Remove the max account drawdown emergency stop (not in Python - it only has dd_halt). Remove max spread check (not in Python). Keep ONLY the dd_halt check which is in the Python.",
+    "Ensure the EA processes signals on each new M1 bar (not on every tick), matching the Python bar-by-bar processing. The EA should check for a new bar using iTime() comparison.",
+    "Set minimum SL/TP distances matching Python: if sl_dist < 0.5: sl_dist = 0.5; if tp_dist < 0.3: tp_dist = 0.3.",
+    "Match Python entry price behavior: in Python, entry_price = close[i] +/- slippage. In MT5, entry is at market (Ask for buy, Bid for sell), which naturally includes spread. This is correct as-is.",
+    "Keep the trade execution with retry logic, magic number tracking, and position counting - these are necessary for MT5 operation and don't affect signal logic.",
+    "Ensure OnTradeTransaction tracks consecutive wins correctly for the streak boost feature."
+  ],
+  "acceptance_criteria": [
+    "EA uses iRSI() handles for RSI calculation (Wilder smoothing matching Python)",
+    "EA uses iATR() handle for ATR calculation",
+    "Signal generation has 3 independent sources checked in priority order: RSI(8), RSI(14), 4-bar reversal",
+    "RSI(8) thresholds are <25 for buy, >75 for sell",
+    "RSI(14) thresholds are <30 for buy, >70 for sell (matching Python rsi_entry+5 and 95-rsi_entry)",
+    "4-bar reversal checks bars 1-5 (completed bars) with correct comparison direction",
+    "Session filter uses bar time with UTC offset, not TimeGMT()",
+    "Cooldown is bar-count based (3 bars minimum between entries per slot)",
+    "Position sizing formula exactly matches Python: lot = (equity * risk) / (sl_dist * contract_size)",
+    "No trailing stop (not in Python backtest)",
+    "No daily loss limit (not in Python backtest)",
+    "No max spread filter (not in Python backtest)",
+    "dd_halt check at 14.9% matches Python",
+    "All input parameter defaults match the Python best_params values",
+    "File saved to hft_scalper/output/HFT_Scalper_Pro.mq5"
+  ],
+  "verification": [
+    "Read the final .mq5 file and manually verify each logic block matches the corresponding Python code",
+    "Confirm iRSI and iATR handles are created in OnInit() and buffers are copied correctly",
+    "Confirm signal generation order matches Python (RSI8 first, RSI14 second, 4-bar third)",
+    "Confirm no trailing stop code remains",
+    "Confirm no daily loss or max spread checks remain"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

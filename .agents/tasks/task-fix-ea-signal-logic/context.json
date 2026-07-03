@@ -1,0 +1,19 @@
+{
+  "project_type": "MQL5 Expert Advisor for MetaTrader 5, with Python backtesting framework",
+  "language": "MQL5 (target), Python (reference)",
+  "build_system": "MetaTrader 5 Strategy Tester (cannot build in sandbox - validation by code review)",
+  "test_framework": "MT5 Strategy Tester backtesting (not available in sandbox)",
+  "build_command": "N/A - MQL5 compiles inside MetaEditor/MT5",
+  "test_command": "N/A - tested via MT5 Strategy Tester",
+  "verification_instructions": "1. Review the MQL5 EA logic against the Python backtest logic line-by-line. 2. Confirm RSI uses iRSI() handles for Wilder smoothing. 3. Confirm signal generation matches Python exactly (RSI8 independently, RSI14 independently, 4-bar reversal independently). 4. Confirm position sizing formula matches Python. 5. Confirm session filter, cooldown, and position management match.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup needed - just edit the .mq5 file",
+  "environment_constraints": "Cannot compile MQL5 in sandbox. Cannot run MT5 Strategy Tester. Validation is by careful code review ensuring exact logic match with the Python backtest.",
+  "contribution_requirements": "Commit with message: fix: rewrite EA to match Python backtest logic (847 trades, 1911% return)",
+  "key_patterns": "The Python backtest (run_aggressive_backtest.py) is the authoritative reference. Every logic decision in the EA must match the Python exactly.",
+  "relevant_files": [
+    "hft_scalper/run_aggressive_backtest.py",
+    "hft_scalper/output/HFT_Scalper_Pro.mq5"
+  ],
+  "directory_structure": "hft_scalper/ - main project dir; hft_scalper/output/ - EA output; hft_scalper/results/ - backtest results"
+}
