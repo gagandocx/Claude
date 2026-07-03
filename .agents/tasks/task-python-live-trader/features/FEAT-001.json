@@ -1,0 +1,41 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the Python live trading bot (live_trader.py) that uses the EXACT same functions from run_aggressive_backtest.py to trade live on MT5, plus a LIVE_TRADING_README.md with setup and usage instructions.",
+  "status": "in_progress",
+  "steps": [
+    "Create hft_scalper/live_trader.py that imports MetaTrader5 as mt5",
+    "Copy the EXACT compute_rsi and compute_atr functions from run_aggressive_backtest.py - zero modifications to the math",
+    "Implement the main trading loop that: (a) connects to MT5, (b) fetches 1-minute OHLC bars using mt5.copy_rates_from_pos, (c) runs indicators on the bar history",
+    "Implement EXACT same signal generation logic: RSI(8) < rsi_entry -> buy, RSI(8) > (100-rsi_entry) -> sell, RSI(14) < rsi_entry+5 -> buy, RSI(14) > (95-rsi_entry) -> sell, 4-bar reversal pattern",
+    "Implement EXACT same two-mode position sizing: eq_ratio = equity/peak, dd_scale = eq_ratio^dd_power, risk = risk_protect + (risk_grow - risk_protect) * dd_scale, streak boost if consec_wins >= streak_n and dd_scale > 0.8, lot = (equity * risk) / (sl_dist * CONTRACT_SIZE)",
+    "Embed the EXACT best_params from aggressive_results.json as defaults: rsi_entry=25, sl_mult=2.0, tp_mult=3.0, risk_grow=0.17, risk_protect=0.025, dd_power=13, cooldown=3, max_positions=2, use_4bar=True, session_start=7, session_end=20, dd_halt=0.149, streak_n=3, streak_mult=1.3, max_risk_cap=0.25",
+    "Implement session filter (hours 07-20 UTC), ATR minimum check (atr < 0.5 skip), DD halt check (current_dd >= dd_halt skip), cooldown tracking between entries",
+    "Track equity peak, consecutive wins, position slots (up to max_positions=2) - matching the backtest state management",
+    "Implement MT5 order execution: mt5.order_send() with SL and TP, proper symbol info lookup for min lot, lot step, etc.",
+    "Implement proper error handling: MT5 connection retry with exponential backoff, order send error handling, terminal disconnect detection",
+    "Implement logging: Python logging module with file handler, log every signal, every order, every fill, every error. Save trade log to hft_scalper/live_trades.csv",
+    "Implement graceful shutdown on SIGINT/SIGTERM: close positions or leave them with SL/TP intact (configurable)",
+    "Add a main() entry point with argparse for symbol (default XAUUSD), magic number, and optional config file path",
+    "Create hft_scalper/LIVE_TRADING_README.md documenting: prerequisites (Windows, MT5 terminal, pip install MetaTrader5), configuration, how to run, how it maps to the backtest, risk warnings"
+  ],
+  "acceptance_criteria": [
+    "hft_scalper/live_trader.py exists and parses as valid Python (AST check passes)",
+    "compute_rsi and compute_atr in live_trader.py are character-for-character identical to those in run_aggressive_backtest.py",
+    "Signal generation logic matches the backtest: dual RSI thresholds, 4-bar reversal, same conditional ordering",
+    "Position sizing formula matches: risk = risk_protect + (risk_grow - risk_protect) * (equity/peak)^dd_power, with streak boost and max_risk_cap",
+    "All 15 parameters from best_params in aggressive_results.json are embedded as defaults",
+    "Session filter checks hour >= session_start and hour <= session_end",
+    "Trade logging to CSV file is implemented",
+    "MT5 connection with auto-reconnection is implemented",
+    "hft_scalper/LIVE_TRADING_README.md exists with setup instructions"
+  ],
+  "verification": [
+    "Run: python -c \"import ast; ast.parse(open('hft_scalper/live_trader.py').read())\" - must succeed",
+    "Run: python -c \"import ast; ast.parse(open('hft_scalper/LIVE_TRADING_README.md','r').read() if False else print('README exists'))\" to confirm file exists",
+    "Grep verify that compute_rsi and compute_atr function bodies match between live_trader.py and run_aggressive_backtest.py",
+    "Grep verify all 15 best_params values appear in live_trader.py"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

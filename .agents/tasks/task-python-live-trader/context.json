@@ -1,0 +1,19 @@
+{
+  "project_type": "Python trading system (backtest + live trading) for XAUUSD",
+  "language": "Python",
+  "build_system": "pip for dependencies, no formal build system",
+  "test_framework": "No formal test framework - validation by running the script",
+  "build_command": "python -c \"import ast; ast.parse(open('hft_scalper/live_trader.py').read())\"",
+  "test_command": "python -c \"import ast; ast.parse(open('hft_scalper/live_trader.py').read())\"",
+  "verification_instructions": "1. Verify AST parses without errors. 2. Verify the core functions (compute_rsi, compute_atr, signal logic, position sizing) are EXACT copies from run_aggressive_backtest.py. 3. Verify best_params match aggressive_results.json exactly.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "MetaTrader5 package is Windows-only and cannot be installed in this sandbox. Validation is AST-based.",
+  "environment_constraints": "MetaTrader5 Python package requires Windows + MT5 terminal installed. Cannot pip install or run in this Linux sandbox. Code must be validated via AST parsing and manual review of logic matching.",
+  "contribution_requirements": "Commit to branch hft-scalper-v2 with message: feat: add Python live trader with zero-discrepancy from backtest",
+  "key_patterns": "Core functions in run_aggressive_backtest.py: compute_rsi(close, period) with Wilder smoothing, compute_atr(high, low, close, period), dual RSI signal logic (RSI 8 fast + RSI 14 slow), 4-bar reversal pattern, two-mode position sizing with dd_power exponential scaling, streak boost. Constants: SLIPPAGE=0.15, COMMISSION_PER_LOT=7.0, CONTRACT_SIZE=100.0, INITIAL_EQUITY=1000.0",
+  "relevant_files": [
+    "hft_scalper/run_aggressive_backtest.py",
+    "hft_scalper/results/aggressive_results.json"
+  ],
+  "directory_structure": "hft_scalper/ - main package with backtest engine, strategies, data_loader. tick_data/ - historical tick data. Various .mq5 files at root for MT5 Expert Advisors."
+}

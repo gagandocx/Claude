@@ -1,0 +1,7 @@
+{
+  "task_id": "task-python-live-trader",
+  "task_description": "Create a Python live trading bot (live_trader.py) that uses the EXACT same RSI, ATR, signal, and position sizing logic from the proven backtest (run_aggressive_backtest.py) to trade live on MT5 via the MetaTrader5 Python package. Zero translation errors - the core math functions are copied verbatim.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}
