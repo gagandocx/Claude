@@ -27,6 +27,7 @@ import signal
 import logging
 import argparse
 import csv
+import calendar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
@@ -140,6 +141,10 @@ class LiveTrader:
         self.bar_count = 0
         self.open_positions_count = 0
 
+        # Deal history tracking for consecutive wins
+        self._last_deal_time = 0  # timestamp of last processed deal
+        self._known_position_tickets = set()  # tickets of positions we are tracking
+
         # Reconnection settings
         self.max_retries = 10
         self.base_retry_delay = 5  # seconds
@@ -155,6 +160,10 @@ class LiveTrader:
         self.min_lot = 0.01
         self.lot_step = 0.01
         self.max_lot = 200.0
+        self.fill_type = None  # determined at connect time
+
+        # State persistence file
+        self.state_file = self.log_dir / "live_trader_state.json"
 
     def _setup_logging(self):
         """Configure Python logging with file and console handlers."""
@@ -187,11 +196,51 @@ class LiveTrader:
             with open(self.csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "timestamp", "symbol", "direction", "lot_size",
+                    "timestamp", "symbol", "event", "direction", "lot_size",
                     "entry_price", "sl", "tp", "magic", "signal_type",
                     "rsi_fast", "rsi_slow", "atr", "equity", "peak_equity",
-                    "dd_scale", "risk_pct", "bar_count"
+                    "dd_scale", "risk_pct", "bar_count", "profit", "ticket"
                 ])
+
+    def _save_state(self):
+        """Persist critical state to JSON file for restart recovery."""
+        state = {
+            "peak_equity": self.peak_equity,
+            "consec_wins": self.consec_wins,
+            "bar_count": self.bar_count,
+            "last_entry_bars": self.last_entry_bars,
+            "last_deal_time": self._last_deal_time,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            tmp_path = self.state_file.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(state, f, indent=2)
+            tmp_path.replace(self.state_file)
+        except Exception as e:
+            self.logger.error(f"Failed to save state: {e}")
+
+    def _load_state(self):
+        """Load persisted state from JSON file if it exists."""
+        if not self.state_file.exists():
+            self.logger.info("No state file found, starting fresh")
+            return
+        try:
+            with open(self.state_file, "r") as f:
+                state = json.load(f)
+            self.peak_equity = state.get("peak_equity", self.equity)
+            self.consec_wins = state.get("consec_wins", 0)
+            self.bar_count = state.get("bar_count", 0)
+            saved_entry_bars = state.get("last_entry_bars", None)
+            if saved_entry_bars and len(saved_entry_bars) == self.params["max_positions"]:
+                self.last_entry_bars = saved_entry_bars
+            self._last_deal_time = state.get("last_deal_time", 0)
+            self.logger.info(
+                f"Restored state: peak_equity={self.peak_equity:.2f}, "
+                f"consec_wins={self.consec_wins}, bar_count={self.bar_count}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to load state file: {e}. Starting fresh.")
 
     def _log_trade_csv(self, direction: str, lot: float, entry_price: float,
                        sl: float, tp: float, signal_type: str,
@@ -203,6 +252,7 @@ class LiveTrader:
             writer.writerow([
                 datetime.now(timezone.utc).isoformat(),
                 self.symbol,
+                "ENTRY",
                 direction,
                 lot,
                 entry_price,
@@ -218,6 +268,36 @@ class LiveTrader:
                 round(dd_scale, 6),
                 round(risk_pct, 6),
                 self.bar_count,
+                "",
+                "",
+            ])
+
+    def _log_exit_csv(self, direction: str, lot: float, exit_price: float,
+                      profit: float, ticket: int):
+        """Append a trade exit to the CSV log."""
+        with open(self.csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                datetime.now(timezone.utc).isoformat(),
+                self.symbol,
+                "EXIT",
+                direction,
+                lot,
+                exit_price,
+                "",
+                "",
+                self.magic,
+                "",
+                "",
+                "",
+                "",
+                round(self.equity, 2),
+                round(self.peak_equity, 2),
+                "",
+                "",
+                self.bar_count,
+                round(profit, 2),
+                ticket,
             ])
 
     def connect(self) -> bool:
@@ -241,10 +321,14 @@ class LiveTrader:
                 self.min_lot = info.volume_min
                 self.lot_step = info.volume_step
                 self.max_lot = info.volume_max
+
+                # Determine supported fill mode from symbol info
+                self.fill_type = self._detect_fill_mode(info)
+
                 self.logger.info(
                     f"Symbol {self.symbol}: spread={info.spread}, "
                     f"min_lot={self.min_lot}, lot_step={self.lot_step}, "
-                    f"max_lot={self.max_lot}"
+                    f"max_lot={self.max_lot}, fill_mode={self.fill_type}"
                 )
                 return True
             else:
@@ -278,6 +362,21 @@ class LiveTrader:
             return self.connect()
         return True
 
+    def _detect_fill_mode(self, info) -> int:
+        """
+        Query symbol_info.filling_mode bitmask to select a supported fill mode.
+        Falls back through FOK -> IOC -> RETURN.
+        """
+        filling = info.filling_mode
+        # Bit 1: ORDER_FILLING_FOK
+        if filling & 1:
+            return mt5.ORDER_FILLING_FOK
+        # Bit 2: ORDER_FILLING_IOC
+        if filling & 2:
+            return mt5.ORDER_FILLING_IOC
+        # Fallback to RETURN (always supported for exchange-execution symbols)
+        return mt5.ORDER_FILLING_RETURN
+
     def _get_account_equity(self) -> float:
         """Get current account equity from MT5."""
         account = mt5.account_info()
@@ -309,8 +408,12 @@ class LiveTrader:
         return max(self.min_lot, lot)
 
     def _fetch_bars(self, count: int = 500) -> Optional[np.ndarray]:
-        """Fetch recent 1-minute OHLC bars from MT5."""
-        rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M1, 0, count)
+        """Fetch recent 1-minute OHLC bars from MT5.
+        
+        Uses position 1 to skip the current forming bar (position 0),
+        ensuring we only evaluate completed bars - matching backtest semantics.
+        """
+        rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M1, 1, count)
         if rates is None or len(rates) == 0:
             self.logger.error("Failed to fetch bars from MT5")
             return None
@@ -444,7 +547,7 @@ class LiveTrader:
             "magic": self.magic,
             "comment": f"LiveTrader_{signal_type}",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": self.fill_type,
         }
 
         result = mt5.order_send(request)
@@ -469,7 +572,7 @@ class LiveTrader:
     def _check_closed_trades(self):
         """
         Check if any positions were closed since last check.
-        Update equity peak and consecutive wins tracking.
+        Query deal history to detect exits, update consec_wins and log exits.
         """
         self.equity = self._get_account_equity()
         if self.equity > self.peak_equity:
@@ -477,6 +580,59 @@ class LiveTrader:
 
         # Count current positions for this magic
         self.open_positions_count = self._get_open_position_count()
+
+        # Query deal history since last known deal to detect closed trades
+        # Use a time window from last_deal_time to now
+        from_time = datetime.fromtimestamp(self._last_deal_time, tz=timezone.utc)
+        to_time = datetime.now(timezone.utc)
+
+        deals = mt5.history_deals_get(from_time, to_time, group=self.symbol)
+        if deals is None or len(deals) == 0:
+            return
+
+        for deal in deals:
+            # Skip deals we already processed (by time)
+            if deal.time <= self._last_deal_time:
+                continue
+            # Only process deals with our magic number
+            if deal.magic != self.magic:
+                continue
+            # Only process exit deals (DEAL_ENTRY_OUT = 1)
+            if deal.entry != 1:
+                continue
+
+            # This is an exit deal - update streak tracking
+            profit = deal.profit + deal.swap + deal.commission
+            if profit > 0:
+                self.consec_wins += 1
+            else:
+                self.consec_wins = 0
+
+            # Determine direction of the closed position
+            # DEAL_TYPE_BUY=0 means closing a sell, DEAL_TYPE_SELL=1 means closing a buy
+            direction = "SELL_EXIT" if deal.type == 0 else "BUY_EXIT"
+
+            self.logger.info(
+                f"TRADE EXIT: {direction} {deal.volume} lots @ {deal.price:.2f}, "
+                f"profit={profit:.2f}, ticket={deal.position_id}, "
+                f"consec_wins={self.consec_wins}"
+            )
+
+            # Log exit to CSV
+            self._log_exit_csv(
+                direction=direction,
+                lot=deal.volume,
+                exit_price=deal.price,
+                profit=profit,
+                ticket=deal.position_id,
+            )
+
+            # Update the last processed deal time
+            if deal.time > self._last_deal_time:
+                self._last_deal_time = deal.time
+
+        # Save state after processing deals
+        self._save_state()
 
     def run(self):
         """
@@ -497,6 +653,22 @@ class LiveTrader:
         self.equity = self._get_account_equity()
         self.peak_equity = self.equity
         self.logger.info(f"Starting equity: ${self.equity:.2f}")
+
+        # Load persisted state (peak_equity, consec_wins, bar_count, last_entry_bars)
+        self._load_state()
+        # Ensure peak_equity is at least current equity
+        if self.equity > self.peak_equity:
+            self.peak_equity = self.equity
+        self.logger.info(
+            f"After state load: peak_equity=${self.peak_equity:.2f}, "
+            f"consec_wins={self.consec_wins}, bar_count={self.bar_count}"
+        )
+
+        # Initialize deal time if not loaded from state
+        if self._last_deal_time == 0:
+            self._last_deal_time = int(calendar.timegm(
+                datetime.now(timezone.utc).timetuple()
+            ))
 
         last_bar_time = 0
 
@@ -532,7 +704,7 @@ class LiveTrader:
                 if indicators is None:
                     continue
 
-                bar_idx = len(indicators["close"]) - 1  # latest completed bar
+                bar_idx = len(indicators["close"]) - 1  # latest completed bar (forming bar excluded by fetch)
 
                 # === ENTRY LOGIC (mirrors run_backtest exactly) ===
 
@@ -643,6 +815,8 @@ class LiveTrader:
                             self.last_entry_bars[s] = self.bar_count
                             break
                     self.open_positions_count += 1
+                    # Persist state after entry
+                    self._save_state()
 
             except KeyboardInterrupt:
                 break
@@ -655,7 +829,8 @@ class LiveTrader:
     def stop(self):
         """Signal the trading loop to stop."""
         self.running = False
-        self.logger.info("Stop signal received - will exit after current iteration")
+        self._save_state()
+        self.logger.info("Stop signal received - state saved, will exit after current iteration")
 
 
 # =============================================================================
