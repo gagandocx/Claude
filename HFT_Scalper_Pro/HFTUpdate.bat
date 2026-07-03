@@ -35,9 +35,24 @@ echo   Target:  %TARGET_DIR%
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 0: Download account config sample
+:: STEP 0: Self-update HFTUpdate.bat
 :: ------------------------------------------------------------
-echo [0/4] Downloading account config...
+echo [0/5] Self-updating...
+echo.
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/gagandocx/Claude/main/HFT_Scalper_Pro/HFTUpdate.bat' -OutFile '%TARGET_DIR%\HFTUpdate.bat' -UseBasicParsing; exit 0 } catch { exit 1 }"
+if !ERRORLEVEL! equ 0 (
+    echo        [OK] HFTUpdate.bat
+) else (
+    echo        [FAIL] HFTUpdate.bat
+)
+
+echo.
+
+:: ------------------------------------------------------------
+:: STEP 1: Download account config sample
+:: ------------------------------------------------------------
+echo [1/5] Downloading account config...
 echo.
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%BASE_URL%/account_config.sample.json' -OutFile '%TARGET_DIR%\account_config.sample.json' -UseBasicParsing; exit 0 } catch { exit 1 }"
@@ -58,9 +73,9 @@ if not exist "%TARGET_DIR%\account_config.json" (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 1: Download core Python files
+:: STEP 2: Download core Python files
 :: ------------------------------------------------------------
-echo [1/4] Downloading core Python files...
+echo [2/5] Downloading core Python files...
 echo.
 
 set "CORE_FILES=__init__.py analyze.py backtest_engine.py data_loader.py live_trader.py microstructure_analysis.py optimizer.py run_aggressive_backtest.py run_backtest.py run_ensemble_backtest.py run_quick_test.py LIVE_TRADING_README.md"
@@ -82,9 +97,9 @@ for %%F in (%CORE_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 2: Download strategy files
+:: STEP 3: Download strategy files
 :: ------------------------------------------------------------
-echo [2/4] Downloading strategy files...
+echo [3/5] Downloading strategy files...
 echo.
 
 set "STRATEGY_FILES=__init__.py base.py ensemble.py mean_reversion.py momentum_mtf.py order_flow.py spread_fade.py volatility_breakout.py"
@@ -103,9 +118,9 @@ for %%F in (%STRATEGY_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 3: Download output files (EA + docs)
+:: STEP 4: Download output files (EA + docs)
 :: ------------------------------------------------------------
-echo [3/4] Downloading output files...
+echo [4/5] Downloading output files...
 echo.
 
 set "OUTPUT_FILES=HFT_Scalper_Pro.mq5 EA_README.md backtest_summary.md"
@@ -124,9 +139,9 @@ for %%F in (%OUTPUT_FILES%) do (
 echo.
 
 :: ------------------------------------------------------------
-:: STEP 4: Download result files
+:: STEP 5: Download result files
 :: ------------------------------------------------------------
-echo [4/4] Downloading result files...
+echo [5/5] Downloading result files...
 echo.
 
 set "RESULT_FILES=aggressive_results.json ensemble_results.json equity_curves.json microstructure_report.json strategy_comparison.json winner_trade_log.json"
