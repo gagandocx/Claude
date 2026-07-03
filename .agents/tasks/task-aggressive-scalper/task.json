@@ -1,0 +1,7 @@
+{
+  "task_id": "task-aggressive-scalper",
+  "task_description": "Build an aggressive XAUUSD scalping backtest system achieving >500% return with <15% max drawdown on 29 days of tick data. Uses compounding position sizing, multi-strategy approach, and adaptive risk management.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

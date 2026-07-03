@@ -1,0 +1,37 @@
+{
+  "project_type": "Python backtesting system for XAUUSD HFT scalping",
+  "language": "Python 3.9",
+  "build_system": "pip (no formal build system, just pip install dependencies)",
+  "test_framework": "No formal test framework, verification by running the backtest",
+  "build_command": "pip3 install pandas numpy scipy scikit-learn",
+  "test_command": "python3 /projects/sandbox/Claude/hft_scalper/run_aggressive_backtest.py",
+  "verification_instructions": "Run the backtest script and verify output shows >500% return and <15% max drawdown",
+  "snapshot_or_generated_files": "Results saved to hft_scalper/results/",
+  "setup_instructions": "pip3 install pandas numpy scipy scikit-learn",
+  "environment_constraints": "Python 3.9.25 available, OPEN_INTERNET mode, can install any packages",
+  "contribution_requirements": "No formal contribution guidelines - just make it work",
+  "key_patterns": "Existing system uses: BaseStrategy abstract class with generate_signals() returning (n,3) array of [direction, sl_dist, tp_dist]; BacktestEngine iterates bars checking SL/TP hits; data_loader.py loads tick CSV and builds 1-min OHLC bars. The existing engine uses FIXED 0.1 lot sizing which limits returns.",
+  "relevant_files": [
+    "hft_scalper/data_loader.py",
+    "hft_scalper/backtest_engine.py",
+    "hft_scalper/strategies/base.py",
+    "hft_scalper/strategies/ensemble.py",
+    "hft_scalper/strategies/order_flow.py",
+    "hft_scalper/strategies/momentum_mtf.py",
+    "hft_scalper/run_ensemble_backtest.py",
+    "tick_data/XAUUSD_RealTicks.csv"
+  ],
+  "directory_structure": "hft_scalper/ - main package with backtest_engine.py, data_loader.py, optimizer.py, strategies/ subfolder; tick_data/ - raw tick CSV; .agents/tasks/ - task management",
+  "data_characteristics": {
+    "total_ticks": 6049106,
+    "price_range": "4510 to 4890 (379 point range)",
+    "avg_spread": 0.0975,
+    "period": "2026-04-01 to 2026-04-29 (21 trading days)",
+    "daily_ranges": "50-300 points",
+    "contract_size": "100 oz per standard lot",
+    "point_value_per_0.1_lot": "$1 per point",
+    "leverage": "1:500",
+    "initial_equity": "$1,000"
+  },
+  "strategy_for_500pct": "Complete rewrite of backtest engine to support: (1) Dynamic position sizing with compounding - scale lots based on current equity using Kelly Criterion, (2) Multiple concurrent strategies with portfolio allocation, (3) Adaptive regime detection to switch between trend-following and mean-reversion, (4) Aggressive risk-reward ratios with trailing stops, (5) Pyramiding into winning positions. The math: with $1000 start, need $5000+ profit. At 0.1 lot, need 5000+ points profit which is unrealistic in 29 days. With compounding: start 0.1 lot, grow to 0.5+ lots as equity grows - each trade contributes exponentially more."
+}
