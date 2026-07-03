@@ -37,5 +37,5 @@
     "Grep verify all 15 best_params values appear in live_trader.py"
   ],
   "blocked_reason": null,
-  "findings": "All verifications passed: AST parse succeeds, compute_rsi and compute_atr are character-for-character identical between live_trader.py and run_aggressive_backtest.py, all 15 best_params are embedded. README created. Used python3 command (not python) as pyenv required explicit version. MetaTrader5 cannot be installed on Linux so runtime testing is not possible."
+  "findings": "All verifications passed: AST parse succeeds, compute_rsi and compute_atr are character-for-character identical between live_trader.py and run_aggressive_backtest.py, all 15 best_params are embedded. README created. Used python3 command (not python) as pyenv required explicit version. MetaTrader5 cannot be installed on Linux so runtime testing is not possible. Review fixes applied: (1) consec_wins now updates via mt5.history_deals_get polling, (2) bar indexing fixed to position 1 to skip forming bar, (3) state persistence via JSON file for peak_equity/consec_wins/bar_count/last_entry_bars, (4) fill mode auto-detected from symbol_info.filling_mode bitmask, (5) exit logging added to CSV. max_risk_cap confirmed matching at 0.25 in both aggressive_results.json and DEFAULT_PARAMS."
 }
