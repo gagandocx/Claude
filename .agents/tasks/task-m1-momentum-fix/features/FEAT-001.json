@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "v5.3 M1 Momentum Fix: Add separate M1 data fetch for momentum direction and M1 ATR for SL sizing, while keeping H1 for AI model features. This fixes the EA buying during downtrends by switching from 7-hour lookback to 7-minute lookback for direction.",
+  "status": "completed",
+  "steps": [
+    "1. In python_bridge/data/market_data.py, add a new method `get_m1_atr(self, period: int = 14) -> float` that fetches M1 data (interval='1m', period='5d') and computes ATR(14) from M1 candles. This should return the M1 ATR value (~$2-3 for gold). Also update get_current_atr() to accept an optional `interval` parameter for flexibility.",
+    "2. In python_bridge/strategies/signal_generator.py `generate_signal()`, add a new optional parameter `prices_m1: Optional[pd.DataFrame] = None`. When computing momentum direction (section 1d), use `prices_m1` if available, falling back to `prices` (H1) if not. Same for: (a) adaptive ATR calculation for momentum lookback selection, (b) price_structure detection, (c) RSI zone filter (section 1a3), (d) RSI exhaustion filter (section 5c), (e) support/resistance levels (section 5b). Keep prices (H1) for: model features input, candle pattern analysis (those only LOG on M1 anyway), spread filter (which proxies spread from H-L range).",
+    "3. In python_bridge/main.py `run_cycle()`, after the existing H1 fetch on line 335 (`df = self.data_fetcher.fetch_ohlcv(interval='1h', period='3mo')`), add a SEPARATE M1 data fetch: `df_m1 = self.data_fetcher.fetch_ohlcv(interval='1m', period='5d')`. Add error handling (if df_m1 is empty, log warning and continue with H1 fallback). Pass this to generate_signal via `prices_m1=df_m1`.",
+    "4. In python_bridge/main.py, change the ATR used for SL/TP sizing from `atr = self.data_fetcher.get_current_atr()` (which fetches H1 ATR ~$10-15) to `atr = self.data_fetcher.get_m1_atr()` (which fetches M1 ATR ~$2-3). Keep the existing H1 ATR fetch for the news filter volatility check (that comparison needs H1 baseline). Remove or reduce the ATR cap of $5 in signal_generator.py since M1 ATR is already small (~$2-3).",
+    "5. Update VERSION in python_bridge/main.py from '5.2' to '5.3'.",
+    "6. Update python_bridge/tests/test_signal_generator.py: (a) Fix the pre-existing test_momentum_buy_when_prices_rising failure by using price data that exceeds the $1.50 momentum_threshold. (b) Add new tests for the prices_m1 parameter in generate_signal() - test that momentum is computed from prices_m1 when provided. (c) Add a test for get_m1_atr() in market_data.",
+    "7. Verify the v5.2 signal write fix is preserved: bridge.py has retry logic in write_signal() (3 retries with 0.05s sleep), main.py has write_ok check with retry, Python_Bridge_EA.mq5 has EventSetTimer(10) and dedup guard. Do NOT modify these - just confirm they are intact."
+  ],
+  "acceptance_criteria": [
+    "generate_signal() accepts prices_m1 parameter and uses it for momentum direction computation",
+    "main.py fetches M1 data separately and passes it to generate_signal(prices_m1=df_m1)",
+    "ATR for SL sizing comes from M1 data (get_m1_atr()), not H1",
+    "H1 data is still used for AI model features/predictions (unchanged)",
+    "VERSION is '5.3' in main.py",
+    "All pytest tests pass including new tests for M1 momentum and M1 ATR",
+    "v5.2 signal write retry logic in bridge.py is preserved unchanged",
+    "Candle patterns only LOG, never BLOCK (existing behavior preserved)",
+    "ATR cap in signal_generator.py is adjusted appropriately for M1 ATR values"
+  ],
+  "verification": [
+    "Run `cd /projects/sandbox/Claude/python_bridge && python3 -m pytest tests/ --tb=short` and confirm all tests pass",
+    "Verify VERSION == '5.3' in main.py",
+    "Verify get_m1_atr() exists in market_data.py and fetches interval='1m'",
+    "Verify generate_signal() signature includes prices_m1 parameter",
+    "Verify main.py run_cycle() has df_m1 fetch and passes prices_m1 to generate_signal"
+  ],
+  "blocked_reason": null,
+  "findings": "All 76 signal generator tests pass. 521/522 total tests pass (1 pre-existing failure in test_smart_upgrades.py::TestConfigs::test_price_structure_config_defaults - config value is 0.05 but test expects 0.15, unrelated to this change). Post-review fixes applied: (1) Eliminated double M1 fetch by adding compute_atr_from_df() static helper and using it in main.py instead of get_m1_atr(). (2) Restored ATR cap to $5 in signal_generator.py and added $5 cap on H1 fallback path in main.py to prevent outsized stops ($12) when M1 data is unavailable."
+}

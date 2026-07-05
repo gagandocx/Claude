@@ -1,0 +1,7 @@
+{
+  "task_id": "task-m1-momentum-fix",
+  "task_description": "v5.3 M1 Momentum Fix - Switch momentum direction computation from H1 (7-hour lookback) to M1 (7-minute lookback) for proper scalping alignment, and use M1 ATR for SL sizing instead of H1 ATR.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}
