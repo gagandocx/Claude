@@ -54,7 +54,7 @@ echo.
 echo [1/2] Downloading root-level Python files...
 echo.
 
-set "ROOT_FILES=__init__.py config.py data_loader.py backtest_engine.py live_trader.py run_demo.py run_backtest.py README.md"
+set "ROOT_FILES=__init__.py config.py data_loader.py backtest_engine.py live_trader.py run_demo.py run_backtest.py run_optimized_backtest.py run_optimized_local.py README.md"
 
 set "DOWNLOAD_COUNT=0"
 set "ERROR_COUNT=0"
