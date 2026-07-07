@@ -1,0 +1,24 @@
+{
+  "project_type": "Python trading bot - CCT Rectangle scalping strategy with backtesting",
+  "language": "Python 3.9",
+  "build_system": "pip with requirements.txt",
+  "test_framework": "Built-in backtest verification (no unit test framework needed - results-based validation)",
+  "build_command": "pip install -r requirements.txt",
+  "test_command": "python main.py",
+  "verification_instructions": "Run python main.py and verify it produces trade results with entries, exits, RR ratios, and win rate statistics",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "cd /projects/sandbox/Claude/CCT_Rectangle_Bot && pip install -r requirements.txt",
+  "environment_constraints": "OPEN_INTERNET - can install packages and fetch market data from yfinance/other APIs. Python 3.9 available.",
+  "contribution_requirements": "Completely standalone project - no references to any existing repo code",
+  "key_patterns": "Greenfield project - modular design with separate files for data fetching, strategy logic, backtesting engine, and results output",
+  "relevant_files": [
+    "CCT_Rectangle_Bot/requirements.txt",
+    "CCT_Rectangle_Bot/main.py",
+    "CCT_Rectangle_Bot/data_loader.py",
+    "CCT_Rectangle_Bot/strategy.py",
+    "CCT_Rectangle_Bot/backtester.py",
+    "CCT_Rectangle_Bot/utils.py",
+    "CCT_Rectangle_Bot/config.py"
+  ],
+  "directory_structure": "CCT_Rectangle_Bot/ - standalone directory at repo root containing all bot code. Modular: config.py (settings), data_loader.py (fetch OHLC data), strategy.py (CCT Rectangle logic), backtester.py (engine), utils.py (helpers), main.py (entry point)"
+}
