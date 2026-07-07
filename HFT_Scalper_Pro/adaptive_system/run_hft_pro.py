@@ -31,7 +31,7 @@ import numpy as np
 CONTRACT_SIZE = 100       # Gold standard lot
 SLIPPAGE = 0.30           # Points slippage per trade
 COMMISSION = 7.0          # USD per lot round-turn
-INITIAL_EQUITY = 10000.0
+INITIAL_EQUITY = 1000.0
 MAX_POS = 1              # One position at a time
 COOLDOWN_BARS = 1        # Bars to wait after exit
 TIMEOUT_BARS = 50        # Force-close after N bars
@@ -288,9 +288,9 @@ def generate_signals(open_arr, high_arr, low_arr, close_arr, hours, mode="balanc
 # Position Sizing (Two-Mode Compound)
 # ---------------------------------------------------------------------------
 
-def compute_position_size(equity, equity_high, atr_value):
-    """Two-mode compound position sizing."""
-    if equity <= 0 or atr_value < 0.01:
+def compute_position_size(equity, equity_high, sl_distance):
+    """Two-mode compound position sizing (proven from 1911% system)."""
+    if equity <= 0 or sl_distance < 0.01:
         return 0.0
 
     dd_pct = 1.0 - equity / equity_high if equity_high > 0 else 0.0
@@ -299,21 +299,22 @@ def compute_position_size(equity, equity_high, atr_value):
     if dd_pct >= DD_HALT:
         return 0.0
 
-    # Determine risk fraction
+    # Determine risk fraction (exponential decay in drawdown)
     if dd_pct <= AT_HIGH_THRESH:
         risk_frac = RISK_GROW
     else:
-        # Scale down with drawdown
-        dd_factor = (1.0 - dd_pct) ** DD_POWER
-        risk_frac = RISK_PROTECT + (RISK_GROW - RISK_PROTECT) * dd_factor
+        # Exponential decay: risk_protect * (equity/peak)^dd_power
+        eq_ratio = equity / equity_high if equity_high > 0 else 1.0
+        risk_frac = RISK_PROTECT * (eq_ratio ** DD_POWER)
 
+    risk_frac = max(0.005, min(0.30, risk_frac))
     risk_amount = equity * risk_frac
-    sl_dollars = atr_value * CONTRACT_SIZE  # Will be multiplied by SL mult outside
+    sl_dollars = sl_distance * CONTRACT_SIZE
     if sl_dollars < 0.01:
         return 0.0
 
     lots = risk_amount / sl_dollars
-    return max(0.01, round(lots, 2))
+    return max(0.01, min(100.0, round(lots, 2)))
 
 
 # ---------------------------------------------------------------------------
