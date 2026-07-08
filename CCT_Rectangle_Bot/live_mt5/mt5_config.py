@@ -138,3 +138,62 @@ LOG_LEVEL = "INFO"
 LOG_DIR = "logs"
 LOG_MAX_BYTES = 10 * 1024 * 1024   # 10 MB per log file
 LOG_BACKUP_COUNT = 5                # Keep 5 rotated log files
+
+# =============================================================================
+# ACTIVE PROFILE OVERRIDE
+# =============================================================================
+# Reads active_profile.txt and overrides settings from profiles.py.
+# This runs at import time (startup) AND can be re-read dynamically via
+# reload_active_profile() for hot-switching between trades.
+# =============================================================================
+
+def _apply_active_profile():
+    """
+    Read the active profile and override module-level settings.
+
+    Called at startup and can be called again to hot-reload the profile
+    between trade decisions without restarting the bot.
+    """
+    from profiles import get_active_profile, get_profile_display_name
+
+    global RISK_PER_TRADE, MIN_RR_RATIO, TARGET_RR_RATIO
+    global MAX_CONCURRENT_TRADES, MAX_DAILY_LOSS_PCT, MAX_TRADES_PER_DAY
+    global MAX_DRAWDOWN_PCT, USE_TRAILING_STOP
+    global TRAILING_STOP_ACTIVATION_RR, TRAILING_STOP_DISTANCE_RR
+    global ALLOW_ASIA_SESSION, ACTIVE_PROFILE_NAME, ACTIVE_PROFILE_DISPLAY
+
+    profile_name, profile = get_active_profile()
+
+    # Override settings from profile
+    RISK_PER_TRADE = profile["RISK_PER_TRADE"]
+    MIN_RR_RATIO = profile["MIN_RR_RATIO"]
+    TARGET_RR_RATIO = profile["TARGET_RR_RATIO"]
+    MAX_CONCURRENT_TRADES = profile["MAX_CONCURRENT_TRADES"]
+    MAX_DAILY_LOSS_PCT = profile["MAX_DAILY_LOSS_PCT"]
+    MAX_TRADES_PER_DAY = profile["MAX_TRADES_PER_DAY"]
+    MAX_DRAWDOWN_PCT = profile["MAX_DRAWDOWN_PCT"]
+    USE_TRAILING_STOP = profile["USE_TRAILING_STOP"]
+    TRAILING_STOP_ACTIVATION_RR = profile["TRAILING_STOP_ACTIVATION_RR"]
+    TRAILING_STOP_DISTANCE_RR = profile["TRAILING_STOP_DISTANCE_RR"]
+    ALLOW_ASIA_SESSION = profile["ALLOW_ASIA_SESSION"]
+
+    # Store active profile info for display
+    ACTIVE_PROFILE_NAME = profile_name
+    ACTIVE_PROFILE_DISPLAY = profile["display_name"]
+
+
+def reload_active_profile():
+    """
+    Re-read active_profile.txt and apply the profile.
+
+    Call this before each trade decision to support hot-switching
+    profiles while the bot is running.
+    """
+    _apply_active_profile()
+
+
+# Apply profile on import (startup)
+ACTIVE_PROFILE_NAME = "SAFE"
+ACTIVE_PROFILE_DISPLAY = "SAFE"
+_apply_active_profile()
+print(f"[CCT Rectangle Bot] Active Profile: {ACTIVE_PROFILE_DISPLAY}")
