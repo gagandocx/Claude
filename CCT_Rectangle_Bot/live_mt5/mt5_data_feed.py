@@ -164,6 +164,47 @@ class MT5DataFeed:
 
         return df
 
+    def get_latest_tick(self) -> Optional[dict]:
+        """
+        Get the latest tick data for the symbol using mt5.symbol_info_tick().
+
+        Provides real-time bid/ask/last price and tick timestamp for
+        candle close detection and instant entry monitoring.
+
+        Returns:
+            Dictionary with tick data (bid, ask, last, time, volume) or None on failure.
+        """
+        if mt5 is None:
+            self.logger.error("MetaTrader5 package not available")
+            return None
+
+        tick = mt5.symbol_info_tick(self.symbol)
+        if tick is None:
+            error = mt5.last_error()
+            self.logger.warning(f"Failed to get tick for {self.symbol}: {error}")
+            return None
+
+        return {
+            "bid": tick.bid,
+            "ask": tick.ask,
+            "last": tick.last,
+            "time": tick.time,
+            "time_msc": tick.time_msc,
+            "volume": tick.volume,
+        }
+
+    def get_latest_1m_candle(self) -> Optional[pd.DataFrame]:
+        """
+        Fetch only the most recent 1M candle (completed + forming).
+
+        Fetches 2 bars: the last completed candle and the currently forming one.
+        Used for fast candle-close detection without fetching full history.
+
+        Returns:
+            DataFrame with the last 2 bars of 1M data, or None on failure.
+        """
+        return self._fetch_data("1m", 2)
+
     def get_all_timeframes(self) -> Optional[dict]:
         """
         Fetch data for all three required timeframes.

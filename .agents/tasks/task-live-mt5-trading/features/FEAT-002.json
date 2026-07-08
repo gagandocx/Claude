@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Update live MT5 trading bot to real-time: 1-second polling, tick-level monitoring, instant entry detection, and pre-computation of direction/weakness signals",
+  "status": "in_progress",
+  "steps": [
+    "Update mt5_config.py: Set POLL_INTERVAL_SECONDS = 1, add tick monitoring settings (TICK_MONITORING_ENABLED, CANDLE_CLOSE_DETECTION_MS, PRE_COMPUTE_SIGNALS)",
+    "Update mt5_data_feed.py: Add get_latest_tick() method that wraps mt5.symbol_info_tick() for real-time tick monitoring and candle close detection",
+    "Create mt5_tick_monitor.py: New module with TickMonitor class that handles real-time tick stream processing, candle close detection, pre-computation of direction+weakness signals, and signal readiness state (ARMED/SCANNING/IDLE)",
+    "Update mt5_trader.py: Replace 60-second sleep loop with 1-second tick-monitoring loop, integrate TickMonitor for candle close detection, instant signal execution on new 1M candle, tick-level price monitoring for rectangle zone awareness"
+  ],
+  "acceptance_criteria": [
+    "mt5_config.py has POLL_INTERVAL_SECONDS = 1",
+    "mt5_config.py has tick monitoring configuration constants",
+    "mt5_data_feed.py has get_latest_tick() method",
+    "mt5_tick_monitor.py exists with TickMonitor class implementing candle close detection and pre-computation",
+    "mt5_tick_monitor.py has SignalState enum with IDLE, SCANNING, ARMED states",
+    "mt5_trader.py uses 1-second loop with tick monitoring for instant candle close detection",
+    "mt5_trader.py has instant order execution (no delay between signal and order)",
+    "All Python files have valid syntax",
+    "Signal-to-execution designed for under 500ms"
+  ],
+  "verification": [
+    "Run: python -c \"import ast; [ast.parse(open(f'CCT_Rectangle_Bot/live_mt5/{f}').read()) for f in ['mt5_config.py','mt5_data_feed.py','mt5_tick_monitor.py','mt5_trader.py']]\" to verify syntax",
+    "Run: ls CCT_Rectangle_Bot/live_mt5/mt5_tick_monitor.py to confirm new file exists",
+    "Run: grep 'POLL_INTERVAL_SECONDS = 1' CCT_Rectangle_Bot/live_mt5/mt5_config.py to verify setting"
+  ],
+  "blocked_reason": null,
+  "findings": null
+}
