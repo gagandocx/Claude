@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Update live MT5 trading bot to real-time: 1-second polling, tick-level monitoring, instant entry detection, and pre-computation of direction/weakness signals",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Update mt5_config.py: Set POLL_INTERVAL_SECONDS = 1, add tick monitoring settings (TICK_MONITORING_ENABLED, CANDLE_CLOSE_DETECTION_MS, PRE_COMPUTE_SIGNALS)",
     "Update mt5_data_feed.py: Add get_latest_tick() method that wraps mt5.symbol_info_tick() for real-time tick monitoring and candle close detection",
@@ -26,5 +26,5 @@
     "Run: grep 'POLL_INTERVAL_SECONDS = 1' CCT_Rectangle_Bot/live_mt5/mt5_config.py to verify setting"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 4 modified/created files pass ast.parse syntax validation. MetaTrader5 package cannot be imported on Linux (Windows-only) so validation limited to syntax checking. POLL_INTERVAL_SECONDS=1 confirmed. TickMonitor class implements candle close detection via 1M bar timestamp comparison, pre-computation of direction (4H) and weakness (15M) signals with configurable cache durations, and SignalState enum (IDLE/SCANNING/ARMED). mt5_trader.py hot path uses cached dataframes and only fetches fresh 1M data on candle close for sub-500ms execution. Dashboard update call kept compatible with existing Dashboard.update() signature (no monitor_stats param passed)."
 }

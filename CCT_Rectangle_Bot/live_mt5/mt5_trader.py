@@ -1,22 +1,24 @@
 """
-CCT Rectangle Bot - Live MT5 Trader (Main Loop) - REAL-TIME MODE.
+CCT Rectangle Bot - Live MT5 Trader (Main Loop) - ZERO-DELAY MODE.
 
 This is the main orchestration module that:
 1. Connects to MT5 terminal
-2. Monitors tick stream in real-time (1-second loop)
-3. Detects exact 1M candle close moments via TickMonitor
+2. Monitors tick stream continuously in a tight spin loop (10ms sleep max)
+3. Detects exact 1M candle close moments via tick timestamp comparison
 4. Pre-computes direction (4H) and weakness (15M) signals between candle closes
-5. Executes trades instantly on candle close (target: under 500ms)
-6. Manages open positions (trailing stop logic)
-7. Reconciles closed positions to update risk manager stats
-8. Displays status via console dashboard
-9. Handles graceful shutdown on SIGINT
+5. Pre-stages orders when ARMED for instant fire on trigger
+6. Executes trades instantly on candle close (target: under 50ms)
+7. Manages open positions (trailing stop logic)
+8. Reconciles closed positions to update risk manager stats
+9. Displays GIANT PnL via ASCII art terminal display (updated every 100ms)
+10. Handles graceful shutdown on SIGINT
 
 Signal flow:
+- Continuous spin loop: check ticks every 10ms (NO polling delay)
 - Between candle closes: pre-compute direction + weakness (cached)
-- On 1M candle close: fetch fresh 1M data, run entry check only
-- If entry signal: execute immediately (no delay)
-- Target: signal detection to order placement < 500ms
+- When ARMED: pre-stage order with calculated lot size, SL, TP
+- On 1M candle close: fire pre-staged order instantly (no computation)
+- Target: tick-to-execution under 50ms
 """
 
 import sys
@@ -40,6 +42,7 @@ from mt5_data_feed import MT5DataFeed
 from mt5_tick_monitor import TickMonitor, SignalState
 from risk_manager import RiskManager
 from dashboard import Dashboard
+from pnl_display import GiantPnLDisplay
 
 # Import strategy classes from parent CCT_Rectangle_Bot
 from strategy import CCTRectangleStrategy, TradeSetup
@@ -47,17 +50,19 @@ from strategy import CCTRectangleStrategy, TradeSetup
 
 class LiveTrader:
     """
-    Main live trading orchestrator for CCT Rectangle Bot - Real-Time Mode.
+    Main live trading orchestrator for CCT Rectangle Bot - Zero-Delay Mode.
 
-    Runs a 1-second tick-monitoring loop that:
-    - Checks for new 1M candle closes every second
+    Runs a continuous spin loop (10ms sleep max) that:
+    - Checks for new ticks by comparing timestamps (no polling delay)
+    - Detects 1M candle close by tick timestamp minute boundary crossing
     - Pre-computes direction and weakness signals between candle closes
-    - On candle close: runs only the rectangle entry check (fast path)
-    - Executes instantly when signal is found (no polling delay)
+    - Pre-stages orders when ARMED (order dict ready to fire)
+    - On candle close: fires pre-staged order instantly (under 50ms)
+    - Displays GIANT ASCII art PnL that fills the terminal
     - Manages existing positions (trailing stop)
-    - Updates the console dashboard
+    - Updates display every 100ms for smooth real-time updates
 
-    Performance target: signal-to-execution under 500ms.
+    Performance target: tick-to-execution under 50ms.
     """
 
     def __init__(self):
@@ -68,6 +73,7 @@ class LiveTrader:
         self.tick_monitor = TickMonitor(data_feed=self.data_feed, logger=self.logger)
         self.risk_manager = RiskManager(logger=self.logger)
         self.dashboard = Dashboard(logger=self.logger)
+        self.pnl_display = GiantPnLDisplay()
 
         # State tracking
         self._running: bool = False
@@ -76,13 +82,20 @@ class LiveTrader:
         self._reconciled_deals: set = set()  # Track deals already reconciled
 
         # Store the original entry risk for each position (ticket -> risk distance)
-        # This prevents trailing stop drift when SL has been modified.
         self._original_risk: Dict[int, float] = {}
 
         # Performance tracking
         self._loop_count: int = 0
         self._last_precompute_time: float = 0.0
         self._precompute_interval: float = 30.0  # Re-check pre-computation every 30s
+        self._last_display_time: float = 0.0
+        self._last_periodic_time: float = 0.0
+
+        # Display interval in seconds (from config: 100ms)
+        self._display_interval: float = mt5_config.DISPLAY_UPDATE_MS / 1000.0
+
+        # Spin loop sleep in seconds (from config: 10ms)
+        self._loop_sleep: float = mt5_config.TICK_LOOP_SLEEP_MS / 1000.0
 
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -90,17 +103,19 @@ class LiveTrader:
 
     def start(self):
         """
-        Start the live trading bot in real-time mode.
+        Start the live trading bot in zero-delay mode.
 
-        Performs startup validation, then enters the 1-second tick monitoring loop.
+        Performs startup validation, then enters the continuous spin loop.
         """
         self.logger.info("=" * 60)
-        self.logger.info("CCT Rectangle Bot - Live Trader Starting (REAL-TIME MODE)")
+        self.logger.info("CCT Rectangle Bot - Live Trader Starting (ZERO-DELAY MODE)")
         self.logger.info(f"Symbol: {mt5_config.SYMBOL}")
         self.logger.info(f"Demo Mode: {mt5_config.DEMO_MODE}")
-        self.logger.info(f"Poll Interval: {mt5_config.POLL_INTERVAL_SECONDS}s")
+        self.logger.info(f"Tick Loop Sleep: {mt5_config.TICK_LOOP_SLEEP_MS}ms")
+        self.logger.info(f"Display Update: {mt5_config.DISPLAY_UPDATE_MS}ms")
         self.logger.info(f"Tick Monitoring: {mt5_config.TICK_MONITORING_ENABLED}")
         self.logger.info(f"Pre-compute Signals: {mt5_config.PRE_COMPUTE_SIGNALS}")
+        self.logger.info(f"Pre-stage Orders: {mt5_config.PRE_STAGE_ORDERS}")
         self.logger.info(f"Risk Per Trade: {mt5_config.RISK_PER_TRADE * 100:.1f}%")
         self.logger.info(f"Max Daily Loss: {mt5_config.MAX_DAILY_LOSS_PCT * 100:.1f}%")
         self.logger.info(f"Max Trades/Day: {mt5_config.MAX_TRADES_PER_DAY}")
@@ -113,12 +128,12 @@ class LiveTrader:
             return
 
         self._running = True
-        self.logger.info("Startup validation passed. Entering real-time loop.")
+        self.logger.info("Startup validation passed. Entering zero-delay spin loop.")
 
         # Initialize tick monitor
         self.tick_monitor.start()
 
-        # Main real-time loop
+        # Main zero-delay spin loop
         self._main_loop()
 
     def _validate_startup(self) -> bool:
@@ -181,19 +196,24 @@ class LiveTrader:
 
     def _main_loop(self):
         """
-        Real-time trading loop. Runs every POLL_INTERVAL_SECONDS (1 second).
+        Zero-delay continuous spin loop. Sleeps only 10ms between iterations.
 
-        Each tick cycle:
-        1. Check connection health
-        2. Check for new 1M candle close (via TickMonitor)
-        3. If new candle: run fast-path signal check and execute
-        4. If no new candle: pre-compute direction/weakness signals
-        5. Monitor tick price for rectangle zone awareness
-        6. Periodically manage positions and update dashboard
+        Each spin cycle (~10ms):
+        1. Check for new tick (via timestamp comparison)
+        2. Check for 1M candle close (minute boundary detection)
+        3. If candle close: fire pre-staged order or run fast signal check
+        4. If ARMED: monitor tick for rectangle breakout, keep order pre-staged
+        5. Every 100ms: update giant PnL display
+        6. Every 30s: pre-compute direction/weakness signals
+        7. Every 10s: manage positions, reconcile, periodic tasks
+
+        NO time.sleep(1) or time.sleep(60) anywhere in this path.
         """
         self.logger.info(
-            f"Real-time loop started. "
-            f"Checking every {mt5_config.POLL_INTERVAL_SECONDS}s for candle closes."
+            f"Zero-delay spin loop started. "
+            f"Sleep: {mt5_config.TICK_LOOP_SLEEP_MS}ms, "
+            f"Display: {mt5_config.DISPLAY_UPDATE_MS}ms, "
+            f"Target: <{mt5_config.MAX_EXECUTION_DELAY_MS}ms execution."
         )
 
         while self._running:
@@ -201,40 +221,51 @@ class LiveTrader:
                 cycle_start = time.time()
                 self._loop_count += 1
 
-                # Step 1: Check connection (every cycle)
-                if not self.connection.is_connected():
-                    self.logger.warning("Connection lost. Attempting reconnect...")
-                    self.dashboard.set_signal_status("Reconnecting...")
-                    if not self.connection.reconnect():
-                        self.logger.error("Reconnection failed. Stopping.")
-                        break
-                    # Re-initialize tick monitor after reconnection
-                    self.tick_monitor.start()
+                # Step 1: Check connection (every 1000 cycles ~ every 10s)
+                if self._loop_count % 1000 == 0:
+                    if not self.connection.is_connected():
+                        self.logger.warning("Connection lost. Attempting reconnect...")
+                        if not self.connection.reconnect():
+                            self.logger.error("Reconnection failed. Stopping.")
+                            break
+                        self.tick_monitor.start()
 
-                # Step 2: Check for new 1M candle close
+                # Step 2: Check for new 1M candle close (tick timestamp)
                 new_candle = self.tick_monitor.check_candle_close()
 
                 if new_candle:
-                    # HOT PATH: New candle closed - execute signal check immediately
+                    # HOT PATH: New candle closed - execute immediately
                     self._on_candle_close()
-                else:
-                    # COLD PATH: No new candle - do background work
+
+                # Step 3: Between candles - pre-compute and monitor
+                now = time.time()
+
+                # Pre-compute signals every 30 seconds
+                if now - self._last_precompute_time > self._precompute_interval:
                     self._between_candles()
+                    self._last_precompute_time = now
 
-                # Step 3: Periodic tasks (every 10 seconds)
-                if self._loop_count % 10 == 0:
+                # Step 4: When ARMED, monitor rectangle zone on every tick
+                if self.tick_monitor.is_armed:
+                    self._monitor_rectangle_zone()
+
+                # Step 5: Update giant PnL display every DISPLAY_UPDATE_MS
+                if now - self._last_display_time >= self._display_interval:
+                    self._update_giant_pnl_display()
+                    self._last_display_time = now
+
+                # Step 6: Periodic tasks every 10 seconds
+                if now - self._last_periodic_time >= 10.0:
                     self._periodic_tasks()
+                    self._last_periodic_time = now
 
-                # Wait for next tick cycle
-                elapsed = time.time() - cycle_start
-                remaining = mt5_config.POLL_INTERVAL_SECONDS - elapsed
-                if remaining > 0:
-                    time.sleep(remaining)
+                # Spin loop sleep: 10ms max (configurable via TICK_LOOP_SLEEP_MS)
+                time.sleep(self._loop_sleep)
 
             except Exception as e:
-                self.logger.error(f"Error in main loop: {e}", exc_info=True)
-                self.dashboard.set_signal_status(f"Error: {str(e)[:30]}")
-                time.sleep(1)  # Brief pause before retrying
+                self.logger.error(f"Error in spin loop: {e}", exc_info=True)
+                # Brief 100ms pause on error, then continue (not 1 second!)
+                time.sleep(0.1)
 
         # Cleanup on exit
         self._shutdown()
@@ -243,21 +274,24 @@ class LiveTrader:
         """
         HOT PATH: Called immediately when a new 1M candle close is detected.
 
-        This is the performance-critical path. Uses pre-computed direction
-        and weakness signals to minimize computation. Only fetches fresh
-        1M data and runs the rectangle entry check.
+        This is the performance-critical path. If a pre-staged order exists,
+        fires it INSTANTLY (no computation needed). Otherwise falls back to
+        running the strategy check with pre-computed signals.
 
-        Target: complete execution in under 500ms from candle close detection.
+        Target: complete execution in under 50ms from candle close detection.
         """
         execution_start = time.time()
 
-        self.dashboard.set_signal_status("CANDLE CLOSE - Checking entry...")
+        # FASTEST PATH: Fire pre-staged order if available
+        prestaged = self.tick_monitor.get_prestaged_order()
+        if prestaged is not None and prestaged.is_valid:
+            self._fire_prestaged_order(prestaged, execution_start)
+            return
 
-        # Use pre-computed 4H and 15M data if available (saves ~200ms)
+        # FAST PATH: Use pre-computed 4H and 15M data, only fetch 1M
         cached = self.tick_monitor.get_cached_dataframes()
 
         if cached is not None:
-            # Fast path: only fetch fresh 1M data
             df_1m = self.data_feed.get_1m_data()
             if df_1m is None:
                 self.logger.warning("Failed to fetch 1M data on candle close")
@@ -301,40 +335,166 @@ class LiveTrader:
                 f"{mt5_config.MAX_EXECUTION_DELAY_MS}ms"
             )
 
+    def _fire_prestaged_order(self, prestaged, execution_start: float):
+        """
+        Fire a pre-staged order with zero computation delay.
+
+        The order parameters were already calculated when the system
+        became ARMED. This just sends the order to MT5.
+
+        Args:
+            prestaged: PreStagedOrder object with order parameters.
+            execution_start: Time when execution started (for latency tracking).
+        """
+        self.logger.info(
+            f"FIRING PRE-STAGED ORDER: {prestaged.direction.upper()} "
+            f"{prestaged.volume} lots"
+        )
+
+        # Send order immediately
+        result = self.connection.send_order(
+            direction=prestaged.direction,
+            volume=prestaged.volume,
+            stop_loss=prestaged.stop_loss,
+            take_profit=prestaged.take_profit,
+            comment=prestaged.comment,
+        )
+
+        total_execution_ms = (time.time() - execution_start) * 1000
+
+        if result.success:
+            # Store original risk for trailing stop
+            sl_distance = abs(prestaged.entry_price_reference - prestaged.stop_loss)
+            if result.ticket is not None and sl_distance > 0:
+                self._original_risk[result.ticket] = sl_distance
+
+            self.dashboard.set_signal_status(
+                f"FILLED: {prestaged.direction.upper()} {prestaged.volume} lots, "
+                f"#{result.ticket} ({total_execution_ms:.0f}ms)"
+            )
+            self.logger.info(
+                f"Pre-staged order executed in {total_execution_ms:.0f}ms: "
+                f"{prestaged.direction.upper()} {prestaged.volume} lots @ {result.price:.5f}, "
+                f"Ticket #{result.ticket}"
+            )
+        else:
+            self.logger.error(
+                f"Pre-staged order failed after {total_execution_ms:.0f}ms: "
+                f"{result.error_message}"
+            )
+            self.dashboard.set_signal_status(f"Order failed: {result.error_message[:30]}")
+
+        # Invalidate the pre-staged order after attempt
+        self.tick_monitor.invalidate_prestaged_order()
+
     def _between_candles(self):
         """
-        COLD PATH: Called when no new candle has closed.
+        COLD PATH: Called periodically (~every 30s) when no new candle has closed.
 
-        Uses idle time to pre-compute signals so the hot path is fast.
-        Also monitors tick prices for rectangle zone awareness.
+        Uses idle time to pre-compute signals and pre-stage orders
+        so the hot path is as fast as possible.
         """
-        now = time.time()
+        # Pre-compute direction and weakness signals
+        self.tick_monitor.precompute_signals()
 
-        # Pre-compute direction and weakness signals periodically
-        if now - self._last_precompute_time > self._precompute_interval:
-            self.tick_monitor.precompute_signals()
-            self._last_precompute_time = now
-
-            # Update dashboard with signal state
-            state = self.tick_monitor.signal_state
-            if state == SignalState.ARMED:
-                precomputed = self.tick_monitor.get_precomputed_signals()
-                weakness = precomputed.weakness_signal
-                if weakness is not None:
-                    self.dashboard.set_signal_status(
-                        f"ARMED [{weakness.rectangle_bottom:.2f}-"
-                        f"{weakness.rectangle_top:.2f}]"
-                    )
-                else:
-                    self.dashboard.set_signal_status("ARMED - Ready for entry")
-            elif state == SignalState.SCANNING:
-                self.dashboard.set_signal_status("Scanning 15M weakness...")
+        # Update dashboard with signal state
+        state = self.tick_monitor.signal_state
+        if state == SignalState.ARMED:
+            precomputed = self.tick_monitor.get_precomputed_signals()
+            weakness = precomputed.weakness_signal
+            if weakness is not None:
+                self.dashboard.set_signal_status(
+                    f"ARMED [{weakness.rectangle_bottom:.2f}-"
+                    f"{weakness.rectangle_top:.2f}]"
+                )
             else:
-                self.dashboard.set_signal_status("Idle - Waiting for 4H direction")
+                self.dashboard.set_signal_status("ARMED - Ready for entry")
 
-        # Tick-level rectangle zone monitoring (when ARMED)
-        if self.tick_monitor.is_armed:
-            self._monitor_rectangle_zone()
+            # Pre-stage order when ARMED (so hot path just fires it)
+            if mt5_config.PRE_STAGE_ORDERS:
+                self._prestage_order()
+        elif state == SignalState.SCANNING:
+            self.dashboard.set_signal_status("Scanning 15M weakness...")
+        else:
+            self.dashboard.set_signal_status("Idle - Waiting for 4H direction")
+
+    def _prestage_order(self):
+        """
+        Pre-stage an order when ARMED so it can fire instantly on trigger.
+
+        Calculates lot size, SL, TP based on current account state and
+        pre-computed weakness signal. The order dict is stored in the
+        tick monitor, ready to fire with zero computation on candle close.
+        """
+        # Skip if already have a valid pre-staged order
+        existing = self.tick_monitor.get_prestaged_order()
+        if existing is not None:
+            return
+
+        precomputed = self.tick_monitor.get_precomputed_signals()
+        if precomputed.weakness_signal is None or precomputed.direction_signal is None:
+            return
+
+        # Get account info for lot size calculation
+        account_info = self.connection.get_account_info()
+        if account_info is None:
+            return
+
+        # Check if we can trade
+        positions = self.connection.get_open_positions()
+        can_trade, reason = self.risk_manager.can_trade(
+            current_equity=account_info["equity"],
+            open_positions_count=len(positions),
+        )
+        if not can_trade:
+            return
+
+        # Get symbol info for lot size calculation
+        symbol_info = self.connection.get_symbol_info()
+        if symbol_info is None:
+            return
+
+        # Determine direction and entry parameters from pre-computed signals
+        direction_signal = precomputed.direction_signal
+        weakness_signal = precomputed.weakness_signal
+
+        direction = "buy" if direction_signal.direction == "bullish" else "sell"
+
+        # Use rectangle boundaries for SL/TP estimation
+        rect_top = weakness_signal.rectangle_top
+        rect_bottom = weakness_signal.rectangle_bottom
+        rect_height = rect_top - rect_bottom
+
+        if direction == "buy":
+            entry_ref = rect_top  # Breakout above
+            sl = rect_bottom  # SL below rectangle
+            tp = rect_top + (rect_height * mt5_config.TARGET_RR_RATIO)
+        else:
+            entry_ref = rect_bottom  # Breakout below
+            sl = rect_top  # SL above rectangle
+            tp = rect_bottom - (rect_height * mt5_config.TARGET_RR_RATIO)
+
+        sl_distance = abs(entry_ref - sl)
+        if sl_distance <= 0:
+            return
+
+        # Calculate lot size
+        lot_size = self.risk_manager.calculate_lot_size(
+            account_equity=account_info["equity"],
+            stop_loss_distance=sl_distance,
+            symbol_point=symbol_info.get("point", 0.01),
+            symbol_trade_tick_value=symbol_info.get("trade_tick_value", 1.0),
+        )
+
+        # Stage the order
+        self.tick_monitor.stage_order(
+            direction=direction,
+            volume=lot_size,
+            stop_loss=sl,
+            take_profit=tp,
+            comment=f"CCT_{direction_signal.direction[:4]}_prestaged",
+            entry_price_reference=entry_ref,
+        )
 
     def _monitor_rectangle_zone(self):
         """
@@ -366,7 +526,8 @@ class LiveTrader:
         """
         Tasks that run periodically (every ~10 seconds), not on every tick.
 
-        Includes position management, reconciliation, and dashboard updates.
+        Includes position management, reconciliation, and logging.
+        Note: Dashboard display is handled separately by _update_giant_pnl_display().
         """
         # Manage existing positions (trailing stop)
         data = self.tick_monitor.get_cached_dataframes()
@@ -376,8 +537,49 @@ class LiveTrader:
         # Reconcile closed positions
         self._reconcile_closed_positions()
 
-        # Update dashboard
-        self._update_dashboard()
+    def _update_giant_pnl_display(self):
+        """
+        Update the giant ASCII art PnL display in the terminal.
+
+        Called every DISPLAY_UPDATE_MS (100ms) for smooth real-time updates.
+        The giant PnL number is the primary visual - fills the terminal.
+        """
+        try:
+            # Get account info for display
+            account_info = self.connection.get_account_info()
+            if account_info is None:
+                return
+
+            # Get positions for PnL
+            positions = self.connection.get_open_positions()
+            daily_stats = self.risk_manager.get_daily_stats()
+
+            # Get current spread
+            tick = self.data_feed.get_latest_tick()
+            spread = 0
+            if tick:
+                spread = int((tick["ask"] - tick["bid"]) / 0.01)  # Convert to points
+
+            # Get signal state
+            signal_state = self.tick_monitor.signal_state.value.upper()
+
+            # Floating PnL (unrealized)
+            float_pnl = account_info.get("profit", 0.0)
+
+            # Render the giant display
+            self.pnl_display.render(
+                pnl=float_pnl,
+                balance=account_info.get("balance", 0.0),
+                equity=account_info.get("equity", 0.0),
+                spread=spread,
+                signal_state=signal_state,
+                positions_count=len(positions) if positions else 0,
+                daily_pnl=daily_stats.get("pnl", 0.0) if daily_stats else 0.0,
+                daily_trades=daily_stats.get("trade_count", 0) if daily_stats else 0,
+            )
+        except Exception as e:
+            # Display errors should never crash the trading loop
+            self.logger.debug(f"Display update error: {e}")
 
     def _run_strategy(self, data: Dict[str, Any]) -> List[TradeSetup]:
         """
@@ -668,18 +870,6 @@ class LiveTrader:
             # Keep only the most recent 250 entries
             self._reconciled_deals = set(list(self._reconciled_deals)[-250:])
 
-    def _update_dashboard(self):
-        """Update the console dashboard with current state."""
-        account_info = self.connection.get_account_info()
-        positions = self.connection.get_open_positions()
-        daily_stats = self.risk_manager.get_daily_stats()
-
-        self.dashboard.update(
-            account_info=account_info,
-            positions=positions,
-            daily_stats=daily_stats,
-        )
-
     def _handle_shutdown(self, signum, frame):
         """Handle SIGINT/SIGTERM for graceful shutdown."""
         self.logger.info(f"Shutdown signal received (signal {signum})")
@@ -688,6 +878,7 @@ class LiveTrader:
     def _shutdown(self):
         """Clean up resources on shutdown."""
         self.logger.info("Shutting down Live Trader...")
+        self.pnl_display.cleanup()
         self.connection.disconnect()
         self.logger.info("Live Trader stopped.")
         print("\n\nCCT Rectangle Bot stopped. Goodbye.")
@@ -696,11 +887,12 @@ class LiveTrader:
 def main():
     """Entry point for the live trader."""
     print("=" * 60)
-    print("  CCT Rectangle Bot - Live MT5 Trader (REAL-TIME)")
+    print("  CCT Rectangle Bot - Live MT5 Trader (ZERO-DELAY)")
     print("=" * 60)
     print()
-    print(f"  Mode: Real-time tick monitoring")
-    print(f"  Loop interval: {mt5_config.POLL_INTERVAL_SECONDS}s")
+    print(f"  Mode: Zero-delay continuous spin loop")
+    print(f"  Tick loop: {mt5_config.TICK_LOOP_SLEEP_MS}ms sleep")
+    print(f"  Display update: {mt5_config.DISPLAY_UPDATE_MS}ms")
     print(f"  Execution target: <{mt5_config.MAX_EXECUTION_DELAY_MS}ms")
     print()
 

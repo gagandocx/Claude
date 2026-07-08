@@ -1,15 +1,16 @@
 """
-MT5 Tick Monitor - Real-Time Tick Stream Processing.
+MT5 Tick Monitor - Zero-Delay Tick Stream Processing.
 
 Handles:
-- Real-time tick monitoring and candle close detection
+- Continuous tick monitoring with spin loop (10ms sleep max)
+- Candle close detection by comparing tick timestamps to minute boundaries
 - Pre-computation of direction and weakness signals between candle closes
 - Signal readiness state management (IDLE -> SCANNING -> ARMED)
-- Instant execution trigger when new 1M candle closes
+- Pre-staged order preparation when ARMED for instant fire on trigger
+- Tick-level breakout detection for rectangle boundaries
 
-The goal: when a 1M candle closes, the direction and weakness signals
-are already computed. Only the rectangle entry check needs to run,
-achieving signal-to-execution time under 500ms.
+The goal: when a 1M candle closes OR price breaks the rectangle boundary,
+the order is already pre-built and fires in under 50ms.
 """
 
 import time
@@ -52,25 +53,49 @@ class PreComputedSignals:
     state: SignalState = SignalState.IDLE
 
 
+@dataclass
+class PreStagedOrder:
+    """
+    Pre-built order request ready to fire instantly on trigger.
+
+    When the system is ARMED and a rectangle boundary is identified,
+    the order parameters are pre-computed so that on trigger (candle close
+    or breakout tick), we only need to call mt5.order_send() with no
+    additional computation.
+    """
+    direction: Optional[str] = None  # "buy" or "sell"
+    volume: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    comment: str = ""
+    staged_at: float = 0.0
+    entry_price_reference: float = 0.0  # For detecting if price moved too far
+    is_valid: bool = False
+
+
 class TickMonitor:
     """
-    Real-time tick stream processor for CCT Rectangle Bot.
+    Zero-delay tick stream processor for CCT Rectangle Bot.
 
-    Monitors the tick stream to:
-    1. Detect the exact moment a new 1M candle closes
+    Monitors the tick stream continuously (spin loop with 10ms sleep) to:
+    1. Detect the exact moment a new 1M candle closes (by tick timestamp)
     2. Pre-compute direction (4H) and weakness (15M) signals
        between candle closes so only the entry check runs at close time
-    3. Track signal readiness state for instant execution
+    3. Pre-stage orders when ARMED so execution is instant
+    4. Detect tick-level breakouts of rectangle boundaries
 
     Usage:
         monitor = TickMonitor(data_feed, logger)
         monitor.start()
 
-        # In main loop (every ~1 second):
+        # In continuous spin loop (every ~10ms):
         new_candle = monitor.check_candle_close()
         if new_candle:
             # Execute immediately - signals are pre-computed
             signals = monitor.get_precomputed_signals()
+
+        # Check for pre-staged order trigger
+        staged = monitor.get_prestaged_order()
     """
 
     def __init__(
@@ -91,13 +116,19 @@ class TickMonitor:
         # Candle close detection state
         self._last_1m_candle_time: Optional[int] = None  # Unix timestamp of last known 1M bar
         self._last_tick_time: float = 0.0
+        self._last_tick_time_msc: int = 0  # Millisecond timestamp for dedup
 
         # Pre-computed signals cache
         self._signals = PreComputedSignals()
 
+        # Pre-staged order (ready to fire instantly)
+        self._prestaged_order = PreStagedOrder()
+
         # Performance tracking
         self._last_candle_close_detected_at: float = 0.0
         self._candle_close_count: int = 0
+        self._tick_count: int = 0
+        self._new_tick_count: int = 0
 
     @property
     def signal_state(self) -> SignalState:
@@ -140,8 +171,12 @@ class TickMonitor:
         """
         Check if a new 1M candle has closed since last check.
 
-        Uses the tick timestamp and candle data to detect the exact moment
-        a new 1M bar appears, indicating the previous bar has closed.
+        Uses tick timestamp to detect minute boundaries. When the tick's
+        minute changes (e.g., from XX:01 to XX:02), the previous 1M candle
+        has closed. This is faster than fetching candle data every cycle.
+
+        In the spin loop this is called every ~10ms, so detection latency
+        is at most 10ms after the tick arrives at the new minute.
 
         Returns:
             True if a new 1M candle has just closed, False otherwise.
@@ -151,42 +186,49 @@ class TickMonitor:
         if tick is None:
             return False
 
-        # Check if tick is stale
+        # Deduplicate: skip if same tick (same time_msc)
+        tick_time_msc = tick.get("time_msc", 0)
         tick_time = tick.get("time", 0)
+
+        if tick_time_msc > 0 and tick_time_msc == self._last_tick_time_msc:
+            return False  # Same tick, no need to check
+
+        self._tick_count += 1
+
+        # Track new ticks (different timestamp)
+        if tick_time_msc > self._last_tick_time_msc:
+            self._new_tick_count += 1
+        self._last_tick_time_msc = tick_time_msc
+
+        # Check if tick is stale
         now = time.time()
         if now - tick_time > mt5_config.TICK_STALE_THRESHOLD_SECONDS:
-            self.logger.debug("Tick is stale, skipping candle close check")
             return False
 
         self._last_tick_time = tick_time
 
-        # Fetch latest 1M candle(s) to check for new bar
-        latest_candles = self.data_feed.get_latest_1m_candle()
-        if latest_candles is None or len(latest_candles) < 1:
-            return False
+        # Detect minute boundary crossing using tick timestamp
+        # The 1M candle for minute M closes when tick time enters minute M+1
+        current_minute = tick_time // 60  # Integer minute from tick time
 
-        # Get the timestamp of the most recent candle
-        current_candle_time = int(latest_candles.index[-1].timestamp())
-
-        # Compare with our stored reference
         if self._last_1m_candle_time is None:
-            # First check - just store the reference
-            self._last_1m_candle_time = current_candle_time
+            # First check - store reference
+            self._last_1m_candle_time = current_minute
             return False
 
-        if current_candle_time > self._last_1m_candle_time:
-            # New candle detected - the previous candle has closed
+        if current_minute > self._last_1m_candle_time:
+            # New minute boundary crossed - previous 1M candle has closed
             detection_time = time.time()
             self._last_candle_close_detected_at = detection_time
             self._candle_close_count += 1
 
             self.logger.info(
-                f"New 1M candle detected! Previous bar closed. "
-                f"New bar time: {datetime.fromtimestamp(current_candle_time, tz=timezone.utc)}"
+                f"New 1M candle closed! Minute boundary: {self._last_1m_candle_time} -> {current_minute} "
+                f"(detected in {(detection_time - tick_time) * 1000:.1f}ms after tick)"
             )
 
             # Update reference
-            self._last_1m_candle_time = current_candle_time
+            self._last_1m_candle_time = current_minute
             return True
 
         return False
@@ -303,6 +345,8 @@ class TickMonitor:
             "candle_closes_detected": self._candle_close_count,
             "last_candle_close_at": self._last_candle_close_detected_at,
             "last_tick_time": self._last_tick_time,
+            "tick_count": self._tick_count,
+            "new_tick_count": self._new_tick_count,
             "direction_cached": self._signals.direction_signal is not None,
             "weakness_cached": self._signals.weakness_signal is not None,
             "direction_age_s": (
@@ -313,7 +357,107 @@ class TickMonitor:
                 time.time() - self._signals.weakness_computed_at
                 if self._signals.weakness_computed_at > 0 else -1
             ),
+            "prestaged_order_valid": self._prestaged_order.is_valid,
+            "prestaged_direction": self._prestaged_order.direction,
         }
+
+    def stage_order(
+        self,
+        direction: str,
+        volume: float,
+        stop_loss: float,
+        take_profit: float,
+        comment: str = "",
+        entry_price_reference: float = 0.0,
+    ):
+        """
+        Pre-stage an order for instant execution on trigger.
+
+        When ARMED, the system pre-builds the order parameters so that
+        on trigger (candle close confirms breakout), we just fire it
+        with no computation delay.
+
+        Args:
+            direction: "buy" or "sell"
+            volume: Lot size
+            stop_loss: Stop loss price
+            take_profit: Take profit price
+            comment: Order comment
+            entry_price_reference: Reference price for staleness check
+        """
+        self._prestaged_order = PreStagedOrder(
+            direction=direction,
+            volume=volume,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            comment=comment,
+            staged_at=time.time(),
+            entry_price_reference=entry_price_reference,
+            is_valid=True,
+        )
+        self.logger.info(
+            f"Order pre-staged: {direction.upper()} {volume} lots, "
+            f"SL={stop_loss:.5f}, TP={take_profit:.5f}"
+        )
+
+    def get_prestaged_order(self) -> Optional[PreStagedOrder]:
+        """
+        Get the pre-staged order if valid and not stale.
+
+        Orders are considered stale after 120 seconds (2 minutes)
+        since market conditions may have changed.
+
+        Returns:
+            PreStagedOrder if valid, None otherwise.
+        """
+        if not self._prestaged_order.is_valid:
+            return None
+
+        # Check staleness (120 seconds max)
+        age = time.time() - self._prestaged_order.staged_at
+        if age > 120:
+            self._prestaged_order.is_valid = False
+            self.logger.debug("Pre-staged order expired (>120s)")
+            return None
+
+        return self._prestaged_order
+
+    def invalidate_prestaged_order(self):
+        """Invalidate the pre-staged order (e.g., after execution or conditions change)."""
+        self._prestaged_order.is_valid = False
+        self._prestaged_order.direction = None
+
+    def check_breakout_tick(self, rectangle_top: float, rectangle_bottom: float) -> Optional[str]:
+        """
+        Check if the current tick has broken through a rectangle boundary.
+
+        This is the tick-level breakout detection for instant execution.
+        When price breaks through and system is ARMED, the pre-staged
+        order can be fired immediately on the next candle close confirmation.
+
+        Args:
+            rectangle_top: Upper boundary of the rectangle.
+            rectangle_bottom: Lower boundary of the rectangle.
+
+        Returns:
+            'bullish_breakout' if price broke above top,
+            'bearish_breakout' if price broke below bottom,
+            None if no breakout.
+        """
+        tick = self.data_feed.get_latest_tick()
+        if tick is None:
+            return None
+
+        bid = tick["bid"]
+        ask = tick["ask"]
+
+        # Use ask for bullish breakout (buying), bid for bearish (selling)
+        if ask > rectangle_top:
+            return "bullish_breakout"
+        elif bid < rectangle_bottom:
+            return "bearish_breakout"
+
+        return None
 
     def _precompute_direction(self):
         """

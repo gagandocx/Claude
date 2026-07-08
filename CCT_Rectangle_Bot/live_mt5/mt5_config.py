@@ -91,23 +91,26 @@ ALLOW_ASIA_SESSION = False
 ASIA_SESSION = {"start": 0, "end": 8}
 
 # =============================================================================
-# POLLING & TIMING
+# POLLING & TIMING - ZERO DELAY MODE
 # =============================================================================
 
-POLL_INTERVAL_SECONDS = 1       # Main loop tick interval (1 second for real-time)
+POLL_INTERVAL_SECONDS = 0       # Zero - continuous spin loop (no polling delay)
+TICK_LOOP_SLEEP_MS = 10         # 10ms between tick checks (spin loop sleep)
+DISPLAY_UPDATE_MS = 100         # Refresh giant PnL display every 100ms
 RECONNECT_MAX_RETRIES = 5       # Max reconnection attempts
 RECONNECT_BASE_DELAY = 2        # Base delay for exponential backoff (seconds)
 RECONNECT_MAX_DELAY = 60        # Maximum delay between reconnection attempts
 
 # =============================================================================
-# TICK MONITORING & REAL-TIME SETTINGS
+# TICK MONITORING & REAL-TIME SETTINGS - ZERO DELAY
 # =============================================================================
 
 TICK_MONITORING_ENABLED = True         # Enable real-time tick monitoring
-CANDLE_CLOSE_DETECTION_MS = 100        # Check for candle close every 100ms internally
+CANDLE_CLOSE_DETECTION_MS = 10         # Check for candle close every 10ms (spin loop)
 PRE_COMPUTE_SIGNALS = True             # Pre-compute direction+weakness between candle closes
-MAX_EXECUTION_DELAY_MS = 500           # Target: signal-to-execution under 500ms
+MAX_EXECUTION_DELAY_MS = 50            # Target: signal-to-execution under 50ms
 TICK_STALE_THRESHOLD_SECONDS = 5       # Consider tick stale if older than this
+PRE_STAGE_ORDERS = True                # Pre-build order request when ARMED for instant fire
 
 # Pre-computation cache durations (seconds)
 DIRECTION_CACHE_SECONDS = 14400        # 4H direction signal rarely changes (4 hours)

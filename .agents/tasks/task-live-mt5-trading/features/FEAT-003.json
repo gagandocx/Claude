@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Zero-delay execution with continuous spin loop (10ms max sleep) and giant floating PnL display using pyfiglet ASCII art",
+  "status": "in_progress",
+  "steps": [
+    "Update mt5_config.py: POLL_INTERVAL_SECONDS=0, TICK_LOOP_SLEEP_MS=10, DISPLAY_UPDATE_MS=100, MAX_EXECUTION_DELAY_MS=50",
+    "Create pnl_display.py: Giant ASCII PnL display using pyfiglet with ANSI colors (green/red/white), status line below",
+    "Update mt5_tick_monitor.py: Support pre-staged orders when ARMED, detect tick-level breakouts for instant fire",
+    "Update mt5_trader.py: Continuous spin loop with 10ms sleep, integrate giant PnL display, pre-stage orders when ARMED, fire instantly on trigger",
+    "Update requirements.txt: Add pyfiglet and colorama"
+  ],
+  "acceptance_criteria": [
+    "mt5_config.py has POLL_INTERVAL_SECONDS = 0",
+    "mt5_config.py has TICK_LOOP_SLEEP_MS = 10",
+    "mt5_config.py has DISPLAY_UPDATE_MS = 100",
+    "mt5_config.py has MAX_EXECUTION_DELAY_MS = 50",
+    "pnl_display.py exists with GiantPnLDisplay class using pyfiglet",
+    "pnl_display.py uses ANSI escape codes for green/red/white coloring",
+    "pnl_display.py renders PnL filling terminal width",
+    "mt5_trader.py uses continuous spin loop with time.sleep(0.01) max",
+    "mt5_trader.py has NO time.sleep(1) or time.sleep(60) in hot path",
+    "mt5_trader.py integrates giant PnL display updating every 100ms",
+    "mt5_trader.py pre-stages orders when ARMED and fires instantly on trigger",
+    "requirements.txt includes pyfiglet and colorama",
+    "All Python files have valid syntax"
+  ],
+  "verification": [
+    "Run: python -c \"import ast; [ast.parse(open(f'CCT_Rectangle_Bot/live_mt5/{f}').read()) for f in ['mt5_config.py','mt5_trader.py','mt5_tick_monitor.py','pnl_display.py']]\" to verify syntax",
+    "Run: grep 'POLL_INTERVAL_SECONDS = 0' CCT_Rectangle_Bot/live_mt5/mt5_config.py",
+    "Run: grep 'TICK_LOOP_SLEEP_MS' CCT_Rectangle_Bot/live_mt5/mt5_config.py",
+    "Run: grep 'pyfiglet' CCT_Rectangle_Bot/live_mt5/requirements.txt",
+    "Run: grep 'colorama' CCT_Rectangle_Bot/live_mt5/requirements.txt"
+  ],
+  "blocked_reason": null,
+  "findings": null
+}
