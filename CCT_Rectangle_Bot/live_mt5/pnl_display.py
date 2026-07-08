@@ -16,7 +16,9 @@ to home position and overwrites all content. No scrolling.
 import os
 import sys
 import time
-from typing import Optional, Any
+from typing import Optional, Any, List
+
+import mt5_config
 
 try:
     import pyfiglet
@@ -229,6 +231,11 @@ class GiantPnLDisplay:
             profile_name=profile_name,
         ))
 
+        # Settings lines: compact risk/profile parameters
+        lines.append(f"{DIM}{'-' * self._terminal_width}{RESET_COLOR}")
+        for settings_line in self._build_settings_lines():
+            lines.append(settings_line)
+
         # Bottom separator
         lines.append(f"{DIM}{'=' * self._terminal_width}{RESET_COLOR}")
 
@@ -420,6 +427,58 @@ class GiantPnLDisplay:
         ]
 
         return "  |".join(parts)
+
+    def _build_settings_lines(self) -> List[str]:
+        """
+        Build compact settings lines showing the active profile's risk parameters.
+
+        Reads values directly from mt5_config module (which has the active
+        profile already applied).
+
+        Returns:
+            List of 2 formatted strings showing risk settings.
+        """
+        # Line 1: Risk | RR | Lot | Trailing | Symbol
+        risk_pct = int(mt5_config.RISK_PER_TRADE * 100)
+        rr = f"{mt5_config.MIN_RR_RATIO:.0f}:1" if mt5_config.MIN_RR_RATIO == int(mt5_config.MIN_RR_RATIO) else f"{mt5_config.MIN_RR_RATIO}:1"
+        lot = f"{mt5_config.LOT_SIZE:.2f}"
+
+        if mt5_config.USE_TRAILING_STOP:
+            trail = f"ON ({mt5_config.TRAILING_STOP_ACTIVATION_RR:.0f}R/{mt5_config.TRAILING_STOP_DISTANCE_RR:.1f}R)"
+        else:
+            trail = "OFF"
+
+        symbol = mt5_config.SYMBOL
+
+        line1_parts = [
+            f"  {CYAN}Risk:{RESET_COLOR} {risk_pct}%",
+            f"  {CYAN}RR:{RESET_COLOR} {rr}",
+            f"  {CYAN}Lot:{RESET_COLOR} {lot}",
+            f"  {CYAN}Trail:{RESET_COLOR} {trail}",
+            f"  {CYAN}{symbol}{RESET_COLOR}",
+        ]
+        line1 = "  |".join(line1_parts)
+
+        # Line 2: Daily Limit | Max DD | Trades/day | Concurrent | Sessions
+        daily_limit = int(mt5_config.MAX_DAILY_LOSS_PCT * 100)
+        max_dd = int(mt5_config.MAX_DRAWDOWN_PCT * 100)
+        max_trades = mt5_config.MAX_TRADES_PER_DAY
+        concurrent = mt5_config.MAX_CONCURRENT_TRADES
+
+        sessions = "LDN+NY"
+        if mt5_config.ALLOW_ASIA_SESSION:
+            sessions = "LDN+NY+ASIA"
+
+        line2_parts = [
+            f"  {CYAN}Daily Limit:{RESET_COLOR} {daily_limit}%",
+            f"  {CYAN}Max DD:{RESET_COLOR} {max_dd}%",
+            f"  {CYAN}Trades:{RESET_COLOR} {max_trades}/day",
+            f"  {CYAN}Concurrent:{RESET_COLOR} {concurrent}",
+            f"  {CYAN}Sessions:{RESET_COLOR} {sessions}",
+        ]
+        line2 = "  |".join(line2_parts)
+
+        return [line1, line2]
 
     def cleanup(self):
         """Restore terminal state on shutdown."""
