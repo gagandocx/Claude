@@ -2,7 +2,7 @@
   "id": "FEAT-004",
   "type": "feat",
   "description": "Dynamic profile name display - show actual active profile in PnL display instead of hardcoded SMART-HYBRID",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Update pnl_display.py: Add profile_name parameter to render() method, replace hardcoded SMART-HYBRID in _build_detail_line with dynamic profile_name, replace hardcoded Smart Hybrid Mode in footer with dynamic profile name",
     "Update mt5_trader.py: Call mt5_config.reload_active_profile() on every display refresh, pass mt5_config.ACTIVE_PROFILE_DISPLAY to pnl_display.render() as profile_name parameter"
@@ -21,5 +21,5 @@
     "Run: grep 'reload_active_profile' CCT_Rectangle_Bot/live_mt5/mt5_trader.py to verify reload call"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "Both files pass ast.parse and import cleanly. Added profile_name param with default 'SMART-HYBRID' for backward compatibility. mt5_config.reload_active_profile() is called every 1s display refresh cycle so profile .bat switches appear within 1 second."
 }
