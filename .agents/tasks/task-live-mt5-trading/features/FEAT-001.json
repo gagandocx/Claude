@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Create the complete live MT5 trading system with all required modules: mt5_config.py, mt5_connector.py, mt5_data_feed.py, risk_manager.py, logger_setup.py, dashboard.py, mt5_trader.py, requirements.txt, and README_LIVE_TRADING.md",
-  "status": "completed",
+  "status": "in_progress",
   "steps": [
     "Create CCT_Rectangle_Bot/live_mt5/__init__.py as an empty init file",
     "Create CCT_Rectangle_Bot/live_mt5/mt5_config.py with: MT5 credentials (account, password, server as placeholders), trading settings (symbol XAUUSD, lot_size 0.01, CONSERVATIVE risk 1-2%), timeframe settings matching parent config (4H/15M/1M), safety limits (max_daily_loss_pct=3%, max_trades_per_day=5, max_drawdown_pct=5%), trading hours filter (London and NY sessions), trailing stop settings (activation at 3R, trail distance 2.5R), and a DEMO_MODE=True flag",

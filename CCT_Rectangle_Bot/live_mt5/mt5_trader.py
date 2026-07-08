@@ -7,8 +7,9 @@ This is the main orchestration module that:
 3. Runs the CCT Rectangle Strategy
 4. Executes trades via MT5 when signals are found
 5. Manages open positions (trailing stop logic)
-6. Displays status via console dashboard
-7. Handles graceful shutdown on SIGINT
+6. Reconciles closed positions to update risk manager stats
+7. Displays status via console dashboard
+8. Handles graceful shutdown on SIGINT
 """
 
 import sys
@@ -19,8 +20,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-# Add parent directory to path so we can import strategy classes
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to path so we can import strategy classes.
+# This makes CCT_Rectangle_Bot/ importable (for strategy, config, utils).
+_parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
 import mt5_config
 from logger_setup import setup_logger
@@ -30,12 +34,7 @@ from risk_manager import RiskManager
 from dashboard import Dashboard
 
 # Import strategy classes from parent CCT_Rectangle_Bot
-try:
-    from strategy import CCTRectangleStrategy, TradeSetup
-except ImportError:
-    # Fallback: try relative import
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    from strategy import CCTRectangleStrategy, TradeSetup
+from strategy import CCTRectangleStrategy, TradeSetup
 
 
 class LiveTrader:
@@ -62,6 +61,11 @@ class LiveTrader:
         self._running: bool = False
         self._last_signal_time: Optional[datetime] = None
         self._executed_signals: List[str] = []  # Track signal IDs to avoid duplicates
+        self._reconciled_deals: set = set()  # Track deals already reconciled
+
+        # Store the original entry risk for each position (ticket -> risk distance)
+        # This prevents trailing stop drift when SL has been modified.
+        self._original_risk: Dict[int, float] = {}
 
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -153,7 +157,8 @@ class LiveTrader:
         3. Run strategy
         4. Execute new signals
         5. Manage positions
-        6. Update dashboard
+        6. Reconcile closed positions
+        7. Update dashboard
         """
         self.logger.info(
             f"Main loop started. Polling every {mt5_config.POLL_INTERVAL_SECONDS} seconds."
@@ -192,7 +197,10 @@ class LiveTrader:
                 # Step 5: Manage existing positions (trailing stop)
                 self._manage_positions(data)
 
-                # Step 6: Update dashboard
+                # Step 6: Reconcile closed positions (detect SL/TP hits)
+                self._reconcile_closed_positions()
+
+                # Step 7: Update dashboard
                 self._update_dashboard()
 
                 # Wait for next cycle
@@ -232,14 +240,41 @@ class LiveTrader:
         """
         Process new trade signals. Execute if risk manager approves.
 
+        Only acts on signals whose entry_time is within the last few bars
+        of the entry timeframe (1M) to avoid executing stale historical setups.
+
         Args:
             signals: List of TradeSetup objects from the strategy.
         """
-        # Get most recent signal (closest to current time)
         if not signals:
             return
 
-        latest_signal = signals[-1]
+        # Filter to recent signals only: entry_time must be within the last
+        # 5 minutes (5 bars of the 1M entry timeframe) to avoid stale execution.
+        now_utc = datetime.now(timezone.utc)
+        max_signal_age_seconds = 5 * 60  # 5 minutes
+
+        recent_signals = []
+        for sig in signals:
+            try:
+                sig_time = sig.entry_time
+                if isinstance(sig_time, str):
+                    sig_time = datetime.fromisoformat(sig_time)
+                if sig_time.tzinfo is None:
+                    sig_time = sig_time.replace(tzinfo=timezone.utc)
+                age = (now_utc - sig_time).total_seconds()
+                if age <= max_signal_age_seconds:
+                    recent_signals.append(sig)
+            except (ValueError, TypeError, AttributeError):
+                # If entry_time is not parseable, skip it
+                continue
+
+        if not recent_signals:
+            self.logger.debug("No recent signals (all older than 5 minutes)")
+            self.dashboard.set_signal_status("Scanning (signals too old)")
+            return
+
+        latest_signal = recent_signals[-1]
 
         # Create a unique signal ID to avoid duplicate execution
         signal_id = (
@@ -280,7 +315,7 @@ class LiveTrader:
             self.dashboard.set_signal_status(f"Blocked: {reason}")
             return
 
-        # Calculate lot size based on risk
+        # Calculate lot size based on risk, using broker tick value
         symbol_info = self.connection.get_symbol_info()
         if symbol_info is None:
             self.logger.warning("Cannot get symbol info for lot size calc")
@@ -292,6 +327,7 @@ class LiveTrader:
             account_equity=account_info["equity"],
             stop_loss_distance=sl_distance,
             symbol_point=symbol_info.get("point", 0.01),
+            symbol_trade_tick_value=symbol_info.get("trade_tick_value", 1.0),
         )
 
         # Execute the trade
@@ -309,6 +345,10 @@ class LiveTrader:
             # Keep only last 100 signal IDs to prevent memory growth
             if len(self._executed_signals) > 100:
                 self._executed_signals = self._executed_signals[-50:]
+
+            # Store the original risk for trailing stop calculation
+            if result.ticket is not None:
+                self._original_risk[result.ticket] = sl_distance
 
             self.dashboard.set_signal_status(
                 f"EXECUTED: {direction.upper()} {lot_size} lots, "
@@ -352,6 +392,10 @@ class LiveTrader:
         """
         Apply trailing stop logic to a single position.
 
+        Uses the originally stored risk distance (from entry to initial SL)
+        rather than the current SL, which may have been modified by prior
+        trailing stop adjustments. This prevents accelerating stop drift.
+
         Args:
             position: Position dictionary from get_open_positions().
         """
@@ -361,11 +405,17 @@ class LiveTrader:
         current_sl = position["sl"]
         current_price = position["current_price"]
 
-        # Calculate risk (distance from entry to original SL)
-        if current_sl <= 0:
-            return  # No SL set, skip
+        # Calculate original risk: prefer stored value, fall back to current SL
+        if ticket in self._original_risk:
+            risk = self._original_risk[ticket]
+        else:
+            # Position was opened before this session or risk was not recorded.
+            # Fall back to current SL distance but store it so it doesn't drift.
+            if current_sl <= 0:
+                return  # No SL set, skip
+            risk = abs(open_price - current_sl)
+            self._original_risk[ticket] = risk
 
-        risk = abs(open_price - current_sl)
         if risk <= 0:
             return
 
@@ -403,6 +453,43 @@ class LiveTrader:
                         f"(profit: {current_profit_r:.1f}R)"
                     )
                     self.connection.modify_position(ticket, stop_loss=new_sl)
+
+    def _reconcile_closed_positions(self):
+        """
+        Detect positions closed since the last cycle (by SL, TP, or manual close)
+        and record them with the risk manager so daily P&L and trade-count
+        limits remain accurate.
+        """
+        closed_deals = self.connection.get_closed_positions(
+            since_seconds=mt5_config.POLL_INTERVAL_SECONDS + 30
+        )
+        if not closed_deals:
+            return
+
+        for deal in closed_deals:
+            deal_ticket = deal.get("deal_ticket")
+            if deal_ticket in self._reconciled_deals:
+                continue  # Already processed
+
+            pnl = deal.get("profit", 0.0) + deal.get("swap", 0.0) + deal.get("commission", 0.0)
+            is_win = pnl > 0
+
+            self.risk_manager.record_trade(pnl=pnl, is_win=is_win)
+            self._reconciled_deals.add(deal_ticket)
+
+            # Clean up the original risk tracker for this position
+            pos_ticket = deal.get("ticket")
+            self._original_risk.pop(pos_ticket, None)
+
+            self.logger.info(
+                f"Closed position reconciled: Ticket #{pos_ticket}, "
+                f"P&L={pnl:+.2f}, Win={is_win}"
+            )
+
+        # Prevent unbounded growth of reconciled set
+        if len(self._reconciled_deals) > 500:
+            # Keep only the most recent 250 entries
+            self._reconciled_deals = set(list(self._reconciled_deals)[-250:])
 
     def _update_dashboard(self):
         """Update the console dashboard with current state."""

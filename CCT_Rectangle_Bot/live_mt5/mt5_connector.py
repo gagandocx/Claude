@@ -5,12 +5,14 @@ Handles:
 - MT5 terminal initialization and login
 - Market order execution (buy/sell) with SL and TP
 - Position management (get, modify, close)
+- Closed-position reconciliation (detecting fills via history)
 - Reconnection with exponential backoff
 - Proper error handling with MT5 error codes
 """
 
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
@@ -222,6 +224,7 @@ class MT5Connection:
             "volume_max": info.volume_max,
             "volume_step": info.volume_step,
             "trade_mode": info.trade_mode,
+            "trade_tick_value": info.trade_tick_value,
         }
 
     def send_order(
@@ -484,6 +487,53 @@ class MT5Connection:
 
         self.logger.info(f"Position {ticket} closed at {price:.5f}")
         return True
+
+    def get_closed_positions(self, since_seconds: int = 300) -> List[Dict[str, Any]]:
+        """
+        Get positions closed within the last N seconds (via deal history).
+
+        Uses mt5.history_deals_get() to detect positions that were closed
+        by SL, TP, or manual close since the last check.
+
+        Args:
+            since_seconds: Look back this many seconds for closed deals.
+
+        Returns:
+            List of closed-deal dictionaries with P&L information.
+        """
+        if not self.is_connected():
+            return []
+
+        now = datetime.now(timezone.utc)
+        from_time = now - timedelta(seconds=since_seconds)
+
+        deals = mt5.history_deals_get(from_time, now)
+        if deals is None or len(deals) == 0:
+            return []
+
+        closed = []
+        for deal in deals:
+            # Only include exit deals from this bot (DEAL_ENTRY_OUT = 1)
+            if deal.magic != mt5_config.MAGIC_NUMBER:
+                continue
+            if deal.entry != 1:  # 1 = DEAL_ENTRY_OUT (closing a position)
+                continue
+
+            closed.append({
+                "ticket": deal.position_id,
+                "deal_ticket": deal.ticket,
+                "symbol": deal.symbol,
+                "type": "buy" if deal.type == 0 else "sell",  # deal close type
+                "volume": deal.volume,
+                "price": deal.price,
+                "profit": deal.profit,
+                "swap": deal.swap,
+                "commission": deal.commission,
+                "time": deal.time,
+                "comment": deal.comment,
+            })
+
+        return closed
 
     def get_current_price(self, symbol: Optional[str] = None) -> Optional[Dict[str, float]]:
         """

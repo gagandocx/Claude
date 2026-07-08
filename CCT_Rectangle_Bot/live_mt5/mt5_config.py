@@ -3,16 +3,26 @@ Configuration for CCT Rectangle Bot - Live MT5 Trading.
 
 CONSERVATIVE defaults for live trading. Do NOT use backtest settings here.
 Adjust settings based on your account size and risk tolerance.
+
+Credentials are loaded from environment variables first, with fallback to
+the values defined below. Set these environment variables for security:
+    MT5_ACCOUNT_NUMBER
+    MT5_PASSWORD
+    MT5_SERVER_NAME
+    MT5_TERMINAL_PATH
 """
+
+import os
 
 # =============================================================================
 # MT5 CONNECTION CREDENTIALS
+# Prefer environment variables to avoid committing real credentials.
 # =============================================================================
 
-MT5_ACCOUNT = 12345678          # Your MT5 account number
-MT5_PASSWORD = "your_password"  # Your MT5 password
-MT5_SERVER = "YourBroker-Demo"  # Your MT5 server name (e.g., "ICMarkets-Demo")
-MT5_PATH = ""                   # Path to MT5 terminal (leave empty for default)
+MT5_ACCOUNT = int(os.environ.get("MT5_ACCOUNT_NUMBER", "12345678"))
+MT5_PASSWORD = os.environ.get("MT5_PASSWORD", "your_password")
+MT5_SERVER = os.environ.get("MT5_SERVER_NAME", "YourBroker-Demo")
+MT5_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 
 # =============================================================================
 # TRADING MODE

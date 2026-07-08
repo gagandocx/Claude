@@ -1,0 +1,13 @@
+# Do NOT commit real credentials.
+# If you edit mt5_config.py with your actual account details, ensure this
+# gitignore is active or use environment variables instead.
+
+# Log files
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Credentials override file (optional local-only config)
+mt5_credentials.env
