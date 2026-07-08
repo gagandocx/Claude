@@ -1,0 +1,2 @@
+@echo off
+start "" powershell -NoExit -Command "& {$Host.UI.RawUI.WindowTitle = 'CCT Rectangle Bot - LIVE'; Add-Type -Name Win -Namespace Native -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); [DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();'; Start-Sleep -Milliseconds 500; $hwnd = (Get-Process -Id $PID).MainWindowHandle; [Native.Win]::ShowWindow($hwnd, 3) | Out-Null; Set-Location 'F:\Automation\EA Testing\CCT_Rectangle_Bot\v1\live_mt5'; python mt5_trader.py}"
