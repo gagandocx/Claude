@@ -1,8 +1,8 @@
 {
   "task_id": "task-cct-rectangle-bot",
   "task_description": "Build a complete CCT Rectangle Trading Bot from scratch with multi-timeframe strategy (4H direction, 15M weakness, 1M entry), backtesting engine, and results output. Completely standalone, no references to existing repo code.",
-  "status": "completed",
-  "feature_order": ["FEAT-001"],
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
   "blocked_reason": null,
   "verification": {
     "build": "pass",

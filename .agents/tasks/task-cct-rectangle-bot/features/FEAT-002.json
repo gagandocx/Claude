@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Optimize CCT Rectangle Bot for maximum trade frequency and profitability - target 500%+ per month with aggressive parameters, compounding, leverage, and relaxed filters",
+  "status": "in_progress",
+  "steps": [
+    "Overhaul config.py: increase RISK_PER_TRADE to 8-10%, reduce MIN_RR_RATIO to 2:1, lower SWEEP_MIN_PIPS, reduce SWING_LOOKBACK, increase MAX_CANDLES_FOR_WEAKNESS and MAX_CANDLES_FOR_ENTRY, reduce MIN_RECTANGLE_SIZE_PIPS, disable USE_EMA_FILTER, disable CONTINUATION_ONLY, add compounding and leverage settings",
+    "Modify strategy.py: relax direction candle detection (allow partial sweeps without full engulfing), widen weakness detection window, allow multiple weakness signals per direction signal, look at more key levels",
+    "Modify backtester.py: add compounding (position size based on current equity), add leverage multiplier, allow multiple concurrent positions, add monthly return calculation",
+    "Modify main.py: update output to show monthly return, update the strategy rules display to reflect new settings"
+  ],
+  "acceptance_criteria": [
+    "Bot generates significantly more trades than the original 9",
+    "Return percentage shows 500%+ per month equivalent or close to it",
+    "Compounding is enabled (position sizes grow with equity)",
+    "Running python main.py produces trade results with statistics showing high returns",
+    "Code runs without errors"
+  ],
+  "verification": [
+    "cd /projects/sandbox/Claude/CCT_Rectangle_Bot && pip install -r requirements.txt",
+    "cd /projects/sandbox/Claude/CCT_Rectangle_Bot && python main.py"
+  ],
+  "blocked_reason": null,
+  "findings": null
+}
