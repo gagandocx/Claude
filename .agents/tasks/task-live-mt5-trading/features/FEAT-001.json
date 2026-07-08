@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the complete live MT5 trading system with all required modules: mt5_config.py, mt5_connector.py, mt5_data_feed.py, risk_manager.py, logger_setup.py, dashboard.py, mt5_trader.py, requirements.txt, and README_LIVE_TRADING.md",
+  "status": "in_progress",
+  "steps": [
+    "Create CCT_Rectangle_Bot/live_mt5/__init__.py as an empty init file",
+    "Create CCT_Rectangle_Bot/live_mt5/mt5_config.py with: MT5 credentials (account, password, server as placeholders), trading settings (symbol XAUUSD, lot_size 0.01, CONSERVATIVE risk 1-2%), timeframe settings matching parent config (4H/15M/1M), safety limits (max_daily_loss_pct=3%, max_trades_per_day=5, max_drawdown_pct=5%), trading hours filter (London and NY sessions), trailing stop settings (activation at 3R, trail distance 2.5R), and a DEMO_MODE=True flag",
+    "Create CCT_Rectangle_Bot/live_mt5/logger_setup.py with: a setup_logger() function that creates both file and console handlers, rotating file handler (10MB max, 5 backups), log to live_mt5/logs/ directory, timestamped log filenames, INFO level for file and WARNING for console by default",
+    "Create CCT_Rectangle_Bot/live_mt5/mt5_connector.py with: MT5Connection class that handles initialize/login/shutdown, methods for sending market orders (buy/sell) with SL and TP, position management (get open positions, modify SL/TP, close position), reconnection logic with exponential backoff (max 5 retries), proper error handling with MT5 error codes, and a method to check if connected",
+    "Create CCT_Rectangle_Bot/live_mt5/mt5_data_feed.py with: MT5DataFeed class that fetches OHLCV data from MT5 using copy_rates_from_pos(), methods to get 4H candles (200 bars), 15M candles (500 bars), and 1M candles (500 bars), convert MT5 numpy arrays to pandas DataFrames with columns Open/High/Low/Close/Volume and proper datetime index, handle timezone conversion to UTC",
+    "Create CCT_Rectangle_Bot/live_mt5/risk_manager.py with: RiskManager class tracking daily P&L, trade count, and drawdown. Methods: can_trade() checks all safety limits (max daily loss, max trades per day, max drawdown, trading hours), calculate_lot_size() based on account equity and risk percentage, record_trade() to update daily stats, reset_daily_stats() called at midnight, is_within_trading_hours() checking configured sessions. All limits configurable from mt5_config",
+    "Create CCT_Rectangle_Bot/live_mt5/dashboard.py with: Dashboard class that prints formatted status to console every cycle. Shows: account balance/equity/margin, open positions with P&L, today's stats (trades taken, wins, losses, P&L), current signal status (scanning/direction found/weakness detected/entry signal/etc), safety status (daily loss remaining, trades remaining), and last update timestamp. Use clear/colorless terminal formatting (box drawing, alignment)",
+    "Create CCT_Rectangle_Bot/live_mt5/mt5_trader.py with: LiveTrader class as the main orchestration loop. It imports and uses strategy classes from parent directory (sys.path manipulation to import CCT_Rectangle_Bot.strategy). Main loop: every 60 seconds fetch fresh data via MT5DataFeed, create DataFrames, instantiate CCTRectangleStrategy, call generate_signals(), if new signal found check RiskManager.can_trade(), if approved execute via MT5Connection, manage existing positions (check trailing stop logic), update Dashboard. Include graceful shutdown on SIGINT, startup validation (check MT5 connection, check symbol available, check account), and main() entry point",
+    "Create CCT_Rectangle_Bot/live_mt5/requirements.txt with: MetaTrader5>=5.0.45, pandas>=1.5.0, numpy>=1.23.0, schedule>=1.2.0, ta>=0.10.0",
+    "Create CCT_Rectangle_Bot/live_mt5/README_LIVE_TRADING.md with: complete setup guide including prerequisites (Windows 10/11, Python 3.9-3.11, MT5 terminal), step-by-step installation (install MT5 from metaquotes, create demo account, install Python deps), configuration guide (edit mt5_config.py with account details), running on demo first, switching to live, architecture overview (how strategy classes are reused), troubleshooting section (common MT5 errors, connection issues), and safety warnings about live trading risks"
+  ],
+  "acceptance_criteria": [
+    "All 9 files exist in CCT_Rectangle_Bot/live_mt5/",
+    "mt5_config.py has RISK_PER_TRADE set to 0.01 or 0.02 (conservative, NOT 0.25)",
+    "mt5_config.py has DEMO_MODE = True as default",
+    "mt5_trader.py imports strategy classes from parent CCT_Rectangle_Bot directory",
+    "mt5_trader.py has a 60-second polling loop",
+    "risk_manager.py implements max_daily_loss, max_trades_per_day, max_drawdown, and trading_hours checks",
+    "mt5_connector.py has reconnection logic with retry",
+    "All Python files have valid syntax (python -c import works with mocked MT5)",
+    "README_LIVE_TRADING.md documents Windows requirement and demo-first approach"
+  ],
+  "verification": [
+    "Run: python -c \"import ast; [ast.parse(open(f'CCT_Rectangle_Bot/live_mt5/{f}').read()) for f in ['mt5_config.py','logger_setup.py','mt5_connector.py','mt5_data_feed.py','risk_manager.py','dashboard.py','mt5_trader.py']]\" to verify all files have valid Python syntax",
+    "Run: ls CCT_Rectangle_Bot/live_mt5/ to confirm all expected files exist",
+    "Run: grep -c 'RISK_PER_TRADE' CCT_Rectangle_Bot/live_mt5/mt5_config.py to verify risk config exists",
+    "Run: grep 'DEMO_MODE' CCT_Rectangle_Bot/live_mt5/mt5_config.py to verify demo mode default"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

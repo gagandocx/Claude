@@ -1,0 +1,7 @@
+{
+  "task_id": "task-live-mt5-trading",
+  "task_description": "Create a complete live trading system for the CCT Rectangle Bot on MetaTrader 5. The system connects to MT5, fetches live candle data, runs the existing CCT Rectangle strategy in real-time, executes trades with proper risk management, and includes safety controls and a dashboard.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

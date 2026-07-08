@@ -1,0 +1,24 @@
+{
+  "project_type": "Python trading bot - CCT Rectangle Strategy with backtesting, adding live MT5 trading",
+  "language": "Python 3.11",
+  "build_system": "pip with requirements.txt",
+  "test_framework": "No formal tests - manual validation via running the bot",
+  "build_command": "pip install -r requirements.txt",
+  "test_command": "python -c \"import sys; sys.path.insert(0, 'CCT_Rectangle_Bot/live_mt5'); import mt5_config; import risk_manager; import logger_setup; import dashboard; import mt5_data_feed; import mt5_connector; import mt5_trader; print('All modules import successfully')\"",
+  "verification_instructions": "Verify all files exist, import cleanly (since MT5 is Windows-only, we validate imports with conditional MetaTrader5 import), and have proper structure",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r CCT_Rectangle_Bot/live_mt5/requirements.txt (on Windows with MT5 installed)",
+  "environment_constraints": "MetaTrader5 Python package only works on Windows. Cannot run live tests in this sandbox. Validation limited to syntax/import checks and code review.",
+  "contribution_requirements": "Files go in CCT_Rectangle_Bot/live_mt5/ directory. Use conservative defaults (1-2% risk). Reuse strategy classes from parent directory.",
+  "key_patterns": "Strategy uses DataFrames with columns: Open, High, Low, Close, Volume. DirectionDetector takes df_4h, WeaknessDetector takes df_15m, RectangleEntry takes df_1m and df_15m. CCTRectangleStrategy orchestrates all three. Config module pattern with uppercase constants. Uses dataclasses for signals and trade setups.",
+  "relevant_files": [
+    "CCT_Rectangle_Bot/strategy.py",
+    "CCT_Rectangle_Bot/config.py",
+    "CCT_Rectangle_Bot/utils.py",
+    "CCT_Rectangle_Bot/backtester.py",
+    "CCT_Rectangle_Bot/data_loader.py",
+    "CCT_Rectangle_Bot/main.py",
+    "CCT_Rectangle_Bot/requirements.txt"
+  ],
+  "directory_structure": "CCT_Rectangle_Bot/ contains the backtest bot. live_mt5/ subdirectory will contain all live trading files. Strategy classes in strategy.py (DirectionDetector, WeaknessDetector, RectangleEntry, CCTRectangleStrategy) and utilities in utils.py will be imported by the live trader."
+}

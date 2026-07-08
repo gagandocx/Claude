@@ -1,0 +1,106 @@
+"""
+Configuration for CCT Rectangle Bot - Live MT5 Trading.
+
+CONSERVATIVE defaults for live trading. Do NOT use backtest settings here.
+Adjust settings based on your account size and risk tolerance.
+"""
+
+# =============================================================================
+# MT5 CONNECTION CREDENTIALS
+# =============================================================================
+
+MT5_ACCOUNT = 12345678          # Your MT5 account number
+MT5_PASSWORD = "your_password"  # Your MT5 password
+MT5_SERVER = "YourBroker-Demo"  # Your MT5 server name (e.g., "ICMarkets-Demo")
+MT5_PATH = ""                   # Path to MT5 terminal (leave empty for default)
+
+# =============================================================================
+# TRADING MODE
+# =============================================================================
+
+DEMO_MODE = True  # ALWAYS start with True. Only set False after thorough demo testing.
+
+# =============================================================================
+# SYMBOL & TIMEFRAME CONFIGURATION
+# =============================================================================
+
+SYMBOL = "XAUUSD"         # Gold on MT5 (not GC=F which is yfinance format)
+LOT_SIZE = 0.01           # Micro lot - conservative starting size
+MAGIC_NUMBER = 20240101   # Unique identifier for this bot's orders
+
+# Timeframes (MT5 timeframe constants will be used in mt5_data_feed.py)
+TF_DIRECTION = "4h"
+TF_WEAKNESS = "15m"
+TF_ENTRY = "1m"
+
+# Number of bars to fetch for each timeframe
+BARS_4H = 200
+BARS_15M = 500
+BARS_1M = 500
+
+# =============================================================================
+# RISK MANAGEMENT - CONSERVATIVE FOR LIVE TRADING
+# =============================================================================
+
+RISK_PER_TRADE = 0.01     # 1% risk per trade (NOT 25% like backtest!)
+INITIAL_CAPITAL = None     # Will use actual account balance from MT5
+
+# RR settings (same as strategy)
+MIN_RR_RATIO = 3.0
+TARGET_RR_RATIO = 3.0
+MAX_RR_RATIO = 12.0
+
+# =============================================================================
+# SAFETY LIMITS
+# =============================================================================
+
+MAX_DAILY_LOSS_PCT = 0.03       # Stop trading if daily loss exceeds 3%
+MAX_TRADES_PER_DAY = 5          # Maximum trades allowed per day
+MAX_DRAWDOWN_PCT = 0.05         # Stop trading if drawdown exceeds 5% from peak
+MAX_CONCURRENT_TRADES = 1       # Only 1 position at a time for live
+
+# =============================================================================
+# TRAILING STOP
+# =============================================================================
+
+USE_TRAILING_STOP = True
+TRAILING_STOP_ACTIVATION_RR = 3.0   # Activate trailing stop after 3R profit
+TRAILING_STOP_DISTANCE_RR = 2.5     # Trail at 2.5R distance
+
+# =============================================================================
+# TRADING HOURS (UTC) - Only trade during active sessions
+# =============================================================================
+
+TRADING_SESSIONS = {
+    "london": {"start": 7, "end": 16},
+    "new_york": {"start": 12, "end": 21},
+}
+
+# Set to True to also allow trading during Asia session
+ALLOW_ASIA_SESSION = False
+ASIA_SESSION = {"start": 0, "end": 8}
+
+# =============================================================================
+# POLLING & TIMING
+# =============================================================================
+
+POLL_INTERVAL_SECONDS = 60      # Check for signals every 60 seconds
+RECONNECT_MAX_RETRIES = 5       # Max reconnection attempts
+RECONNECT_BASE_DELAY = 2        # Base delay for exponential backoff (seconds)
+RECONNECT_MAX_DELAY = 60        # Maximum delay between reconnection attempts
+
+# =============================================================================
+# SPREAD & SLIPPAGE
+# =============================================================================
+
+MAX_SPREAD_POINTS = 50          # Max acceptable spread in points (skip trade if exceeded)
+SLIPPAGE_POINTS = 20            # Maximum allowed slippage for order execution
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+LOG_LEVEL = "INFO"
+LOG_DIR = "logs"
+LOG_MAX_BYTES = 10 * 1024 * 1024   # 10 MB per log file
+LOG_BACKUP_COUNT = 5                # Keep 5 rotated log files
