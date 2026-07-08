@@ -158,6 +158,7 @@ class GiantPnLDisplay:
         positions_count: int = 0,
         daily_pnl: float = 0.0,
         daily_trades: int = 0,
+        profile_name: str = "SMART-HYBRID",
     ):
         """
         Render the giant PnL display to the terminal, overwriting in place.
@@ -177,6 +178,7 @@ class GiantPnLDisplay:
             positions_count: Number of open positions.
             daily_pnl: Today's realized PnL.
             daily_trades: Number of trades today.
+            profile_name: Active trading profile name (e.g. AGGRESSIVE, SAFE).
         """
         self._get_terminal_size()
 
@@ -224,13 +226,14 @@ class GiantPnLDisplay:
             positions_count=positions_count,
             daily_pnl=daily_pnl,
             daily_trades=daily_trades,
+            profile_name=profile_name,
         ))
 
         # Bottom separator
         lines.append(f"{DIM}{'=' * self._terminal_width}{RESET_COLOR}")
 
         # Footer
-        lines.append(f"{DIM}  CCT Rectangle Bot | Smart Hybrid Mode | Ctrl+C to stop{RESET_COLOR}")
+        lines.append(f"{DIM}  CCT Rectangle Bot | {profile_name} Mode | Ctrl+C to stop{RESET_COLOR}")
 
         # Build final output with in-place overwrite
         output_parts = []
@@ -400,6 +403,7 @@ class GiantPnLDisplay:
         positions_count: int,
         daily_pnl: float,
         daily_trades: int,
+        profile_name: str = "SMART-HYBRID",
     ) -> str:
         """
         Build the secondary detail line.
@@ -412,7 +416,7 @@ class GiantPnLDisplay:
             f"  {CYAN}Positions:{RESET_COLOR} {positions_count}",
             f"  {CYAN}Daily PnL:{RESET_COLOR} {daily_color}{daily_pnl:+,.2f}{RESET_COLOR}",
             f"  {CYAN}Trades:{RESET_COLOR} {daily_trades}",
-            f"  {CYAN}Mode:{RESET_COLOR} {BRIGHT_GREEN}SMART-HYBRID{RESET_COLOR}",
+            f"  {CYAN}Mode:{RESET_COLOR} {BRIGHT_GREEN}{profile_name}{RESET_COLOR}",
         ]
 
         return "  |".join(parts)

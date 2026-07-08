@@ -549,8 +549,14 @@ class LiveTrader:
         Called every DISPLAY_UPDATE_MS (1 second) and overwrites in place.
         The giant PnL number is the primary visual - fills the terminal.
         No scrolling - display stays fixed and updates values in place.
+
+        Also hot-reloads the active profile so profile switches (via .bat files)
+        are reflected within 1 second on the display.
         """
         try:
+            # Hot-reload active profile to pick up .bat profile switches instantly
+            mt5_config.reload_active_profile()
+
             # Get account info for display
             account_info = self.connection.get_account_info()
             if account_info is None:
@@ -572,7 +578,7 @@ class LiveTrader:
             # Floating PnL (unrealized)
             float_pnl = account_info.get("profit", 0.0)
 
-            # Render the giant display
+            # Render the giant display with current active profile name
             self.pnl_display.render(
                 pnl=float_pnl,
                 balance=account_info.get("balance", 0.0),
@@ -582,6 +588,7 @@ class LiveTrader:
                 positions_count=len(positions) if positions else 0,
                 daily_pnl=daily_stats.get("pnl", 0.0) if daily_stats else 0.0,
                 daily_trades=daily_stats.get("trade_count", 0) if daily_stats else 0,
+                profile_name=mt5_config.ACTIVE_PROFILE_DISPLAY,
             )
         except Exception as e:
             # Display errors should never crash the trading loop
