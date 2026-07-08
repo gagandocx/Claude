@@ -62,6 +62,14 @@ class MT5Connection:
         """
         Initialize MT5 terminal and login to account.
 
+        When USE_EXISTING_SESSION is True, only calls mt5.initialize() with no
+        arguments to attach to the already-running MT5 terminal. This avoids
+        calling mt5.login() which would force a new session and log out the
+        user's existing terminal. Connection is verified via mt5.account_info().
+
+        When USE_EXISTING_SESSION is False, performs full initialization with
+        path and login credentials (for automated/headless startup).
+
         Returns:
             True if connection successful, False otherwise.
         """
@@ -69,7 +77,41 @@ class MT5Connection:
             self.logger.error("MetaTrader5 package not available. Windows required.")
             return False
 
-        # Initialize MT5
+        if mt5_config.USE_EXISTING_SESSION:
+            # Attach to already-running MT5 terminal without login
+            if not mt5.initialize():
+                error = mt5.last_error()
+                self.logger.error(f"MT5 initialization failed (existing session): {error}")
+                return False
+
+            # Verify connection by checking account info
+            account_info = mt5.account_info()
+            if account_info is None:
+                error = mt5.last_error()
+                self.logger.error(
+                    f"MT5 initialized but no account info available: {error}. "
+                    "Is the terminal logged in?"
+                )
+                mt5.shutdown()
+                return False
+
+            self._connected = True
+            self._retry_count = 0
+
+            self.logger.info(
+                f"Attached to existing MT5 session: Account #{account_info.login}, "
+                f"Balance: {account_info.balance:.2f} {account_info.currency}, "
+                f"Server: {account_info.server}"
+            )
+            if mt5_config.DEMO_MODE and account_info.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+                self.logger.warning(
+                    "WARNING: DEMO_MODE is True but account is NOT a demo account! "
+                    "Please verify your configuration."
+                )
+
+            return True
+
+        # Full login mode (USE_EXISTING_SESSION = False)
         init_kwargs = {}
         if mt5_config.MT5_PATH:
             init_kwargs["path"] = mt5_config.MT5_PATH

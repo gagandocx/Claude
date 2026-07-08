@@ -25,6 +25,13 @@ MT5_SERVER = os.environ.get("MT5_SERVER_NAME", "YourBroker-Demo")
 MT5_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 
 # =============================================================================
+# SESSION MODE
+# =============================================================================
+
+USE_EXISTING_SESSION = True  # True = attach to already-running MT5 terminal (no login call)
+                             # False = full login with credentials (for automated/headless startup)
+
+# =============================================================================
 # TRADING MODE
 # =============================================================================
 
