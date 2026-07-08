@@ -8,14 +8,15 @@ the room - like a giant price board.
 Uses pyfiglet for large ASCII text rendering and ANSI escape codes
 for color (green = profit, red = loss, white = zero).
 
-The display updates on every tick in real-time, with a small status
-line below showing Balance, Equity, Spread, and Signal State.
+The display OVERWRITES in place using ANSI cursor repositioning.
+On first render: clears the screen. On subsequent renders: moves cursor
+to home position and overwrites all content. No scrolling.
 """
 
 import os
 import sys
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 
 try:
     import pyfiglet
@@ -44,7 +45,9 @@ except ImportError:
 
 
 # ANSI escape sequences for screen control
-CLEAR_SCREEN = "\033[2J\033[H"
+CURSOR_HOME = "\033[H"          # Move cursor to top-left (home position)
+CLEAR_SCREEN = "\033[2J"        # Clear entire screen (used once at startup)
+CLEAR_LINE = "\033[K"           # Clear from cursor to end of line
 HIDE_CURSOR = "\033[?25l"
 SHOW_CURSOR = "\033[?25h"
 RESET_COLOR = "\033[0m"
@@ -74,6 +77,13 @@ class GiantPnLDisplay:
     Below the giant number, a compact status line shows account info
     and signal state.
 
+    DISPLAY METHOD: Overwrites in place using ANSI escape codes.
+    - First render: clear screen + cursor home
+    - Subsequent renders: cursor home only (overwrite existing content)
+    - Each line ends with clear-to-EOL to remove leftover characters
+
+    This creates a static dashboard that refreshes in place with no scrolling.
+
     Usage:
         display = GiantPnLDisplay()
         display.render(
@@ -95,11 +105,12 @@ class GiantPnLDisplay:
         self._last_render_time: float = 0.0
         self._terminal_width: int = 80
         self._terminal_height: int = 24
+        self._first_render: bool = True
 
         # Initialize pyfiglet with the best available font
         self._init_figlet()
 
-        # Hide cursor for cleaner display
+        # Hide cursor and clear screen on first init
         sys.stdout.write(HIDE_CURSOR)
         sys.stdout.flush()
 
@@ -149,11 +160,13 @@ class GiantPnLDisplay:
         daily_trades: int = 0,
     ):
         """
-        Render the giant PnL display to the terminal.
+        Render the giant PnL display to the terminal, overwriting in place.
 
-        Clears the screen and draws:
-        1. Giant ASCII art PnL number (fills terminal width)
-        2. Compact status line with account info and signal state
+        On first render: clears screen and moves cursor home.
+        On subsequent renders: moves cursor to home position only (no clear).
+        Each line ends with CLEAR_LINE to remove leftover characters.
+
+        This creates a static dashboard that updates in place - no scrolling.
 
         Args:
             pnl: Current floating PnL (unrealized profit/loss).
@@ -171,64 +184,79 @@ class GiantPnLDisplay:
         pnl_str = self._format_pnl(pnl)
 
         # Get color based on PnL
-        color = self._get_color(pnl)
         bright_color = self._get_bright_color(pnl)
 
-        # Build the display
-        output_parts = []
-
-        # Clear screen
-        output_parts.append(CLEAR_SCREEN)
+        # Build all output lines
+        lines = []
 
         # Add some top padding
         top_padding = max(1, (self._terminal_height - 15) // 4)
-        output_parts.append("\n" * top_padding)
+        for _ in range(top_padding):
+            lines.append("")
 
         # Render giant PnL with pyfiglet
         giant_text = self._render_giant_text(pnl_str)
         if giant_text:
             # Apply color to the giant text
-            output_parts.append(f"{BOLD}{bright_color}")
-            output_parts.append(giant_text)
-            output_parts.append(RESET_COLOR)
+            for line in giant_text.split("\n"):
+                lines.append(f"{BOLD}{bright_color}{line}{RESET_COLOR}")
         else:
             # Fallback: large text without pyfiglet
-            output_parts.append(f"{BOLD}{bright_color}")
-            output_parts.append(self._render_fallback_large(pnl_str))
-            output_parts.append(RESET_COLOR)
+            for line in self._render_fallback_large(pnl_str).split("\n"):
+                lines.append(f"{BOLD}{bright_color}{line}{RESET_COLOR}")
 
         # Spacer
-        output_parts.append("\n")
+        lines.append("")
 
         # Status line separator
-        separator = f"{DIM}{'=' * self._terminal_width}{RESET_COLOR}"
-        output_parts.append(separator + "\n")
+        lines.append(f"{DIM}{'=' * self._terminal_width}{RESET_COLOR}")
 
         # Status info line 1: Balance | Equity | Spread | Signal
-        status_line = self._build_status_line(
+        lines.append(self._build_status_line(
             balance=balance,
             equity=equity,
             spread=spread,
             signal_state=signal_state,
-        )
-        output_parts.append(status_line + "\n")
+        ))
 
         # Status info line 2: Positions | Daily PnL | Daily Trades | Mode
-        detail_line = self._build_detail_line(
+        lines.append(self._build_detail_line(
             positions_count=positions_count,
             daily_pnl=daily_pnl,
             daily_trades=daily_trades,
-        )
-        output_parts.append(detail_line + "\n")
+        ))
 
         # Bottom separator
-        output_parts.append(separator + "\n")
+        lines.append(f"{DIM}{'=' * self._terminal_width}{RESET_COLOR}")
 
         # Footer
-        footer = f"{DIM}  CCT Rectangle Bot | Zero-Delay Mode | Ctrl+C to stop{RESET_COLOR}"
-        output_parts.append(footer)
+        lines.append(f"{DIM}  CCT Rectangle Bot | Smart Hybrid Mode | Ctrl+C to stop{RESET_COLOR}")
 
-        # Write all at once to minimize flicker
+        # Build final output with in-place overwrite
+        output_parts = []
+
+        # First render: clear screen then home. Subsequent: just home.
+        if self._first_render:
+            output_parts.append(CLEAR_SCREEN)
+            output_parts.append(CURSOR_HOME)
+            self._first_render = False
+        else:
+            output_parts.append(CURSOR_HOME)
+
+        # Write each line followed by clear-to-end-of-line to remove artifacts
+        for line in lines:
+            output_parts.append(line)
+            output_parts.append(CLEAR_LINE)
+            output_parts.append("\n")
+
+        # Clear any remaining lines below (in case terminal was resized smaller)
+        # Fill remaining lines with empty + clear
+        remaining_lines = self._terminal_height - len(lines) - 1
+        for _ in range(max(0, remaining_lines)):
+            output_parts.append(CLEAR_LINE)
+            output_parts.append("\n")
+
+        # Single write + flush for minimal flicker
         sys.stdout.write("".join(output_parts))
         sys.stdout.flush()
 
@@ -248,15 +276,6 @@ class GiantPnLDisplay:
             return f"+${pnl:,.2f}"
         else:
             return f"-${abs(pnl):,.2f}"
-
-    def _get_color(self, pnl: float) -> str:
-        """Get ANSI color code for PnL value."""
-        if pnl > 0:
-            return GREEN
-        elif pnl < 0:
-            return RED
-        else:
-            return WHITE
 
     def _get_bright_color(self, pnl: float) -> str:
         """Get bright ANSI color code for PnL value."""
@@ -393,7 +412,7 @@ class GiantPnLDisplay:
             f"  {CYAN}Positions:{RESET_COLOR} {positions_count}",
             f"  {CYAN}Daily PnL:{RESET_COLOR} {daily_color}{daily_pnl:+,.2f}{RESET_COLOR}",
             f"  {CYAN}Trades:{RESET_COLOR} {daily_trades}",
-            f"  {CYAN}Mode:{RESET_COLOR} {BRIGHT_GREEN}ZERO-DELAY{RESET_COLOR}",
+            f"  {CYAN}Mode:{RESET_COLOR} {BRIGHT_GREEN}SMART-HYBRID{RESET_COLOR}",
         ]
 
         return "  |".join(parts)

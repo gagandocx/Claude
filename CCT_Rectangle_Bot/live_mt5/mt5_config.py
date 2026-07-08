@@ -98,24 +98,24 @@ ALLOW_ASIA_SESSION = False
 ASIA_SESSION = {"start": 0, "end": 8}
 
 # =============================================================================
-# POLLING & TIMING - ZERO DELAY MODE
+# POLLING & TIMING - SMART HYBRID POLLING
 # =============================================================================
 
-POLL_INTERVAL_SECONDS = 0       # Zero - continuous spin loop (no polling delay)
-TICK_LOOP_SLEEP_MS = 10         # 10ms between tick checks (spin loop sleep)
-DISPLAY_UPDATE_MS = 100         # Refresh giant PnL display every 100ms
+# Adaptive polling: IDLE = 1s (low CPU), ARMED = 100ms (fast reaction)
+POLL_INTERVAL_IDLE_MS = 1000    # 1 second between checks when IDLE (low CPU)
+POLL_INTERVAL_ARMED_MS = 100    # 100ms between checks when ARMED (fast response)
+DISPLAY_UPDATE_MS = 1000        # Refresh display every 1 second
 RECONNECT_MAX_RETRIES = 5       # Max reconnection attempts
 RECONNECT_BASE_DELAY = 2        # Base delay for exponential backoff (seconds)
 RECONNECT_MAX_DELAY = 60        # Maximum delay between reconnection attempts
 
 # =============================================================================
-# TICK MONITORING & REAL-TIME SETTINGS - ZERO DELAY
+# TICK MONITORING & REAL-TIME SETTINGS - SMART HYBRID
 # =============================================================================
 
 TICK_MONITORING_ENABLED = True         # Enable real-time tick monitoring
-CANDLE_CLOSE_DETECTION_MS = 10         # Check for candle close every 10ms (spin loop)
 PRE_COMPUTE_SIGNALS = True             # Pre-compute direction+weakness between candle closes
-MAX_EXECUTION_DELAY_MS = 50            # Target: signal-to-execution under 50ms
+MAX_EXECUTION_DELAY_MS = 200           # Target: signal-to-execution under 200ms (relaxed for hybrid)
 TICK_STALE_THRESHOLD_SECONDS = 5       # Consider tick stale if older than this
 PRE_STAGE_ORDERS = True                # Pre-build order request when ARMED for instant fire
 

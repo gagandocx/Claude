@@ -1,24 +1,25 @@
 """
-CCT Rectangle Bot - Live MT5 Trader (Main Loop) - ZERO-DELAY MODE.
+CCT Rectangle Bot - Live MT5 Trader (Main Loop) - SMART HYBRID MODE.
 
 This is the main orchestration module that:
 1. Connects to MT5 terminal
-2. Monitors tick stream continuously in a tight spin loop (10ms sleep max)
+2. Uses adaptive polling (IDLE=1s, ARMED=100ms) to minimize CPU usage
 3. Detects exact 1M candle close moments via tick timestamp comparison
 4. Pre-computes direction (4H) and weakness (15M) signals between candle closes
 5. Pre-stages orders when ARMED for instant fire on trigger
-6. Executes trades instantly on candle close (target: under 50ms)
+6. Executes trades on candle close (target: under 200ms)
 7. Manages open positions (trailing stop logic)
 8. Reconciles closed positions to update risk manager stats
-9. Displays GIANT PnL via ASCII art terminal display (updated every 100ms)
+9. Displays GIANT PnL via ASCII art terminal display (updated every 1s, overwrites in place)
 10. Handles graceful shutdown on SIGINT
 
 Signal flow:
-- Continuous spin loop: check ticks every 10ms (NO polling delay)
+- IDLE mode: poll every 1 second (under 1% CPU usage)
+- ARMED mode: poll every 100ms (fast reaction, still low CPU)
+- Display refresh: every 1 second (overwrites in place, no scrolling)
 - Between candle closes: pre-compute direction + weakness (cached)
 - When ARMED: pre-stage order with calculated lot size, SL, TP
-- On 1M candle close: fire pre-staged order instantly (no computation)
-- Target: tick-to-execution under 50ms
+- On 1M candle close: fire pre-staged order (minimal computation)
 """
 
 import sys
@@ -50,19 +51,15 @@ from strategy import CCTRectangleStrategy, TradeSetup
 
 class LiveTrader:
     """
-    Main live trading orchestrator for CCT Rectangle Bot - Zero-Delay Mode.
+    Main live trading orchestrator for CCT Rectangle Bot - Smart Hybrid Mode.
 
-    Runs a continuous spin loop (10ms sleep max) that:
-    - Checks for new ticks by comparing timestamps (no polling delay)
-    - Detects 1M candle close by tick timestamp minute boundary crossing
-    - Pre-computes direction and weakness signals between candle closes
-    - Pre-stages orders when ARMED (order dict ready to fire)
-    - On candle close: fires pre-staged order instantly (under 50ms)
-    - Displays GIANT ASCII art PnL that fills the terminal
-    - Manages existing positions (trailing stop)
-    - Updates display every 100ms for smooth real-time updates
+    Uses adaptive polling to minimize CPU while maintaining fast reaction:
+    - IDLE mode: sleep(1.0) between checks (under 1% CPU)
+    - ARMED mode: sleep(0.1) between checks (responsive to breakouts)
+    - Display: updates every 1 second (overwrites in place, no scrolling)
 
-    Performance target: tick-to-execution under 50ms.
+    Pre-computes direction and weakness signals between candle closes.
+    Pre-stages orders when ARMED so execution on trigger is near-instant.
     """
 
     def __init__(self):
@@ -91,11 +88,12 @@ class LiveTrader:
         self._last_display_time: float = 0.0
         self._last_periodic_time: float = 0.0
 
-        # Display interval in seconds (from config: 100ms)
+        # Display interval in seconds (from config: 1000ms = 1s)
         self._display_interval: float = mt5_config.DISPLAY_UPDATE_MS / 1000.0
 
-        # Spin loop sleep in seconds (from config: 10ms)
-        self._loop_sleep: float = mt5_config.TICK_LOOP_SLEEP_MS / 1000.0
+        # Adaptive polling intervals in seconds
+        self._idle_sleep: float = mt5_config.POLL_INTERVAL_IDLE_MS / 1000.0   # 1.0s
+        self._armed_sleep: float = mt5_config.POLL_INTERVAL_ARMED_MS / 1000.0  # 0.1s
 
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -103,15 +101,16 @@ class LiveTrader:
 
     def start(self):
         """
-        Start the live trading bot in zero-delay mode.
+        Start the live trading bot in smart hybrid mode.
 
-        Performs startup validation, then enters the continuous spin loop.
+        Performs startup validation, then enters the adaptive polling loop.
         """
         self.logger.info("=" * 60)
-        self.logger.info("CCT Rectangle Bot - Live Trader Starting (ZERO-DELAY MODE)")
+        self.logger.info("CCT Rectangle Bot - Live Trader Starting (SMART HYBRID MODE)")
         self.logger.info(f"Symbol: {mt5_config.SYMBOL}")
         self.logger.info(f"Demo Mode: {mt5_config.DEMO_MODE}")
-        self.logger.info(f"Tick Loop Sleep: {mt5_config.TICK_LOOP_SLEEP_MS}ms")
+        self.logger.info(f"IDLE Poll: {mt5_config.POLL_INTERVAL_IDLE_MS}ms")
+        self.logger.info(f"ARMED Poll: {mt5_config.POLL_INTERVAL_ARMED_MS}ms")
         self.logger.info(f"Display Update: {mt5_config.DISPLAY_UPDATE_MS}ms")
         self.logger.info(f"Tick Monitoring: {mt5_config.TICK_MONITORING_ENABLED}")
         self.logger.info(f"Pre-compute Signals: {mt5_config.PRE_COMPUTE_SIGNALS}")
@@ -128,12 +127,12 @@ class LiveTrader:
             return
 
         self._running = True
-        self.logger.info("Startup validation passed. Entering zero-delay spin loop.")
+        self.logger.info("Startup validation passed. Entering smart hybrid polling loop.")
 
         # Initialize tick monitor
         self.tick_monitor.start()
 
-        # Main zero-delay spin loop
+        # Main adaptive polling loop
         self._main_loop()
 
     def _validate_startup(self) -> bool:
@@ -196,33 +195,41 @@ class LiveTrader:
 
     def _main_loop(self):
         """
-        Zero-delay continuous spin loop. Sleeps only 10ms between iterations.
+        Smart hybrid adaptive polling loop.
 
-        Each spin cycle (~10ms):
+        Polling rates adapt to signal state:
+        - IDLE: sleep(1.0) - check once per second (under 1% CPU)
+        - ARMED: sleep(0.1) - check 10x per second (fast breakout detection)
+        - Display: refresh every 1 second (overwrites in place, no scrolling)
+
+        Each cycle:
         1. Check for new tick (via timestamp comparison)
         2. Check for 1M candle close (minute boundary detection)
         3. If candle close: fire pre-staged order or run fast signal check
         4. If ARMED: monitor tick for rectangle breakout, keep order pre-staged
-        5. Every 100ms: update giant PnL display
+        5. Every 1s: update giant PnL display (overwrite in place)
         6. Every 30s: pre-compute direction/weakness signals
         7. Every 10s: manage positions, reconcile, periodic tasks
-
-        NO time.sleep(1) or time.sleep(60) anywhere in this path.
         """
         self.logger.info(
-            f"Zero-delay spin loop started. "
-            f"Sleep: {mt5_config.TICK_LOOP_SLEEP_MS}ms, "
-            f"Display: {mt5_config.DISPLAY_UPDATE_MS}ms, "
-            f"Target: <{mt5_config.MAX_EXECUTION_DELAY_MS}ms execution."
+            f"Smart hybrid loop started. "
+            f"IDLE: {mt5_config.POLL_INTERVAL_IDLE_MS}ms, "
+            f"ARMED: {mt5_config.POLL_INTERVAL_ARMED_MS}ms, "
+            f"Display: {mt5_config.DISPLAY_UPDATE_MS}ms."
         )
 
         while self._running:
             try:
-                cycle_start = time.time()
                 self._loop_count += 1
+                now = time.time()
 
-                # Step 1: Check connection (every 1000 cycles ~ every 10s)
-                if self._loop_count % 1000 == 0:
+                # Determine current sleep interval based on signal state
+                is_armed = self.tick_monitor.is_armed
+                loop_sleep = self._armed_sleep if is_armed else self._idle_sleep
+
+                # Step 1: Check connection (every ~10s worth of cycles)
+                connection_check_interval = max(1, int(10.0 / loop_sleep))
+                if self._loop_count % connection_check_interval == 0:
                     if not self.connection.is_connected():
                         self.logger.warning("Connection lost. Attempting reconnect...")
                         if not self.connection.reconnect():
@@ -238,18 +245,16 @@ class LiveTrader:
                     self._on_candle_close()
 
                 # Step 3: Between candles - pre-compute and monitor
-                now = time.time()
-
                 # Pre-compute signals every 30 seconds
                 if now - self._last_precompute_time > self._precompute_interval:
                     self._between_candles()
                     self._last_precompute_time = now
 
                 # Step 4: When ARMED, monitor rectangle zone on every tick
-                if self.tick_monitor.is_armed:
+                if is_armed:
                     self._monitor_rectangle_zone()
 
-                # Step 5: Update giant PnL display every DISPLAY_UPDATE_MS
+                # Step 5: Update giant PnL display every DISPLAY_UPDATE_MS (1s)
                 if now - self._last_display_time >= self._display_interval:
                     self._update_giant_pnl_display()
                     self._last_display_time = now
@@ -259,13 +264,13 @@ class LiveTrader:
                     self._periodic_tasks()
                     self._last_periodic_time = now
 
-                # Spin loop sleep: 10ms max (configurable via TICK_LOOP_SLEEP_MS)
-                time.sleep(self._loop_sleep)
+                # Adaptive sleep: 1s when IDLE, 100ms when ARMED
+                time.sleep(loop_sleep)
 
             except Exception as e:
-                self.logger.error(f"Error in spin loop: {e}", exc_info=True)
-                # Brief 100ms pause on error, then continue (not 1 second!)
-                time.sleep(0.1)
+                self.logger.error(f"Error in main loop: {e}", exc_info=True)
+                # Brief 1s pause on error, then continue
+                time.sleep(1.0)
 
         # Cleanup on exit
         self._shutdown()
@@ -541,8 +546,9 @@ class LiveTrader:
         """
         Update the giant ASCII art PnL display in the terminal.
 
-        Called every DISPLAY_UPDATE_MS (100ms) for smooth real-time updates.
+        Called every DISPLAY_UPDATE_MS (1 second) and overwrites in place.
         The giant PnL number is the primary visual - fills the terminal.
+        No scrolling - display stays fixed and updates values in place.
         """
         try:
             # Get account info for display
@@ -837,8 +843,8 @@ class LiveTrader:
         and record them with the risk manager so daily P&L and trade-count
         limits remain accurate.
         """
-        # Use a wider lookback window for the 1-second loop
-        lookback_seconds = max(mt5_config.POLL_INTERVAL_SECONDS * 15, 30)
+        # Use a wider lookback window for the adaptive polling loop
+        lookback_seconds = 30
         closed_deals = self.connection.get_closed_positions(
             since_seconds=lookback_seconds
         )
@@ -887,11 +893,12 @@ class LiveTrader:
 def main():
     """Entry point for the live trader."""
     print("=" * 60)
-    print("  CCT Rectangle Bot - Live MT5 Trader (ZERO-DELAY)")
+    print("  CCT Rectangle Bot - Live MT5 Trader (SMART HYBRID)")
     print("=" * 60)
     print()
-    print(f"  Mode: Zero-delay continuous spin loop")
-    print(f"  Tick loop: {mt5_config.TICK_LOOP_SLEEP_MS}ms sleep")
+    print(f"  Mode: Smart hybrid adaptive polling")
+    print(f"  IDLE poll: {mt5_config.POLL_INTERVAL_IDLE_MS}ms (low CPU)")
+    print(f"  ARMED poll: {mt5_config.POLL_INTERVAL_ARMED_MS}ms (fast)")
     print(f"  Display update: {mt5_config.DISPLAY_UPDATE_MS}ms")
     print(f"  Execution target: <{mt5_config.MAX_EXECUTION_DELAY_MS}ms")
     print()
