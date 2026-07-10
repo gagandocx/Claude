@@ -1,0 +1,7 @@
+{
+  "task_id": "task-gagans-model-ea",
+  "task_description": "Create GagansModel_EA.mq5 - a complete MT5 Expert Advisor implementing the T-Spot trading model with HTF candle tracking, 6-pattern T-Spot detection using logarithmic midpoints, FVG-based stop loss, CISD projection targets, 5-state position management, invalidation logic, and on-chart dashboard.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}
