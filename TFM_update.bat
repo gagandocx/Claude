@@ -22,7 +22,7 @@ echo.
 :: CONFIGURATION
 :: ------------------------------------------------------------
 set "EA_FILE=GagansModel_EA.mq5"
-set "EA_URL=https://raw.githubusercontent.com/gagandocx/Claude/main/GagansModel_EA.mq5"
+set "EA_URL=https://raw.githubusercontent.com/gagandocx/Claude/GFM/GagansModel_EA.mq5"
 set "TARGET_DIR=F:\Automation\EA Testing\TFM\v1"
 
 :: MT5 Terminal: EA runs here
