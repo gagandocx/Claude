@@ -2421,8 +2421,8 @@ void InitialChartScan()
          ts.close_level   = last_closed.close;
          ts.high          = last_closed.high;
          ts.low           = last_closed.low;
-         ts.time_start    = g_htf_rates[0].time;                          // New HTF candle open time
-         ts.time_end      = g_htf_rates[0].time + PeriodSeconds(HTF_Timeframe); // End of this HTF candle
+         ts.time_start    = htf[shift-1].time;                             // HTF candle that opened after sweep candle closed
+         ts.time_end      = htf[shift-1].time + PeriodSeconds(HTF_Timeframe); // One full HTF period forward
          ts.is_active     = true;
          ts.is_hidden     = false;
          ts.pattern_name  = pattern_name;
