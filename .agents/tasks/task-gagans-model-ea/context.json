@@ -1,0 +1,18 @@
+{
+  "project_type": "MT5 Expert Advisor (MQL5 single-file)",
+  "language": "MQL5",
+  "build_system": "MetaTrader 5 compiler (not available in sandbox - no compilation possible)",
+  "test_framework": "None (MT5 EAs are tested in MetaTrader Strategy Tester, not available here)",
+  "build_command": "N/A - MQL5 files compiled by MetaTrader IDE",
+  "test_command": "N/A - syntax validation only via code review",
+  "verification_instructions": "Verify that the .mq5 file is syntactically valid MQL5 by reviewing structure, includes, function signatures. No compilation available.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup needed - this is a single-file greenfield MQL5 EA creation",
+  "environment_constraints": "No MQL5 compiler available. Validation is limited to code review and structural checks.",
+  "contribution_requirements": "Single .mq5 file, match code style of GaganEA_v3.mq5",
+  "key_patterns": "From GaganEA_v3.mq5: CTrade and CPositionInfo from Trade includes, input groups with === delimiters, dashboard with ObjLbl/ObjRect/ObjLine helpers, NormLot helper, pip calculation using digits check, ArraySetAsSeries for buffers, position/order iteration by magic number, TicketInArr array helpers, partial close via trade.PositionClosePartial()",
+  "relevant_files": [
+    "/projects/sandbox/Claude/GaganEA_v3.mq5 (reference for code style, dashboard, lot calculation, position management patterns)"
+  ],
+  "directory_structure": "Flat repository - all EA .mq5 files at root level. Target: /projects/sandbox/Claude/GagansModel_EA.mq5"
+}
