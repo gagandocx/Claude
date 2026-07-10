@@ -2599,7 +2599,7 @@ void InitialChartScan()
 void CreateDashboard()
 {
    ObjectsDeleteAll(0, lbl + "dash_");
-   int x = 15, y = 30, row = 15;
+   int x = 50, y = 30, row = 15;
    color bg = C'20,28,42', border = C'40,55,85';
 
    ObjRect(lbl+"dash_bg", x-8, y-8, 280, 380, bg, border, 1);
