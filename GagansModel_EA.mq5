@@ -353,7 +353,15 @@ int OnInit()
    // Trade setup
    trade.SetExpertMagicNumber(Magic_Number);
    trade.SetDeviationInPoints(Max_Slippage);
-   trade.SetTypeFilling(ORDER_FILLING_FOK);
+
+   // Auto-detect fill type (FOK not supported by all brokers, especially for Gold/XAUUSD)
+   long fill_type = SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((fill_type & SYMBOL_FILLING_IOC) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else if((fill_type & SYMBOL_FILLING_FOK) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else
+      trade.SetTypeFilling(ORDER_FILLING_RETURN);
 
    // Sync from market if position exists
    SyncStateFromMarket();
@@ -838,27 +846,26 @@ void CheckTouchEntry()
          // Wrong direction check: if price is above midline, don't enter (coming from above)
          if(ask >= g_tspots[i].close_level && ask <= g_tspots[i].midline)
          {
-            // Valid touch from below - execute SELL
-            g_tspots[i].confirmed = true;
-            g_tspots[i].confirm_time = TimeCurrent();
-
-            // Draw confirmation visuals (keep for reference)
-            if(Show_Confirmation_Lines)
-               DrawConfirmationLine(g_tspots[i]);
-            if(Show_TSpot_Sweeps)
-               DrawSweepConfirmationLabel(g_tspots[i]);
-
             Print("TOUCH ENTRY! | idx=", i,
                   " | Dir=BEAR | Ask=", DoubleToString(ask, _Digits),
                   " | Close_Level=", DoubleToString(g_tspots[i].close_level, _Digits),
                   " | PLACING SELL");
 
-            // Keep projection drawing as visual reference (not used for trade management)
-            CalculateProjections(g_tspots[i]);
-
-            // Execute trade
+            // Execute trade - only mark confirmed if trade succeeds
             g_active_tspot_idx = i;
-            ExecuteTradeEntry(g_tspots[i]);
+            if(ExecuteTradeEntry(g_tspots[i]))
+            {
+               g_tspots[i].confirmed = true;
+               g_tspots[i].confirm_time = TimeCurrent();
+
+               if(Show_Confirmation_Lines)
+                  DrawConfirmationLine(g_tspots[i]);
+               if(Show_TSpot_Sweeps)
+                  DrawSweepConfirmationLabel(g_tspots[i]);
+
+               CalculateProjections(g_tspots[i]);
+            }
+            // If trade failed, don't mark confirmed - will retry next tick
             break;
          }
       }
@@ -869,27 +876,26 @@ void CheckTouchEntry()
          // Wrong direction check: if price is below midline, don't enter (coming from below)
          if(bid <= g_tspots[i].close_level && bid >= g_tspots[i].midline)
          {
-            // Valid touch from above - execute BUY
-            g_tspots[i].confirmed = true;
-            g_tspots[i].confirm_time = TimeCurrent();
-
-            // Draw confirmation visuals (keep for reference)
-            if(Show_Confirmation_Lines)
-               DrawConfirmationLine(g_tspots[i]);
-            if(Show_TSpot_Sweeps)
-               DrawSweepConfirmationLabel(g_tspots[i]);
-
             Print("TOUCH ENTRY! | idx=", i,
                   " | Dir=BULL | Bid=", DoubleToString(bid, _Digits),
                   " | Close_Level=", DoubleToString(g_tspots[i].close_level, _Digits),
                   " | PLACING BUY");
 
-            // Keep projection drawing as visual reference (not used for trade management)
-            CalculateProjections(g_tspots[i]);
-
-            // Execute trade
+            // Execute trade - only mark confirmed if trade succeeds
             g_active_tspot_idx = i;
-            ExecuteTradeEntry(g_tspots[i]);
+            if(ExecuteTradeEntry(g_tspots[i]))
+            {
+               g_tspots[i].confirmed = true;
+               g_tspots[i].confirm_time = TimeCurrent();
+
+               if(Show_Confirmation_Lines)
+                  DrawConfirmationLine(g_tspots[i]);
+               if(Show_TSpot_Sweeps)
+                  DrawSweepConfirmationLabel(g_tspots[i]);
+
+               CalculateProjections(g_tspots[i]);
+            }
+            // If trade failed, don't mark confirmed - will retry next tick
             break;
          }
       }
@@ -1682,13 +1688,13 @@ void CalculateProjections(const TSpotData &ts)
 //| EXECUTE TRADE ENTRY                                               |
 //| Market order when price touches T-Spot box                       |
 //+------------------------------------------------------------------+
-void ExecuteTradeEntry(const TSpotData &ts)
+bool ExecuteTradeEntry(const TSpotData &ts)
 {
    // Don't open if already in a trade
    if(g_state == STATE_FULL || g_state == STATE_TRAILING)
    {
       Print("Already in a position, skipping new entry");
-      return;
+      return false;
    }
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -1744,11 +1750,13 @@ void ExecuteTradeEntry(const TSpotData &ts)
       // Draw entry marker and SL/TP lines on chart
       DrawEntryMarker(entry_price, TimeCurrent(), ts.direction);
       DrawSLTPLines(sl, tp, TimeCurrent());
+      return true;
    }
    else
    {
       Print("TRADE FAILED | Error=", trade.ResultRetcodeDescription(),
             " | Code=", trade.ResultRetcode());
+      return false;
    }
 }
 
