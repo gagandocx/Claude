@@ -1,17 +1,16 @@
 //+------------------------------------------------------------------+
 //|                                           GagansModel_EA.mq5     |
-//|                    T-Spot Trading Model Expert Advisor v2.0       |
-//|                    Full Chart Drawing + Sweep Confirmation Entry  |
+//|                    T-Spot Trading Model Expert Advisor v3.0       |
+//|                    Full Chart Drawing + Touch Entry System        |
 //|                                                                  |
 //| STRATEGY:                                                        |
 //|  - Draws all indicator elements on chart (T-Spot zones, FVGs,    |
 //|    PFVGs, Volume Imbalances, CISD, Projections, Silver T-Spot)   |
-//|  - Uses T-Spot Sweep Confirmation entry system:                  |
-//|    Touch -> Pivot -> Sweep -> Trade (NO immediate entry)         |
-//|  - Position management with partial close, BE, trailing          |
+//|  - Touch Entry: price touches T-Spot box -> immediate market order|
+//|  - Swing-based SL, 1:1 RR TP, 80% trailing activation           |
 //+------------------------------------------------------------------+
-#property copyright "GagansModel EA v2.0 - T-Spot Full Model"
-#property version   "2.00"
+#property copyright "GagansModel EA v3.0 - T-Spot Touch Entry"
+#property version   "3.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -95,14 +94,12 @@ input group "=== ENTRY & RISK MANAGEMENT ==="
 input double Risk_Percent               = 1.0;          // Risk % per trade
 input double Max_Lot                    = 10.0;         // Maximum lot size
 input double Min_Lot                    = 0.01;         // Minimum lot size
-input int    SL_Buffer_Pips             = 5;            // SL buffer beyond FVG (pips)
-input int    FVG_Lookback_Bars          = 100;          // Bars to scan for FVG (SL calc)
+input int    SL_Buffer_Pips             = 5;            // SL buffer beyond swing (pips)
+input int    Swing_Lookback_Bars        = 50;           // Bars to scan for swing high/low
 
 input group "=== POSITION MANAGEMENT ==="
-input double Partial_Close_Level        = 2.0;          // Projection level for partial close
-input double Partial_Close_Percent      = 70.0;         // Percentage to close at partial
-input int    BE_Plus_Pips               = 3;            // Pips above breakeven after partial
-input double Trail_Start_Level          = 2.5;          // Projection level to start trailing
+input int    BE_Plus_Pips               = 3;            // Pips above breakeven (reserved)
+input double Trail_Trigger_Percent      = 80.0;         // % of TP distance to trigger trail
 input int    Trail_Distance_Pips        = 10;           // Trailing stop distance (pips)
 
 input group "=== SYSTEM ==="
@@ -118,11 +115,10 @@ input bool   Show_Dashboard             = true;         // Show info panel
 //+------------------------------------------------------------------+
 enum ENUM_TRADE_STATE
 {
-   STATE_NONE     = 0,   // No position, waiting for signal
-   STATE_MONITORING = 1, // T-Spot detected, waiting for sweep confirmation
-   STATE_FULL     = 2,   // Full position open
-   STATE_PARTIAL  = 3,   // Partial closed, breakeven SL
-   STATE_TRAILING = 4    // Tight trailing active
+   STATE_NONE     = 0,   // No position, waiting for T-Spot
+   STATE_MONITORING = 1, // T-Spot detected, waiting for price to touch the box
+   STATE_FULL     = 2,   // Position open, monitoring for 80% level
+   STATE_TRAILING = 4    // Trailing active
 };
 
 enum ENUM_TSPOT_DIR
@@ -368,7 +364,7 @@ int OnInit()
    // Initial scan for existing structures
    InitialChartScan();
 
-   Print("GagansModel EA v2.0 initialized | T-Spot Full Model | ",
+   Print("GagansModel EA v3.0 initialized | T-Spot Touch Entry | ",
          TFStr(PERIOD_CURRENT), "-", TFStr(HTF_Timeframe), " Model");
 
    return INIT_SUCCEEDED;
@@ -429,11 +425,8 @@ void OnTick()
       // Detect Volume Imbalances
       if(Show_Volume_Imbalance) DetectVolumeImbalance();
 
-      // Update pivot tracking for sweep confirmation
+      // Update pivot tracking for swing detection
       UpdatePivotTracking();
-
-      // Check sweep confirmation for all active T-Spots
-      CheckSweepConfirmation();
 
       // Check invalidation (close beyond midline)
       CheckAllInvalidation();
@@ -444,6 +437,9 @@ void OnTick()
       // Hide T-Spots trading against
       if(Hide_TSpots_Against) CheckHideTSpots();
    }
+
+   // Check touch entry every tick (price may touch T-Spot box at any moment)
+   CheckTouchEntry();
 
    // Position management every tick
    ManagePosition();
@@ -657,8 +653,8 @@ void DetectTSpot()
       ts.close_level   = last_closed.close;
       ts.high          = last_closed.high;
       ts.low           = last_closed.low;
-      ts.time_start    = last_closed.time;
-      ts.time_end      = iTime(_Symbol, PERIOD_M1, 0);
+      ts.time_start    = g_htf_rates[0].time;                          // New HTF candle open time
+      ts.time_end      = g_htf_rates[0].time + PeriodSeconds(HTF_Timeframe); // End of this HTF candle
       ts.is_active     = true;
       ts.is_hidden     = false;
       ts.pattern_name  = pattern_name;
@@ -697,7 +693,7 @@ void DetectTSpot()
             " | Dir=", (detected == TSPOT_BULLISH ? "BULL" : "BEAR"),
             " | Midline=", DoubleToString(mid_last, _Digits),
             " | Close=", DoubleToString(last_closed.close, _Digits),
-            " | MONITORING for sweep confirmation");
+            " | MONITORING for touch entry");
 
       // Update state for monitoring
       if(g_state == STATE_NONE)
@@ -809,17 +805,19 @@ void DrawChartSweepLine(ENUM_TSPOT_DIR dir, const MqlRates &last_closed, const M
 
 
 //+------------------------------------------------------------------+
-//| SWEEP CONFIRMATION SYSTEM                                         |
-//| The critical entry logic - checks all active T-Spots             |
-//| Touch -> Pivot -> Sweep -> Trade                                 |
+//| TOUCH ENTRY SYSTEM                                                |
+//| Checks if price touches the T-Spot box (midline to close_level)  |
+//| Immediate market order on touch - no sweep confirmation needed   |
 //+------------------------------------------------------------------+
-void CheckSweepConfirmation()
+void CheckTouchEntry()
 {
    if(g_state != STATE_MONITORING && g_state != STATE_NONE) return;
 
-   MqlRates m1[];
-   ArraySetAsSeries(m1, true);
-   if(CopyRates(_Symbol, PERIOD_M1, 0, 5, m1) < 5) return;
+   // Already in a trade - don't enter
+   if(g_state == STATE_FULL || g_state == STATE_TRAILING) return;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
    for(int i = ArraySize(g_tspots) - 1; i >= 0; i--)
    {
@@ -827,130 +825,72 @@ void CheckSweepConfirmation()
       if(g_tspots[i].confirmed) continue;
       if(g_tspots[i].is_hidden) continue;
 
-      // Step 1: Check for TOUCH of close_level
-      if(!g_tspots[i].touched)
+      // The T-Spot box is the zone between midline and close_level
+      // For BEARISH: midline is above close_level (box top=midline, bottom=close_level)
+      //   Price enters from below: ask >= close_level -> SELL
+      // For BULLISH: midline is below close_level (box top=close_level, bottom=midline)
+      //   Price enters from above: bid <= close_level -> BUY
+
+      if(g_tspots[i].direction == TSPOT_BEARISH)
       {
-         bool touch = false;
-         if(g_tspots[i].direction == TSPOT_BEARISH)
+         // Bearish T-Spot box: midline (top) to close_level (bottom)
+         // Entry when price enters from below: ask >= close_level
+         // Wrong direction check: if price is above midline, don't enter (coming from above)
+         if(ask >= g_tspots[i].close_level && ask <= g_tspots[i].midline)
          {
-            // Bearish: high > close_level OR open > close_level, AND close < close_level
-            touch = ((m1[1].high > g_tspots[i].close_level ||
-                      m1[1].open > g_tspots[i].close_level) &&
-                     m1[1].close < g_tspots[i].close_level);
-         }
-         else // BULLISH
-         {
-            // Bullish: low < close_level OR open < close_level, AND close > close_level
-            touch = ((m1[1].low < g_tspots[i].close_level ||
-                      m1[1].open < g_tspots[i].close_level) &&
-                     m1[1].close > g_tspots[i].close_level);
-         }
-
-         if(touch)
-         {
-            g_tspots[i].touched = true;
-            g_tspots[i].touch_time = m1[1].time;
-            Print("T-Spot Touch confirmed | idx=", i,
-                  " | Close level=", DoubleToString(g_tspots[i].close_level, _Digits));
-         }
-         continue;  // Must wait for pivot after touch
-      }
-
-      // Step 2: Check for PIVOT formation (already tracked in UpdatePivotTracking)
-      if(!g_tspots[i].pivot_formed)
-      {
-         if(g_tspots[i].direction == TSPOT_BEARISH)
-         {
-            // Need a pivot LOW below close_level
-            for(int p = 0; p < g_pivot_low_count; p++)
-            {
-               if(g_pivot_low_times[p] > g_tspots[i].touch_time &&
-                  g_pivot_lows[p] < g_tspots[i].close_level)
-               {
-                  g_tspots[i].pivot_formed = true;
-                  g_tspots[i].pivot_price = g_pivot_lows[p];
-                  g_tspots[i].pivot_time = g_pivot_low_times[p];
-                  Print("Pivot LOW formed for T-Spot | idx=", i,
-                        " | Pivot=", DoubleToString(g_pivot_lows[p], _Digits));
-                  break;
-               }
-            }
-         }
-         else // BULLISH
-         {
-            // Need a pivot HIGH above close_level
-            for(int p = 0; p < g_pivot_high_count; p++)
-            {
-               if(g_pivot_high_times[p] > g_tspots[i].touch_time &&
-                  g_pivot_highs[p] > g_tspots[i].close_level)
-               {
-                  g_tspots[i].pivot_formed = true;
-                  g_tspots[i].pivot_price = g_pivot_highs[p];
-                  g_tspots[i].pivot_time = g_pivot_high_times[p];
-                  Print("Pivot HIGH formed for T-Spot | idx=", i,
-                        " | Pivot=", DoubleToString(g_pivot_highs[p], _Digits));
-                  break;
-               }
-            }
-         }
-         if(!g_tspots[i].pivot_formed) continue;
-      }
-
-      // Step 3: Check for SWEEP of the pivot
-      if(g_tspots[i].pivot_formed && !g_tspots[i].confirmed)
-      {
-         bool sweep_confirmed = false;
-
-         if(g_tspots[i].direction == TSPOT_BEARISH)
-         {
-            // Bearish T-Spot sweep: price closes BELOW pivot_low,
-            // open > pivot_low, pivot_low < tspot_close_level
-            if(m1[1].close < g_tspots[i].pivot_price &&
-               m1[1].open > g_tspots[i].pivot_price &&
-               g_tspots[i].pivot_price < g_tspots[i].close_level)
-            {
-               sweep_confirmed = true;
-            }
-         }
-         else // BULLISH
-         {
-            // Bullish T-Spot sweep: price closes ABOVE pivot_high,
-            // open < pivot_high, pivot_high > tspot_close_level
-            if(m1[1].close > g_tspots[i].pivot_price &&
-               m1[1].open < g_tspots[i].pivot_price &&
-               g_tspots[i].pivot_price > g_tspots[i].close_level)
-            {
-               sweep_confirmed = true;
-            }
-         }
-
-         if(sweep_confirmed)
-         {
+            // Valid touch from below - execute SELL
             g_tspots[i].confirmed = true;
-            g_tspots[i].confirm_time = m1[1].time;
+            g_tspots[i].confirm_time = TimeCurrent();
 
-            // Draw confirmation line at pivot level
+            // Draw confirmation visuals (keep for reference)
             if(Show_Confirmation_Lines)
                DrawConfirmationLine(g_tspots[i]);
-
-            // Draw sweep confirmation label
             if(Show_TSpot_Sweeps)
                DrawSweepConfirmationLabel(g_tspots[i]);
 
-            // Draw C2/C3/C4 labels
-            if(Show_Confirmation_Labels)
-               DrawC234Labels(g_tspots[i]);
+            Print("TOUCH ENTRY! | idx=", i,
+                  " | Dir=BEAR | Ask=", DoubleToString(ask, _Digits),
+                  " | Close_Level=", DoubleToString(g_tspots[i].close_level, _Digits),
+                  " | PLACING SELL");
 
-            Print("SWEEP CONFIRMED! | idx=", i,
-                  " | Dir=", (g_tspots[i].direction == TSPOT_BULLISH ? "BULL" : "BEAR"),
-                  " | Pivot=", DoubleToString(g_tspots[i].pivot_price, _Digits),
-                  " | PLACING TRADE");
-
-            // Calculate projections
+            // Keep projection drawing as visual reference (not used for trade management)
             CalculateProjections(g_tspots[i]);
 
-            // EXECUTE TRADE (market order since confirmation already happened)
+            // Execute trade
+            g_active_tspot_idx = i;
             ExecuteTradeEntry(g_tspots[i]);
+            break;
+         }
+      }
+      else // TSPOT_BULLISH
+      {
+         // Bullish T-Spot box: close_level (top) to midline (bottom)
+         // Entry when price enters from above: bid <= close_level
+         // Wrong direction check: if price is below midline, don't enter (coming from below)
+         if(bid <= g_tspots[i].close_level && bid >= g_tspots[i].midline)
+         {
+            // Valid touch from above - execute BUY
+            g_tspots[i].confirmed = true;
+            g_tspots[i].confirm_time = TimeCurrent();
+
+            // Draw confirmation visuals (keep for reference)
+            if(Show_Confirmation_Lines)
+               DrawConfirmationLine(g_tspots[i]);
+            if(Show_TSpot_Sweeps)
+               DrawSweepConfirmationLabel(g_tspots[i]);
+
+            Print("TOUCH ENTRY! | idx=", i,
+                  " | Dir=BULL | Bid=", DoubleToString(bid, _Digits),
+                  " | Close_Level=", DoubleToString(g_tspots[i].close_level, _Digits),
+                  " | PLACING BUY");
+
+            // Keep projection drawing as visual reference (not used for trade management)
+            CalculateProjections(g_tspots[i]);
+
+            // Execute trade
+            g_active_tspot_idx = i;
+            ExecuteTradeEntry(g_tspots[i]);
+            break;
          }
       }
    }
@@ -1716,12 +1656,12 @@ void DetectSilverTSpot()
 
 
 //+------------------------------------------------------------------+
-//| CALCULATE PROJECTIONS FOR TRADE                                   |
-//| Calculates projection levels from the confirmed T-Spot           |
+//| CALCULATE PROJECTIONS FOR VISUAL REFERENCE                        |
+//| Still draws projection levels on chart but NOT used for TP       |
 //+------------------------------------------------------------------+
 void CalculateProjections(const TSpotData &ts)
 {
-   // Find the most recent CISD that matches direction
+   // Find the most recent CISD that matches direction (visual reference only)
    int best_cisd = -1;
    for(int i = ArraySize(g_cisds) - 1; i >= 0; i--)
    {
@@ -1732,32 +1672,20 @@ void CalculateProjections(const TSpotData &ts)
       }
    }
 
-   if(best_cisd >= 0)
-   {
-      // Use CISD projections for TP
-      double mult = (ts.direction == TSPOT_BULLISH) ? 1.0 : -1.0;
-      g_tp_price = g_cisds[best_cisd].price +
-                   g_cisds[best_cisd].series_range * Partial_Close_Level * mult;
-   }
-   else
-   {
-      // Fallback: use T-Spot candle range for projections
-      double range = ts.high - ts.low;
-      if(range <= 0) range = 50 * pip;
-      double mult = (ts.direction == TSPOT_BULLISH) ? 1.0 : -1.0;
-      g_tp_price = ts.midline + range * Partial_Close_Level * mult;
-   }
+   // Projections are drawn as visual aids by DrawProjectionLines
+   // They are NOT used for trade TP (TP is 1:1 RR from entry/SL)
+   // This function is kept for compatibility with projection drawing
 }
 
 
 //+------------------------------------------------------------------+
 //| EXECUTE TRADE ENTRY                                               |
-//| Market order after full sweep confirmation                       |
+//| Market order when price touches T-Spot box                       |
 //+------------------------------------------------------------------+
 void ExecuteTradeEntry(const TSpotData &ts)
 {
    // Don't open if already in a trade
-   if(g_state == STATE_FULL || g_state == STATE_PARTIAL || g_state == STATE_TRAILING)
+   if(g_state == STATE_FULL || g_state == STATE_TRAILING)
    {
       Print("Already in a position, skipping new entry");
       return;
@@ -1769,16 +1697,20 @@ void ExecuteTradeEntry(const TSpotData &ts)
    // Entry at current market price
    double entry_price = (ts.direction == TSPOT_BULLISH) ? ask : bid;
 
-   // Calculate SL from nearest FVG
-   double sl = CalculateFVGStopLoss(ts.direction, entry_price);
+   // Calculate SL from nearest swing high/low
+   double sl = CalculateSwingStopLoss(ts.direction, entry_price, ts);
 
-   // Calculate lot size
+   // Calculate 1:1 Risk:Reward TP
    double sl_distance = MathAbs(entry_price - sl);
    if(sl_distance <= 0) sl_distance = CalculateATRDistance();
-   double lot = CalculateLotSize(sl_distance);
+   double tp = 0;
+   if(ts.direction == TSPOT_BULLISH)
+      tp = NormalizeDouble(entry_price + sl_distance, _Digits);
+   else
+      tp = NormalizeDouble(entry_price - sl_distance, _Digits);
 
-   // TP from projections
-   double tp = NormalizeDouble(g_tp_price, _Digits);
+   // Calculate lot size
+   double lot = CalculateLotSize(sl_distance);
 
    bool result = false;
 
@@ -1798,6 +1730,7 @@ void ExecuteTradeEntry(const TSpotData &ts)
       g_state_text = "Open";
       g_entry_price = entry_price;
       g_sl_price = sl;
+      g_tp_price = tp;
       g_trade_dir = ts.direction;
       g_trade_tspot_idx = g_active_tspot_idx;  // Lock the T-Spot index at trade entry
 
@@ -1805,7 +1738,8 @@ void ExecuteTradeEntry(const TSpotData &ts)
             " | Entry=", DoubleToString(entry_price, _Digits),
             " | SL=", DoubleToString(sl, _Digits),
             " | TP=", DoubleToString(tp, _Digits),
-            " | Lot=", DoubleToString(lot, 2));
+            " | Lot=", DoubleToString(lot, 2),
+            " | RR=1:1");
 
       // Draw entry marker and SL/TP lines on chart
       DrawEntryMarker(entry_price, TimeCurrent(), ts.direction);
@@ -1820,73 +1754,89 @@ void ExecuteTradeEntry(const TSpotData &ts)
 
 
 //+------------------------------------------------------------------+
-//| CALCULATE FVG-BASED STOP LOSS                                     |
+//| CALCULATE SWING-BASED STOP LOSS                                   |
+//| Uses pivot high/low detection (lookback 5 bars on M1)            |
 //+------------------------------------------------------------------+
-double CalculateFVGStopLoss(ENUM_TSPOT_DIR direction, double entry_price)
+double CalculateSwingStopLoss(ENUM_TSPOT_DIR direction, double entry_price, const TSpotData &ts)
 {
    MqlRates m1_rates[];
    ArraySetAsSeries(m1_rates, true);
 
-   int bars_copied = CopyRates(_Symbol, PERIOD_M1, 0, FVG_Lookback_Bars, m1_rates);
-   if(bars_copied < 5) return FallbackSL(direction, entry_price);
+   int bars_copied = CopyRates(_Symbol, PERIOD_M1, 0, Swing_Lookback_Bars, m1_rates);
+   if(bars_copied < 10) return FallbackSL(direction, entry_price, ts);
 
    double sl = 0;
 
    if(direction == TSPOT_BEARISH)
    {
-      // Find nearest BULLISH FVG ABOVE entry price
-      double nearest_fvg_top = 0;
+      // Find nearest swing HIGH above entry price
+      // Pivot high: bar[i] higher than 5 bars on each side (lookback 5)
+      double nearest_swing_high = 0;
       double min_distance = DBL_MAX;
 
-      for(int i = 0; i < bars_copied - 2; i++)
+      for(int i = 5; i < bars_copied - 5; i++)
       {
-         if(m1_rates[i].low > m1_rates[i+2].high)  // Bullish FVG
+         bool is_pivot_high = true;
+         for(int j = 1; j <= 5; j++)
          {
-            double fvg_top = m1_rates[i].low;
-            if(fvg_top > entry_price)
+            if(m1_rates[i].high <= m1_rates[i-j].high ||
+               m1_rates[i].high <= m1_rates[i+j].high)
             {
-               double dist = fvg_top - entry_price;
-               if(dist < min_distance)
-               {
-                  min_distance = dist;
-                  nearest_fvg_top = fvg_top;
-               }
+               is_pivot_high = false;
+               break;
+            }
+         }
+
+         if(is_pivot_high && m1_rates[i].high > entry_price)
+         {
+            double dist = m1_rates[i].high - entry_price;
+            if(dist < min_distance)
+            {
+               min_distance = dist;
+               nearest_swing_high = m1_rates[i].high;
             }
          }
       }
 
-      if(nearest_fvg_top > 0)
-         sl = nearest_fvg_top + SL_Buffer_Pips * pip;
+      if(nearest_swing_high > 0)
+         sl = nearest_swing_high + SL_Buffer_Pips * pip;
       else
-         sl = FallbackSL(direction, entry_price);
+         sl = FallbackSL(direction, entry_price, ts);
    }
    else // TSPOT_BULLISH
    {
-      // Find nearest BEARISH FVG BELOW entry price
-      double nearest_fvg_bottom = 0;
+      // Find nearest swing LOW below entry price
+      double nearest_swing_low = 0;
       double min_distance = DBL_MAX;
 
-      for(int i = 0; i < bars_copied - 2; i++)
+      for(int i = 5; i < bars_copied - 5; i++)
       {
-         if(m1_rates[i].high < m1_rates[i+2].low)  // Bearish FVG
+         bool is_pivot_low = true;
+         for(int j = 1; j <= 5; j++)
          {
-            double fvg_bottom = m1_rates[i].high;
-            if(fvg_bottom < entry_price)
+            if(m1_rates[i].low >= m1_rates[i-j].low ||
+               m1_rates[i].low >= m1_rates[i+j].low)
             {
-               double dist = entry_price - fvg_bottom;
-               if(dist < min_distance)
-               {
-                  min_distance = dist;
-                  nearest_fvg_bottom = fvg_bottom;
-               }
+               is_pivot_low = false;
+               break;
+            }
+         }
+
+         if(is_pivot_low && m1_rates[i].low < entry_price)
+         {
+            double dist = entry_price - m1_rates[i].low;
+            if(dist < min_distance)
+            {
+               min_distance = dist;
+               nearest_swing_low = m1_rates[i].low;
             }
          }
       }
 
-      if(nearest_fvg_bottom > 0)
-         sl = nearest_fvg_bottom - SL_Buffer_Pips * pip;
+      if(nearest_swing_low > 0)
+         sl = nearest_swing_low - SL_Buffer_Pips * pip;
       else
-         sl = FallbackSL(direction, entry_price);
+         sl = FallbackSL(direction, entry_price, ts);
    }
 
    return NormalizeDouble(sl, _Digits);
@@ -1895,25 +1845,15 @@ double CalculateFVGStopLoss(ENUM_TSPOT_DIR direction, double entry_price)
 
 //+------------------------------------------------------------------+
 //| FALLBACK SL                                                       |
-//| Uses T-Spot extremes first, then ATR-based distance as last resort|
+//| Uses T-Spot candle extremes when no swing found within lookback  |
 //+------------------------------------------------------------------+
-double FallbackSL(ENUM_TSPOT_DIR direction, double entry_price)
+double FallbackSL(ENUM_TSPOT_DIR direction, double entry_price, const TSpotData &ts)
 {
-   // Use active T-Spot extremes first
-   if(g_active_tspot_idx >= 0 && g_active_tspot_idx < ArraySize(g_tspots))
-   {
-      if(direction == TSPOT_BEARISH)
-         return NormalizeDouble(g_tspots[g_active_tspot_idx].high + SL_Buffer_Pips * pip, _Digits);
-      else
-         return NormalizeDouble(g_tspots[g_active_tspot_idx].low - SL_Buffer_Pips * pip, _Digits);
-   }
-
-   // Last resort: use ATR-based distance (scales with instrument volatility)
-   double atr_distance = CalculateATRDistance();
+   // Use T-Spot candle extreme (high for sell, low for buy) + buffer
    if(direction == TSPOT_BEARISH)
-      return NormalizeDouble(entry_price + atr_distance, _Digits);
+      return NormalizeDouble(ts.high + SL_Buffer_Pips * pip, _Digits);
    else
-      return NormalizeDouble(entry_price - atr_distance, _Digits);
+      return NormalizeDouble(ts.low - SL_Buffer_Pips * pip, _Digits);
 }
 
 
@@ -1982,10 +1922,6 @@ void ManagePosition()
          ManageStateFull();
          break;
 
-      case STATE_PARTIAL:
-         ManageStatePartial();
-         break;
-
       case STATE_TRAILING:
          ManageStateTrailing();
          break;
@@ -1995,7 +1931,7 @@ void ManagePosition()
 
 //+------------------------------------------------------------------+
 //| STATE: FULL POSITION MANAGEMENT                                   |
-//| Monitor for partial close at projection 2.0                      |
+//| Monitor for 80% of TP distance to activate trailing              |
 //+------------------------------------------------------------------+
 void ManageStateFull()
 {
@@ -2023,112 +1959,33 @@ void ManageStateFull()
       return;
    }
 
-   // Check if price hit projection 2.0 level for partial close
-   bool hit_partial = false;
-   if(g_tp_price != 0)
+   // Check if price has reached 80% of the way to TP
+   if(g_tp_price != 0 && g_entry_price != 0)
    {
+      double tp_distance = MathAbs(g_tp_price - g_entry_price);
+      double trigger_distance = tp_distance * Trail_Trigger_Percent / 100.0;
+      bool hit_trail_trigger = false;
+
       if(g_trade_dir == TSPOT_BULLISH)
-         hit_partial = (cur_price >= g_tp_price);
+         hit_trail_trigger = (cur_price >= g_entry_price + trigger_distance);
       else
-         hit_partial = (cur_price <= g_tp_price);
-   }
+         hit_trail_trigger = (cur_price <= g_entry_price - trigger_distance);
 
-   if(hit_partial)
-   {
-      double vol = posInfo.Volume();
-      double close_vol = NormLot(vol * Partial_Close_Percent / 100.0);
-      double min_vol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-
-      if(close_vol >= min_vol && close_vol < vol)
+      if(hit_trail_trigger)
       {
-         if(trade.PositionClosePartial(g_position_ticket, close_vol))
-         {
-            Print("Partial close at Proj 2.0 | Closed=", DoubleToString(close_vol, 2));
-         }
+         g_state = STATE_TRAILING;
+         g_state_text = "Trailing";
+         Print("Trail activated at ", DoubleToString(Trail_Trigger_Percent, 0),
+               "% of TP | Price=", DoubleToString(cur_price, _Digits));
       }
-
-      // Move SL to breakeven + BE_Plus_Pips
-      double open_price = posInfo.PriceOpen();
-      double new_sl = 0;
-      if(g_trade_dir == TSPOT_BULLISH)
-         new_sl = NormalizeDouble(open_price + BE_Plus_Pips * pip, _Digits);
-      else
-         new_sl = NormalizeDouble(open_price - BE_Plus_Pips * pip, _Digits);
-
-      trade.PositionModify(g_position_ticket, new_sl, posInfo.TakeProfit());
-      g_sl_price = new_sl;
-
-      g_state = STATE_PARTIAL;
-      g_state_text = "BE";
-      Print("Moved to STATE_PARTIAL | BE+=", DoubleToString(new_sl, _Digits));
-   }
-}
-
-
-//+------------------------------------------------------------------+
-//| STATE: PARTIAL - BREAKEVEN SL                                     |
-//| Wait for Projection Level 2.5 to activate trailing               |
-//+------------------------------------------------------------------+
-void ManageStatePartial()
-{
-   if(!FindOurPosition())
-   {
-      ResetState();
-      Print("Position closed at breakeven");
-      return;
-   }
-
-   if(!posInfo.SelectByTicket(g_position_ticket)) { ResetState(); return; }
-
-   bool is_buy = (posInfo.PositionType() == POSITION_TYPE_BUY);
-   double cur_price = is_buy ? SymbolInfoDouble(_Symbol, SYMBOL_BID) :
-                               SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   g_float_pnl = posInfo.Profit() + posInfo.Swap();
-
-   // Calculate trail start level (projection 2.5)
-   double trail_start_price = 0;
-   int last_cisd = -1;
-   for(int i = ArraySize(g_cisds) - 1; i >= 0; i--)
-   {
-      if(g_cisds[i].is_active && g_cisds[i].direction == g_trade_dir)
-      {
-         last_cisd = i;
-         break;
-      }
-   }
-
-   if(last_cisd >= 0)
-   {
-      double mult = (g_trade_dir == TSPOT_BULLISH) ? 1.0 : -1.0;
-      trail_start_price = g_cisds[last_cisd].price +
-                          g_cisds[last_cisd].series_range * Trail_Start_Level * mult;
-   }
-   else
-   {
-      // Fallback
-      double range = MathAbs(g_tp_price - g_entry_price);
-      double mult = (g_trade_dir == TSPOT_BULLISH) ? 1.0 : -1.0;
-      trail_start_price = g_entry_price + range * (Trail_Start_Level / Partial_Close_Level) * mult;
-   }
-
-   bool hit_trail = false;
-   if(g_trade_dir == TSPOT_BULLISH)
-      hit_trail = (cur_price >= trail_start_price);
-   else
-      hit_trail = (cur_price <= trail_start_price);
-
-   if(hit_trail)
-   {
-      g_state = STATE_TRAILING;
-      g_state_text = "Trailing";
-      Print("Trailing activated at Proj 2.5");
    }
 }
 
 
 //+------------------------------------------------------------------+
 //| STATE: TRAILING STOP                                              |
-//| 10 pip tight trailing stop                                       |
+//| Tight trailing stop (Trail_Distance_Pips)                        |
+//| Only moves SL in favorable direction (never moves back)          |
 //+------------------------------------------------------------------+
 void ManageStateTrailing()
 {
@@ -2152,6 +2009,7 @@ void ManageStateTrailing()
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double new_sl = NormalizeDouble(bid - trail_dist, _Digits);
+      // Only move SL in favorable direction (up for buy)
       if(new_sl > cur_sl + point_size)
       {
          trade.PositionModify(g_position_ticket, new_sl, cur_tp);
@@ -2162,6 +2020,7 @@ void ManageStateTrailing()
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double new_sl = NormalizeDouble(ask + trail_dist, _Digits);
+      // Only move SL in favorable direction (down for sell)
       if(cur_sl == 0 || new_sl < cur_sl - point_size)
       {
          trade.PositionModify(g_position_ticket, new_sl, cur_tp);
@@ -2562,8 +2421,8 @@ void InitialChartScan()
          ts.close_level   = last_closed.close;
          ts.high          = last_closed.high;
          ts.low           = last_closed.low;
-         ts.time_start    = last_closed.time;
-         ts.time_end      = iTime(_Symbol, PERIOD_M1, 0);
+         ts.time_start    = g_htf_rates[0].time;                          // New HTF candle open time
+         ts.time_end      = g_htf_rates[0].time + PeriodSeconds(HTF_Timeframe); // End of this HTF candle
          ts.is_active     = true;
          ts.is_hidden     = false;
          ts.pattern_name  = pattern_name;
@@ -2606,8 +2465,8 @@ void CreateDashboard()
 
    // Title
    ObjLbl(lbl+"dash_bullet", "%A0",        x,    y,    C'0,180,100', 11, true);
-   ObjLbl(lbl+"dash_title",  " GagansModel EA v2", x+14, y, clrWhite, 9, true);
-   ObjLbl(lbl+"dash_sub",    " T-Spot Full Chart Model", x+14, y+13, C'150,150,150', 7, false);
+   ObjLbl(lbl+"dash_title",  " GagansModel EA v3", x+14, y, clrWhite, 9, true);
+   ObjLbl(lbl+"dash_sub",    " T-Spot Touch Entry Model", x+14, y+13, C'150,150,150', 7, false);
    ObjLine(lbl+"dash_d0", x, y+27, 260);
 
    int r = y + 36;
@@ -2641,7 +2500,7 @@ void CreateDashboard()
    ObjLbl(lbl+"dash_v_entry", "---",        x+110, r+row,  clrWhite,  8);
    ObjLbl(lbl+"dash_l_sl",    "SL",         x, r+row*2,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_sl",    "---",        x+110, r+row*2, clrWhite, 8);
-   ObjLbl(lbl+"dash_l_tp",    "TP (2.0)",   x, r+row*3,   clrSilver, 8);
+   ObjLbl(lbl+"dash_l_tp",    "TP (1:1)",  x, r+row*3,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_tp",    "---",        x+110, r+row*3, clrWhite, 8);
    ObjLbl(lbl+"dash_l_pnl",   "P/L",        x, r+row*4,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_pnl",   "---",        x+110, r+row*4, clrWhite, 8);
@@ -2670,7 +2529,7 @@ void UpdateDashboard()
 
    // State
    color state_col = clrYellow;
-   if(g_state == STATE_FULL || g_state == STATE_PARTIAL) state_col = clrLime;
+   if(g_state == STATE_FULL) state_col = clrLime;
    if(g_state == STATE_TRAILING) state_col = clrAqua;
    if(g_state == STATE_MONITORING) state_col = clrOrange;
    ObjSet(lbl+"dash_v_state", g_state_text, state_col);
@@ -2695,21 +2554,11 @@ void UpdateDashboard()
              DoubleToString(g_tspots[g_active_tspot_idx].close_level, _Digits), clrWhite);
 
       // Confirmation status
-      string conf_txt = "Waiting";
+      string conf_txt = "Waiting Touch";
       color conf_col = clrGray;
-      if(g_tspots[g_active_tspot_idx].touched)
-      {
-         conf_txt = "Touched";
-         conf_col = clrOrange;
-      }
-      if(g_tspots[g_active_tspot_idx].pivot_formed)
-      {
-         conf_txt = "Pivot Formed";
-         conf_col = clrYellow;
-      }
       if(g_tspots[g_active_tspot_idx].confirmed)
       {
-         conf_txt = "CONFIRMED";
+         conf_txt = "TOUCHED/ENTERED";
          conf_col = clrLime;
       }
       ObjSet(lbl+"dash_v_conf", conf_txt, conf_col);
