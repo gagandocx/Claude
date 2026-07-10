@@ -241,8 +241,11 @@ TSpotData g_tspots[];
 int g_tspot_count = 0;
 int g_tspot_total_idx = 0;
 
-// Active T-Spot for trading
+// Active T-Spot for monitoring (latest detected, used for new confirmations)
 int g_active_tspot_idx = -1;
+
+// T-Spot that triggered the current trade (locked at entry, used for invalidation)
+int g_trade_tspot_idx = -1;
 
 // FVG arrays
 FVGData g_fvgs[];
@@ -406,6 +409,9 @@ void OnTick()
 
       // Calculate HTF Bias
       CalculateHTFBias();
+
+      // Periodic pruning of inactive array entries to prevent memory growth
+      PruneInactiveEntries();
    }
 
    // New M1 bar processing
@@ -1768,7 +1774,7 @@ void ExecuteTradeEntry(const TSpotData &ts)
 
    // Calculate lot size
    double sl_distance = MathAbs(entry_price - sl);
-   if(sl_distance <= 0) sl_distance = 50 * pip;
+   if(sl_distance <= 0) sl_distance = CalculateATRDistance();
    double lot = CalculateLotSize(sl_distance);
 
    // TP from projections
@@ -1793,6 +1799,7 @@ void ExecuteTradeEntry(const TSpotData &ts)
       g_entry_price = entry_price;
       g_sl_price = sl;
       g_trade_dir = ts.direction;
+      g_trade_tspot_idx = g_active_tspot_idx;  // Lock the T-Spot index at trade entry
 
       Print("TRADE EXECUTED | Dir=", (ts.direction == TSPOT_BULLISH ? "BUY" : "SELL"),
             " | Entry=", DoubleToString(entry_price, _Digits),
@@ -1888,10 +1895,11 @@ double CalculateFVGStopLoss(ENUM_TSPOT_DIR direction, double entry_price)
 
 //+------------------------------------------------------------------+
 //| FALLBACK SL                                                       |
+//| Uses T-Spot extremes first, then ATR-based distance as last resort|
 //+------------------------------------------------------------------+
 double FallbackSL(ENUM_TSPOT_DIR direction, double entry_price)
 {
-   // Use active T-Spot extremes or fixed distance
+   // Use active T-Spot extremes first
    if(g_active_tspot_idx >= 0 && g_active_tspot_idx < ArraySize(g_tspots))
    {
       if(direction == TSPOT_BEARISH)
@@ -1900,13 +1908,62 @@ double FallbackSL(ENUM_TSPOT_DIR direction, double entry_price)
          return NormalizeDouble(g_tspots[g_active_tspot_idx].low - SL_Buffer_Pips * pip, _Digits);
    }
 
-   // Last resort: 50 pips
+   // Last resort: use ATR-based distance (scales with instrument volatility)
+   double atr_distance = CalculateATRDistance();
    if(direction == TSPOT_BEARISH)
-      return NormalizeDouble(entry_price + 50 * pip, _Digits);
+      return NormalizeDouble(entry_price + atr_distance, _Digits);
    else
-      return NormalizeDouble(entry_price - 50 * pip, _Digits);
+      return NormalizeDouble(entry_price - atr_distance, _Digits);
 }
 
+
+//+------------------------------------------------------------------+
+//| CALCULATE ATR-BASED SL DISTANCE                                   |
+//| Uses 14-period ATR on M15 to scale with instrument volatility    |
+//+------------------------------------------------------------------+
+double CalculateATRDistance()
+{
+   // Calculate ATR manually from M15 bars (14 period)
+   MqlRates atr_rates[];
+   ArraySetAsSeries(atr_rates, true);
+   int copied = CopyRates(_Symbol, PERIOD_M15, 0, 15, atr_rates);
+   if(copied < 15)
+   {
+      // Fallback if not enough data: use 2x recent M1 range
+      MqlRates m1_fallback[];
+      ArraySetAsSeries(m1_fallback, true);
+      int m1_copied = CopyRates(_Symbol, PERIOD_M1, 0, 14, m1_fallback);
+      if(m1_copied >= 14)
+      {
+         double sum_range = 0;
+         for(int i = 0; i < 14; i++)
+            sum_range += (m1_fallback[i].high - m1_fallback[i].low);
+         return MathMax((sum_range / 14.0) * 2.0, 10 * pip);
+      }
+      // Absolute minimum fallback
+      return 100 * pip;
+   }
+
+   // Manual ATR calculation (14-period average true range on M15)
+   double sum_tr = 0;
+   for(int i = 0; i < 14; i++)
+   {
+      double tr = atr_rates[i].high - atr_rates[i].low;
+      double tr2 = MathAbs(atr_rates[i].high - atr_rates[i+1].close);
+      double tr3 = MathAbs(atr_rates[i].low - atr_rates[i+1].close);
+      tr = MathMax(tr, MathMax(tr2, tr3));
+      sum_tr += tr;
+   }
+   double atr = sum_tr / 14.0;
+
+   // Use 1.5x ATR as stop distance (ensures room for volatility)
+   double sl_distance = atr * 1.5;
+
+   // Ensure a reasonable minimum (at least 10 pips)
+   sl_distance = MathMax(sl_distance, 10 * pip);
+
+   return sl_distance;
+}
 
 
 //+------------------------------------------------------------------+
@@ -2120,10 +2177,10 @@ void ManageStateTrailing()
 //+------------------------------------------------------------------+
 bool CheckTradeInvalidation()
 {
-   if(g_active_tspot_idx < 0 || g_active_tspot_idx >= ArraySize(g_tspots))
+   if(g_trade_tspot_idx < 0 || g_trade_tspot_idx >= ArraySize(g_tspots))
       return false;
 
-   double midline = g_tspots[g_active_tspot_idx].midline;
+   double midline = g_tspots[g_trade_tspot_idx].midline;
    if(midline == 0) return false;
 
    MqlRates m1[];
@@ -2223,6 +2280,8 @@ void CheckHideTSpots()
          // Restore visibility
          g_tspots[i].is_hidden = false;
          string base = lbl + "tspot_" + IntegerToString(g_tspots[i].index);
+         color zone_color = (g_tspots[i].direction == TSPOT_BULLISH) ? clrLime : clrRed;
+         ObjectSetInteger(0, base + "_box", OBJPROP_COLOR, zone_color);
          int alpha = (int)(TSpot_Transparency * 255 / 100);
          SetObjectTransparency(base + "_box", alpha);
          color mid_color = (g_tspots[i].direction == TSPOT_BULLISH) ? clrLime : clrRed;
@@ -2847,6 +2906,7 @@ void ResetState()
    g_tp_price = 0;
    g_position_ticket = 0;
    g_float_pnl = 0;
+   g_trade_tspot_idx = -1;
 }
 
 
@@ -2861,6 +2921,86 @@ void ResetPivotTracking()
    ArrayResize(g_pivot_low_times, 0);
    g_pivot_high_count = 0;
    g_pivot_low_count = 0;
+}
+
+
+//+------------------------------------------------------------------+
+//| HELPER: PRUNE INACTIVE ENTRIES                                    |
+//| Removes inactive entries from backing arrays to prevent          |
+//| unbounded memory growth during multi-day sessions                |
+//+------------------------------------------------------------------+
+void PruneInactiveEntries()
+{
+   // Prune T-Spots (keep active ones and the trade T-Spot)
+   int tspot_size = ArraySize(g_tspots);
+   if(tspot_size > Max_Display * 2)
+   {
+      for(int i = tspot_size - 1; i >= 0; i--)
+      {
+         if(!g_tspots[i].is_active && i != g_active_tspot_idx && i != g_trade_tspot_idx)
+         {
+            // Adjust indices that reference positions after removed element
+            if(g_active_tspot_idx > i) g_active_tspot_idx--;
+            if(g_trade_tspot_idx > i) g_trade_tspot_idx--;
+            ArrayRemove(g_tspots, i, 1);
+         }
+      }
+   }
+
+   // Prune FVGs
+   int fvg_size = ArraySize(g_fvgs);
+   if(fvg_size > Max_Display * 4)
+   {
+      for(int i = fvg_size - 1; i >= 0; i--)
+      {
+         if(!g_fvgs[i].is_active)
+            ArrayRemove(g_fvgs, i, 1);
+      }
+   }
+
+   // Prune PFVGs
+   int pfvg_size = ArraySize(g_pfvgs);
+   if(pfvg_size > Max_PFVG_Display * 4)
+   {
+      for(int i = pfvg_size - 1; i >= 0; i--)
+      {
+         if(!g_pfvgs[i].is_active)
+            ArrayRemove(g_pfvgs, i, 1);
+      }
+   }
+
+   // Prune Volume Imbalances
+   int vi_size = ArraySize(g_vis);
+   if(vi_size > Max_Display * 4)
+   {
+      for(int i = vi_size - 1; i >= 0; i--)
+      {
+         if(!g_vis[i].is_active)
+            ArrayRemove(g_vis, i, 1);
+      }
+   }
+
+   // Prune CISDs
+   int cisd_size = ArraySize(g_cisds);
+   if(cisd_size > Max_Display * 4)
+   {
+      for(int i = cisd_size - 1; i >= 0; i--)
+      {
+         if(!g_cisds[i].is_active)
+            ArrayRemove(g_cisds, i, 1);
+      }
+   }
+
+   // Prune Projections
+   int proj_size = ArraySize(g_projections);
+   if(proj_size > Max_Display * 4)
+   {
+      for(int i = proj_size - 1; i >= 0; i--)
+      {
+         if(!g_projections[i].is_active)
+            ArrayRemove(g_projections, i, 1);
+      }
+   }
 }
 
 
@@ -2888,26 +3028,27 @@ void SyncStateFromMarket()
 
 //+------------------------------------------------------------------+
 //| HELPER: SET OBJECT TRANSPARENCY                                   |
-//| MQL5 uses OBJPROP_FILL for filled rectangles                     |
+//| Uses ColorToARGB() for actual transparency (MetaTrader build 2361+)|
 //+------------------------------------------------------------------+
 void SetObjectTransparency(string name, int alpha)
 {
-   // In MQL5, transparency for rectangles is handled through color channels
-   // We use OBJPROP_FILL = true and set color with alpha
-   // Alternative approach: use border only with reduced opacity effect
+   // alpha: 0 = fully opaque, 255 = fully transparent
    if(ObjectFind(0, name) < 0) return;
 
-   // For OBJ_RECTANGLE, the fill makes it solid
-   // To simulate transparency, we keep FILL=true but rely on BACK=true
-   // which draws behind price bars creating a pseudo-transparent effect
    ObjectSetInteger(0, name, OBJPROP_BACK, true);
    ObjectSetInteger(0, name, OBJPROP_FILL, true);
 
-   // If very transparent (nearly invisible), hide the border too
-   if(alpha > 240)
-   {
-      ObjectSetInteger(0, name, OBJPROP_COLOR, clrNONE);
-   }
+   // Get current color and apply alpha channel using ColorToARGB
+   // ColorToARGB takes (color, opacity) where opacity 0=transparent, 255=opaque
+   // Our alpha parameter is 0=opaque, 255=transparent, so we invert it
+   color cur_color = (color)ObjectGetInteger(0, name, OBJPROP_COLOR);
+   if(cur_color == clrNONE) return;
+
+   int opacity = 255 - alpha;  // Convert transparency to opacity
+   if(opacity < 0) opacity = 0;
+   if(opacity > 255) opacity = 255;
+
+   ObjectSetInteger(0, name, OBJPROP_COLOR, ColorToARGB(cur_color, (uchar)opacity));
 }
 
 
