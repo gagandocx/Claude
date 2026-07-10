@@ -3138,7 +3138,7 @@ void DrawSLTPLines(double sl, double tp, datetime time)
 void ObjLbl(string name, string txt, int x, int y, color c, int fs=8, bool bold=false)
 {
    if(ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, name, OBJPROP_CORNER,    CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_CORNER,    CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
    ObjectSetString(0,  name, OBJPROP_TEXT,      txt);
@@ -3179,7 +3179,7 @@ void ObjLine(string name, int x, int y, int w)
 void ObjRect(string name, int x, int y, int w, int h, color bg, color border, int bw)
 {
    if(ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, name, OBJPROP_CORNER,      CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_CORNER,      CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE,   x);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE,   y);
    ObjectSetInteger(0, name, OBJPROP_XSIZE,       w);
