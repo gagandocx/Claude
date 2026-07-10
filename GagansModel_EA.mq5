@@ -653,8 +653,8 @@ void DetectTSpot()
       ts.close_level   = last_closed.close;
       ts.high          = last_closed.high;
       ts.low           = last_closed.low;
-      ts.time_start    = g_htf_rates[1].time;                          // Sweep candle open time (matches indicator)
-      ts.time_end      = g_htf_rates[1].time + PeriodSeconds(HTF_Timeframe); // End of sweep candle period
+      ts.time_start    = g_htf_rates[0].time;                          // New HTF candle open time (after sweep closed)
+      ts.time_end      = g_htf_rates[0].time + PeriodSeconds(HTF_Timeframe); // End of new HTF candle period
       ts.is_active     = true;
       ts.is_hidden     = false;
       ts.pattern_name  = pattern_name;
@@ -2421,8 +2421,8 @@ void InitialChartScan()
          ts.close_level   = last_closed.close;
          ts.high          = last_closed.high;
          ts.low           = last_closed.low;
-         ts.time_start    = htf[shift].time;                               // Sweep candle open time (matches indicator)
-         ts.time_end      = htf[shift].time + PeriodSeconds(HTF_Timeframe); // End of sweep candle period
+         ts.time_start    = htf[shift-1].time;                             // Candle after sweep (matches DetectTSpot logic)
+         ts.time_end      = htf[shift-1].time + PeriodSeconds(HTF_Timeframe); // End of that candle period
          ts.is_active     = true;
          ts.is_hidden     = false;
          ts.pattern_name  = pattern_name;
