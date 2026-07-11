@@ -298,6 +298,7 @@ int g_sweep_total_idx = 0;
 // Silver T-Spot tracking
 int g_silver_count = 0;
 int g_silver_total_idx = 0;
+datetime g_last_silver_h4_time = 0;
 
 // Confirmation label tracking
 int g_confirm_label_count = 0;
@@ -1617,6 +1618,9 @@ void DetectSilverTSpot()
    ArraySetAsSeries(h4, true);
    if(CopyRates(_Symbol, PERIOD_H4, 0, 4, h4) < 4) return;
 
+   // Only detect once per H4 candle — prevent spam
+   if(h4[0].time == g_last_silver_h4_time) return;
+
    // Check M1 for silver pattern
    MqlRates m1[];
    ArraySetAsSeries(m1, true);
@@ -1645,6 +1649,8 @@ void DetectSilverTSpot()
 
    if(silver_bull || silver_bear)
    {
+      g_last_silver_h4_time = h4[0].time;
+
       string label_text = expansive ? "Silver Expansive T-Spot" : "Silver T-Spot";
       string name = lbl + "silver_" + IntegerToString(g_silver_total_idx);
       g_silver_total_idx++;
