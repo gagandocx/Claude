@@ -98,8 +98,7 @@ input int    SL_Buffer_Pips             = 5;            // SL buffer beyond swin
 input int    Swing_Lookback_Bars        = 50;           // Bars to scan for swing high/low
 
 input group "=== POSITION MANAGEMENT ==="
-input int    BE_Plus_Pips               = 3;            // Pips above breakeven (reserved)
-input double Trail_Trigger_Percent      = 80.0;         // % of TP distance to trigger trail
+input int    BE_Plus_Pips               = 3;            // Pips into profit for breakeven
 input int    Trail_Distance_Pips        = 10;           // Trailing stop distance (pips)
 
 input group "=== SYSTEM ==="
@@ -117,8 +116,9 @@ enum ENUM_TRADE_STATE
 {
    STATE_NONE     = 0,   // No position, waiting for T-Spot
    STATE_MONITORING = 1, // T-Spot detected, waiting for price to touch the box
-   STATE_FULL     = 2,   // Position open, monitoring for 80% level
-   STATE_TRAILING = 4    // Trailing active
+   STATE_FULL     = 2,   // Position open, waiting for 1:1 to move to BE
+   STATE_BE       = 3,   // SL at breakeven, waiting for 1:4 to start trailing
+   STATE_TRAILING = 4    // Trailing active, TP removed
 };
 
 enum ENUM_TSPOT_DIR
@@ -1691,7 +1691,7 @@ void CalculateProjections(const TSpotData &ts)
 bool ExecuteTradeEntry(const TSpotData &ts)
 {
    // Don't open if already in a trade
-   if(g_state == STATE_FULL || g_state == STATE_TRAILING)
+   if(g_state == STATE_FULL || g_state == STATE_BE || g_state == STATE_TRAILING)
    {
       Print("Already in a position, skipping new entry");
       return false;
@@ -1706,14 +1706,14 @@ bool ExecuteTradeEntry(const TSpotData &ts)
    // Calculate SL from nearest swing high/low
    double sl = CalculateSwingStopLoss(ts.direction, entry_price, ts);
 
-   // Calculate 1:1 Risk:Reward TP
+   // Calculate 1:1.5 Risk:Reward TP
    double sl_distance = MathAbs(entry_price - sl);
    if(sl_distance <= 0) sl_distance = CalculateATRDistance();
    double tp = 0;
    if(ts.direction == TSPOT_BULLISH)
-      tp = NormalizeDouble(entry_price + sl_distance, _Digits);
+      tp = NormalizeDouble(entry_price + sl_distance * 1.5, _Digits);
    else
-      tp = NormalizeDouble(entry_price - sl_distance, _Digits);
+      tp = NormalizeDouble(entry_price - sl_distance * 1.5, _Digits);
 
    // Calculate lot size
    double lot = CalculateLotSize(sl_distance);
@@ -1745,7 +1745,7 @@ bool ExecuteTradeEntry(const TSpotData &ts)
             " | SL=", DoubleToString(sl, _Digits),
             " | TP=", DoubleToString(tp, _Digits),
             " | Lot=", DoubleToString(lot, 2),
-            " | RR=1:1");
+            " | RR=1:1.5");
 
       // Draw entry marker and SL/TP lines on chart
       DrawEntryMarker(entry_price, TimeCurrent(), ts.direction);
@@ -1923,11 +1923,14 @@ void ManagePosition()
    {
       case STATE_NONE:
       case STATE_MONITORING:
-         // Nothing to manage
          break;
 
       case STATE_FULL:
          ManageStateFull();
+         break;
+
+      case STATE_BE:
+         ManageStateBE();
          break;
 
       case STATE_TRAILING:
@@ -1939,11 +1942,10 @@ void ManagePosition()
 
 //+------------------------------------------------------------------+
 //| STATE: FULL POSITION MANAGEMENT                                   |
-//| Monitor for 80% of TP distance to activate trailing              |
+//| Monitor for 1:1 RR level to move SL to breakeven                 |
 //+------------------------------------------------------------------+
 void ManageStateFull()
 {
-   // Verify position still exists
    if(!FindOurPosition())
    {
       ResetState();
@@ -1958,33 +1960,88 @@ void ManageStateFull()
                                SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    g_float_pnl = posInfo.Profit() + posInfo.Swap();
 
-   // Check invalidation: close beyond midline
-   if(CheckTradeInvalidation())
+   // Check if price has reached 1:1 RR (SL distance in profit)
+   if(g_entry_price != 0 && g_sl_price != 0)
    {
-      trade.PositionClose(g_position_ticket);
+      double sl_distance = MathAbs(g_entry_price - g_sl_price);
+      bool hit_1to1 = false;
+
+      if(g_trade_dir == TSPOT_BULLISH)
+         hit_1to1 = (cur_price >= g_entry_price + sl_distance);
+      else
+         hit_1to1 = (cur_price <= g_entry_price - sl_distance);
+
+      if(hit_1to1)
+      {
+         // Move SL to breakeven + few pips
+         double be_sl = 0;
+         if(g_trade_dir == TSPOT_BULLISH)
+            be_sl = NormalizeDouble(g_entry_price + BE_Plus_Pips * pip, _Digits);
+         else
+            be_sl = NormalizeDouble(g_entry_price - BE_Plus_Pips * pip, _Digits);
+
+         double cur_tp = posInfo.TakeProfit();
+         trade.PositionModify(g_position_ticket, be_sl, cur_tp);
+         g_sl_price = be_sl;
+         g_state = STATE_BE;
+         g_state_text = "BE";
+         Print("1:1 reached - SL moved to BE+", BE_Plus_Pips, " pips | New SL=",
+               DoubleToString(be_sl, _Digits));
+      }
+   }
+}
+
+
+//+------------------------------------------------------------------+
+//| STATE: BREAKEVEN - WAITING FOR 1:4 TO START TRAILING             |
+//| SL is at breakeven, monitoring for 1:4 RR level                  |
+//+------------------------------------------------------------------+
+void ManageStateBE()
+{
+   if(!FindOurPosition())
+   {
       ResetState();
-      Print("Position closed - invalidation (price beyond midline)");
+      Print("Position closed (SL/TP hit or external)");
       return;
    }
 
-   // Check if price has reached 80% of the way to TP
-   if(g_tp_price != 0 && g_entry_price != 0)
+   if(!posInfo.SelectByTicket(g_position_ticket)) { ResetState(); return; }
+
+   bool is_buy = (posInfo.PositionType() == POSITION_TYPE_BUY);
+   double cur_price = is_buy ? SymbolInfoDouble(_Symbol, SYMBOL_BID) :
+                               SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   g_float_pnl = posInfo.Profit() + posInfo.Swap();
+
+   // Check if price has reached 1:4 RR
+   if(g_entry_price != 0 && g_tp_price != 0)
    {
+      // Original SL distance = TP distance / 1.5 (since TP was set at 1.5x SL)
       double tp_distance = MathAbs(g_tp_price - g_entry_price);
-      double trigger_distance = tp_distance * Trail_Trigger_Percent / 100.0;
-      bool hit_trail_trigger = false;
-
+      double orig_sl_distance = tp_distance / 1.5;
+      
+      bool hit_1to4 = false;
       if(g_trade_dir == TSPOT_BULLISH)
-         hit_trail_trigger = (cur_price >= g_entry_price + trigger_distance);
+         hit_1to4 = (cur_price >= g_entry_price + orig_sl_distance * 4.0);
       else
-         hit_trail_trigger = (cur_price <= g_entry_price - trigger_distance);
+         hit_1to4 = (cur_price <= g_entry_price - orig_sl_distance * 4.0);
 
-      if(hit_trail_trigger)
+      if(hit_1to4)
       {
+         // Remove TP and start trailing
+         double trail_dist = Trail_Distance_Pips * pip;
+         double trail_sl = 0;
+         if(g_trade_dir == TSPOT_BULLISH)
+            trail_sl = NormalizeDouble(cur_price - trail_dist, _Digits);
+         else
+            trail_sl = NormalizeDouble(cur_price + trail_dist, _Digits);
+
+         trade.PositionModify(g_position_ticket, trail_sl, 0);  // TP = 0 removes it
+         g_sl_price = trail_sl;
+         g_tp_price = 0;
          g_state = STATE_TRAILING;
          g_state_text = "Trailing";
-         Print("Trail activated at ", DoubleToString(Trail_Trigger_Percent, 0),
-               "% of TP | Price=", DoubleToString(cur_price, _Digits));
+         Print("1:4 reached - TP removed, trailing active | Trail dist=",
+               Trail_Distance_Pips, " pips");
       }
    }
 }
@@ -2007,7 +2064,6 @@ void ManageStateTrailing()
    if(!posInfo.SelectByTicket(g_position_ticket)) { ResetState(); return; }
 
    double cur_sl = posInfo.StopLoss();
-   double cur_tp = posInfo.TakeProfit();
    bool is_buy = (posInfo.PositionType() == POSITION_TYPE_BUY);
    g_float_pnl = posInfo.Profit() + posInfo.Swap();
 
@@ -2017,10 +2073,9 @@ void ManageStateTrailing()
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double new_sl = NormalizeDouble(bid - trail_dist, _Digits);
-      // Only move SL in favorable direction (up for buy)
       if(new_sl > cur_sl + point_size)
       {
-         trade.PositionModify(g_position_ticket, new_sl, cur_tp);
+         trade.PositionModify(g_position_ticket, new_sl, 0);
          g_sl_price = new_sl;
       }
    }
@@ -2028,10 +2083,9 @@ void ManageStateTrailing()
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double new_sl = NormalizeDouble(ask + trail_dist, _Digits);
-      // Only move SL in favorable direction (down for sell)
       if(cur_sl == 0 || new_sl < cur_sl - point_size)
       {
-         trade.PositionModify(g_position_ticket, new_sl, cur_tp);
+         trade.PositionModify(g_position_ticket, new_sl, 0);
          g_sl_price = new_sl;
       }
    }
@@ -2507,7 +2561,7 @@ void CreateDashboard()
    ObjLbl(lbl+"dash_v_entry", "---",        x+120, r+row,  clrWhite,  8);
    ObjLbl(lbl+"dash_l_sl",    "SL",         x, r+row*2,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_sl",    "---",        x+120, r+row*2, clrWhite, 8);
-   ObjLbl(lbl+"dash_l_tp",    "TP (1:1)",   x, r+row*3,   clrSilver, 8);
+   ObjLbl(lbl+"dash_l_tp",    "TP (1:1.5)", x, r+row*3,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_tp",    "---",        x+120, r+row*3, clrWhite, 8);
    ObjLbl(lbl+"dash_l_pnl",   "P/L",        x, r+row*4,   clrSilver, 8);
    ObjLbl(lbl+"dash_v_pnl",   "---",        x+120, r+row*4, clrWhite, 8);
@@ -2537,6 +2591,7 @@ void UpdateDashboard()
    // State
    color state_col = clrYellow;
    if(g_state == STATE_FULL) state_col = clrLime;
+   if(g_state == STATE_BE) state_col = clrDodgerBlue;
    if(g_state == STATE_TRAILING) state_col = clrAqua;
    if(g_state == STATE_MONITORING) state_col = clrOrange;
    ObjSet(lbl+"dash_v_state", g_state_text, state_col);
