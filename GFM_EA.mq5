@@ -91,9 +91,10 @@ input ENUM_LINE_STYLE HTF_Line_Style    = STYLE_DOT;    // HTF start line style
 input color  HTF_Line_Color             = clrBlack;     // HTF start line color
 
 input group "=== ENTRY & RISK MANAGEMENT ==="
-input double Risk_Percent               = 1.0;          // Risk % per trade
+input double Risk_Percent               = 5.0;          // Risk % per trade
 input double Max_Lot                    = 10.0;         // Maximum lot size
-input double Min_Lot                    = 0.01;         // Minimum lot size
+input double Min_Lot                    = 0.1;          // Minimum lot size
+input int    Invalidation_Closes        = 3;            // Consecutive closes beyond midline to invalidate
 input int    SL_Buffer_Pips             = 5;            // SL buffer beyond swing (pips)
 input int    Swing_Lookback_Bars        = 50;           // Bars to scan for swing high/low
 
@@ -158,6 +159,7 @@ struct TSpotData
    bool           pivot_formed;   // Pivot has formed
    bool           confirmed;      // Sweep confirmation completed
    datetime       confirm_time;   // When confirmation occurred
+   int            invalidation_count; // Consecutive closes beyond midline
    int            index;          // Array index for naming
 };
 
@@ -673,6 +675,7 @@ void DetectTSpot()
       ts.pivot_formed  = false;
       ts.confirmed     = false;
       ts.confirm_time  = 0;
+      ts.invalidation_count = 0;
       ts.index         = g_tspot_total_idx;
 
       // Add to array
@@ -2134,15 +2137,31 @@ void CheckAllInvalidation()
 
       double midline = g_tspots[i].midline;
 
-      bool invalidated = false;
+      bool beyond_midline = false;
       if(g_tspots[i].direction == TSPOT_BEARISH && m1[0].close > midline)
-         invalidated = true;
+         beyond_midline = true;
       if(g_tspots[i].direction == TSPOT_BULLISH && m1[0].close < midline)
-         invalidated = true;
+         beyond_midline = true;
 
-      if(invalidated)
+      if(beyond_midline)
+         g_tspots[i].invalidation_count++;
+      else
+         g_tspots[i].invalidation_count = 0;
+
+      if(g_tspots[i].invalidation_count >= Invalidation_Closes)
       {
          g_tspots[i].is_active = false;
+
+         // Force-close position if it was linked to this T-Spot
+         if((g_state == STATE_FULL || g_state == STATE_BE) && i == g_trade_tspot_idx)
+         {
+            if(g_position_ticket > 0)
+            {
+               trade.PositionClose(g_position_ticket);
+               Print("Position force-closed - T-Spot invalidated after ", Invalidation_Closes, " closes beyond midline");
+            }
+            ResetState();
+         }
 
          if(Delete_TSpots_Against)
          {
@@ -2180,12 +2199,14 @@ void CheckHideTSpots()
       if(!g_tspots[i].is_active) continue;
 
       double midline = g_tspots[i].midline;
-      bool should_hide = false;
+      bool beyond_midline = false;
 
       if(g_tspots[i].direction == TSPOT_BEARISH && m1[0].close > midline)
-         should_hide = true;
+         beyond_midline = true;
       if(g_tspots[i].direction == TSPOT_BULLISH && m1[0].close < midline)
-         should_hide = true;
+         beyond_midline = true;
+
+      bool should_hide = (g_tspots[i].invalidation_count >= Invalidation_Closes);
 
       if(should_hide && !g_tspots[i].is_hidden)
       {
@@ -2495,6 +2516,7 @@ void InitialChartScan()
          ts.pivot_formed  = false;
          ts.confirmed     = false;
          ts.confirm_time  = 0;
+         ts.invalidation_count = 0;
          ts.index         = g_tspot_total_idx;
 
          int size = ArraySize(g_tspots);
