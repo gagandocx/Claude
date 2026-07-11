@@ -2466,63 +2466,62 @@ void InitialChartScan()
 void CreateDashboard()
 {
    ObjectsDeleteAll(0, lbl + "dash_");
-   int x = 50, y = 30, row = 15;
+   int x = 20, y = 50, row = 18;
    color bg = C'20,28,42', border = C'40,55,85';
 
-   ObjRect(lbl+"dash_bg", x-8, y-8, 280, 380, bg, border, 1);
+   ObjRect(lbl+"dash_bg", x-10, y-10, 260, 420, bg, border, 1);
 
    // Title
-   ObjLbl(lbl+"dash_bullet", "%A0",        x,    y,    C'0,180,100', 11, true);
-   ObjLbl(lbl+"dash_title",  " GFM EA v3", x+14, y, clrWhite, 9, true);
-   ObjLbl(lbl+"dash_sub",    " T-Spot Touch Entry Model", x+14, y+13, C'150,150,150', 7, false);
-   ObjLine(lbl+"dash_d0", x, y+27, 260);
+   ObjLbl(lbl+"dash_title",  "GFM EA v3", x, y, clrWhite, 9, true);
+   ObjLbl(lbl+"dash_sub",    "T-Spot Touch Entry Model", x, y+14, C'150,150,150', 7, false);
+   ObjLine(lbl+"dash_d0", x, y+28, 240);
 
-   int r = y + 36;
+   int r = y + 38;
    // Model info
    string model_name = TFStr(PERIOD_CURRENT) + "-" + TFStr(HTF_Timeframe) + " Model";
    ObjLbl(lbl+"dash_l_model", "Model",      x, r,       clrSilver, 8);
-   ObjLbl(lbl+"dash_v_model", model_name,   x+110, r,   clrWhite,  8);
+   ObjLbl(lbl+"dash_v_model", model_name,   x+120, r,   clrWhite,  8);
    ObjLbl(lbl+"dash_l_htf",   "HTF Bias",   x, r+row,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_htf",   "Neutral",    x+110, r+row, clrGray, 8);
+   ObjLbl(lbl+"dash_v_htf",   "Neutral",    x+120, r+row, clrGray, 8);
    ObjLbl(lbl+"dash_l_time",  "HTF Close",  x, r+row*2, clrSilver, 8);
-   ObjLbl(lbl+"dash_v_time",  "---",        x+110, r+row*2, clrWhite, 8);
+   ObjLbl(lbl+"dash_v_time",  "---",        x+120, r+row*2, clrWhite, 8);
    ObjLbl(lbl+"dash_l_state", "State",      x, r+row*3, clrSilver, 8);
-   ObjLbl(lbl+"dash_v_state", "Waiting",    x+110, r+row*3, clrYellow, 8);
-   ObjLine(lbl+"dash_d1", x, r+row*4+2, 260);
+   ObjLbl(lbl+"dash_v_state", "Waiting",    x+120, r+row*3, clrYellow, 8);
+   ObjLine(lbl+"dash_d1", x, r+row*4+4, 240);
 
-   r = r + row*4 + 10;
+   r = r + row*4 + 14;
    ObjLbl(lbl+"dash_l_tspot", "T-Spot",     x, r,         clrSilver, 8);
-   ObjLbl(lbl+"dash_v_tspot", "None",       x+110, r,      clrGray,   8);
+   ObjLbl(lbl+"dash_v_tspot", "None",       x+120, r,      clrGray,   8);
    ObjLbl(lbl+"dash_l_pat",   "Pattern",    x, r+row,     clrSilver, 8);
-   ObjLbl(lbl+"dash_v_pat",   "---",        x+110, r+row,  clrWhite,  8);
+   ObjLbl(lbl+"dash_v_pat",   "---",        x+120, r+row,  clrWhite,  8);
    ObjLbl(lbl+"dash_l_mid",   "Midline",    x, r+row*2,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_mid",   "---",        x+110, r+row*2, clrWhite, 8);
+   ObjLbl(lbl+"dash_v_mid",   "---",        x+120, r+row*2, clrWhite, 8);
    ObjLbl(lbl+"dash_l_cls",   "Close Lvl",  x, r+row*3,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_cls",   "---",        x+110, r+row*3, clrWhite, 8);
-   ObjLine(lbl+"dash_d2", x, r+row*4+2, 260);
+   ObjLbl(lbl+"dash_v_cls",   "---",        x+120, r+row*3, clrWhite, 8);
+   ObjLine(lbl+"dash_d2", x, r+row*4+4, 240);
 
-   r = r + row*4 + 10;
+   r = r + row*4 + 14;
    ObjLbl(lbl+"dash_l_conf",  "Confirm",    x, r,         clrSilver, 8);
-   ObjLbl(lbl+"dash_v_conf",  "---",        x+110, r,      clrGray,   8);
+   ObjLbl(lbl+"dash_v_conf",  "---",        x+120, r,      clrGray,   8);
    ObjLbl(lbl+"dash_l_entry", "Entry",      x, r+row,     clrSilver, 8);
-   ObjLbl(lbl+"dash_v_entry", "---",        x+110, r+row,  clrWhite,  8);
+   ObjLbl(lbl+"dash_v_entry", "---",        x+120, r+row,  clrWhite,  8);
    ObjLbl(lbl+"dash_l_sl",    "SL",         x, r+row*2,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_sl",    "---",        x+110, r+row*2, clrWhite, 8);
-   ObjLbl(lbl+"dash_l_tp",    "TP (1:1)",  x, r+row*3,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_tp",    "---",        x+110, r+row*3, clrWhite, 8);
+   ObjLbl(lbl+"dash_v_sl",    "---",        x+120, r+row*2, clrWhite, 8);
+   ObjLbl(lbl+"dash_l_tp",    "TP (1:1)",   x, r+row*3,   clrSilver, 8);
+   ObjLbl(lbl+"dash_v_tp",    "---",        x+120, r+row*3, clrWhite, 8);
    ObjLbl(lbl+"dash_l_pnl",   "P/L",        x, r+row*4,   clrSilver, 8);
-   ObjLbl(lbl+"dash_v_pnl",   "---",        x+110, r+row*4, clrWhite, 8);
-   ObjLine(lbl+"dash_d3", x, r+row*5+2, 260);
+   ObjLbl(lbl+"dash_v_pnl",   "---",        x+120, r+row*4, clrWhite, 8);
+   ObjLine(lbl+"dash_d3", x, r+row*5+4, 240);
 
-   r = r + row*5 + 10;
-   ObjLbl(lbl+"dash_l_fvg",   "FVGs",       x, r,         clrSilver, 7);
-   ObjLbl(lbl+"dash_v_fvg",   "0",          x+110, r,      clrGray,   7);
-   ObjLbl(lbl+"dash_l_pfvg",  "PFVGs",      x, r+row,     clrSilver, 7);
-   ObjLbl(lbl+"dash_v_pfvg",  "0",          x+110, r+row,  clrDodgerBlue, 7);
-   ObjLbl(lbl+"dash_l_vi",    "Vol Imb",    x, r+row*2,   clrSilver, 7);
-   ObjLbl(lbl+"dash_v_vi",    "0",          x+110, r+row*2, clrOrange, 7);
-   ObjLbl(lbl+"dash_l_cisd",  "CISDs",      x, r+row*3,   clrSilver, 7);
-   ObjLbl(lbl+"dash_v_cisd",  "0",          x+110, r+row*3, clrYellow, 7);
+   r = r + row*5 + 14;
+   ObjLbl(lbl+"dash_l_fvg",   "FVGs",       x, r,         clrSilver, 8);
+   ObjLbl(lbl+"dash_v_fvg",   "0",          x+120, r,      clrGray,   8);
+   ObjLbl(lbl+"dash_l_pfvg",  "PFVGs",      x, r+row,     clrSilver, 8);
+   ObjLbl(lbl+"dash_v_pfvg",  "0",          x+120, r+row,  clrDodgerBlue, 8);
+   ObjLbl(lbl+"dash_l_vi",    "Vol Imb",    x, r+row*2,   clrSilver, 8);
+   ObjLbl(lbl+"dash_v_vi",    "0",          x+120, r+row*2, clrOrange, 8);
+   ObjLbl(lbl+"dash_l_cisd",  "CISDs",      x, r+row*3,   clrSilver, 8);
+   ObjLbl(lbl+"dash_v_cisd",  "0",          x+120, r+row*3, clrYellow, 8);
 
    ChartRedraw(0);
 }
@@ -3152,7 +3151,7 @@ void ObjLbl(string name, string txt, int x, int y, color c, int fs=8, bool bold=
    ObjectSetString(0,  name, OBJPROP_TEXT,      txt);
    ObjectSetInteger(0, name, OBJPROP_COLOR,     c);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE,  fs);
-   ObjectSetString(0,  name, OBJPROP_FONT,      bold ? "Arial Bold" : "Arial");
+   ObjectSetString(0,  name, OBJPROP_FONT,      bold ? "Consolas" : "Consolas");
    ObjectSetInteger(0, name, OBJPROP_BACK,      false);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
 }
@@ -3175,9 +3174,9 @@ void ObjSet(string name, string txt, color c)
 void ObjLine(string name, int x, int y, int w)
 {
    string d = "";
-   int n = (int)(w / 5.5);
-   for(int i = 0; i < n; i++) d += "-";
-   ObjLbl(name, d, x, y, C'40,55,85', 6);
+   int n = (int)(w / 6.0);
+   for(int i = 0; i < n; i++) d += "_";
+   ObjLbl(name, d, x, y, C'40,55,85', 7);
 }
 
 
