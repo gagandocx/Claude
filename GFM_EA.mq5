@@ -1775,8 +1775,8 @@ bool ExecuteTradeEntry(const TSpotData &ts)
 
 
 //+------------------------------------------------------------------+
-//| CALCULATE SWING-BASED STOP LOSS                                   |
-//| Uses pivot high/low detection (lookback 5 bars on M1)            |
+//| CALCULATE FVG-BASED STOP LOSS                                     |
+//| Finds nearest FVG below/above T-Spot and places SL at its edge  |
 //+------------------------------------------------------------------+
 double CalculateSwingStopLoss(ENUM_TSPOT_DIR direction, double entry_price, const TSpotData &ts)
 {
@@ -1784,78 +1784,79 @@ double CalculateSwingStopLoss(ENUM_TSPOT_DIR direction, double entry_price, cons
    ArraySetAsSeries(m1_rates, true);
 
    int bars_copied = CopyRates(_Symbol, PERIOD_M1, 0, Swing_Lookback_Bars, m1_rates);
-   if(bars_copied < 10) return FallbackSL(direction, entry_price, ts);
+   if(bars_copied < 5) return FallbackSL(direction, entry_price, ts);
 
    double sl = 0;
+   double box_bottom = MathMin(ts.midline, ts.close_level);
+   double box_top = MathMax(ts.midline, ts.close_level);
 
-   if(direction == TSPOT_BEARISH)
+   if(direction == TSPOT_BULLISH)
    {
-      // Find nearest swing HIGH above entry price
-      // Pivot high: bar[i] higher than 5 bars on each side (lookback 5)
-      double nearest_swing_high = 0;
+      // Find bullish FVG (gap up) below the T-Spot box
+      // Bullish FVG: m1_rates[i].low > m1_rates[i+2].high
+      // We want the FVG whose top (m1_rates[i].low) is closest to and below box_bottom
+      double best_fvg_sl = 0;
       double min_distance = DBL_MAX;
 
-      for(int i = 5; i < bars_copied - 5; i++)
+      for(int i = 0; i < bars_copied - 2; i++)
       {
-         bool is_pivot_high = true;
-         for(int j = 1; j <= 5; j++)
+         // Check for bullish FVG
+         if(m1_rates[i].low > m1_rates[i+2].high)
          {
-            if(m1_rates[i].high <= m1_rates[i-j].high ||
-               m1_rates[i].high <= m1_rates[i+j].high)
-            {
-               is_pivot_high = false;
-               break;
-            }
-         }
+            double fvg_top = m1_rates[i].low;    // Top of the FVG gap
+            double fvg_bottom = m1_rates[i+2].high; // Bottom of the FVG gap
 
-         if(is_pivot_high && m1_rates[i].high > entry_price)
-         {
-            double dist = m1_rates[i].high - entry_price;
-            if(dist < min_distance)
+            // FVG must be below the T-Spot box bottom
+            if(fvg_top <= box_bottom)
             {
-               min_distance = dist;
-               nearest_swing_high = m1_rates[i].high;
+               double dist = box_bottom - fvg_top;
+               if(dist < min_distance)
+               {
+                  min_distance = dist;
+                  // SL at the low of the candle that formed the FVG bottom
+                  best_fvg_sl = m1_rates[i+2].low;
+               }
             }
          }
       }
 
-      if(nearest_swing_high > 0)
-         sl = nearest_swing_high + SL_Buffer_Pips * pip;
+      if(best_fvg_sl > 0)
+         sl = best_fvg_sl - SL_Buffer_Pips * pip;
       else
          sl = FallbackSL(direction, entry_price, ts);
    }
-   else // TSPOT_BULLISH
+   else // TSPOT_BEARISH
    {
-      // Find nearest swing LOW below entry price
-      double nearest_swing_low = 0;
+      // Find bearish FVG (gap down) above the T-Spot box
+      // Bearish FVG: m1_rates[i].high < m1_rates[i+2].low
+      // We want the FVG whose bottom (m1_rates[i].high) is closest to and above box_top
+      double best_fvg_sl = 0;
       double min_distance = DBL_MAX;
 
-      for(int i = 5; i < bars_copied - 5; i++)
+      for(int i = 0; i < bars_copied - 2; i++)
       {
-         bool is_pivot_low = true;
-         for(int j = 1; j <= 5; j++)
+         // Check for bearish FVG
+         if(m1_rates[i].high < m1_rates[i+2].low)
          {
-            if(m1_rates[i].low >= m1_rates[i-j].low ||
-               m1_rates[i].low >= m1_rates[i+j].low)
-            {
-               is_pivot_low = false;
-               break;
-            }
-         }
+            double fvg_bottom = m1_rates[i].high; // Bottom of the FVG gap
+            double fvg_top = m1_rates[i+2].low;   // Top of the FVG gap
 
-         if(is_pivot_low && m1_rates[i].low < entry_price)
-         {
-            double dist = entry_price - m1_rates[i].low;
-            if(dist < min_distance)
+            // FVG must be above the T-Spot box top
+            if(fvg_bottom >= box_top)
             {
-               min_distance = dist;
-               nearest_swing_low = m1_rates[i].low;
+               double dist = fvg_bottom - box_top;
+               if(dist < min_distance)
+               {
+                  min_distance = dist;
+                  // SL at the high of the candle that formed the FVG top
+                  best_fvg_sl = m1_rates[i+2].high;
+               }
             }
          }
       }
 
-      if(nearest_swing_low > 0)
-         sl = nearest_swing_low - SL_Buffer_Pips * pip;
+      if(best_fvg_sl > 0)
+         sl = best_fvg_sl + SL_Buffer_Pips * pip;
       else
          sl = FallbackSL(direction, entry_price, ts);
    }
