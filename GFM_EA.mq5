@@ -740,24 +740,28 @@ void DrawTSpotZone(const TSpotData &ts)
                 ts.time_start, top_price,
                 ts.time_end, bot_price);
 
-   color zone_color = (ts.direction == TSPOT_BULLISH) ? clrLime : clrRed;
+   // Calculate muted color based on transparency (simulates alpha on dark background)
+   int intensity = (int)(255.0 * (100 - TSpot_Transparency) / 100.0);
+   intensity = MathMax(15, MathMin(intensity, 255));
+   
+   color zone_color;
+   if(ts.direction == TSPOT_BULLISH)
+      zone_color = (color)StringToColor(StringFormat("%d,%d,%d", 0, intensity, 0));
+   else
+      zone_color = (color)StringToColor(StringFormat("%d,%d,%d", intensity, 0, 0));
+
    ObjectSetInteger(0, box_name, OBJPROP_COLOR, zone_color);
    ObjectSetInteger(0, box_name, OBJPROP_FILL, true);
    ObjectSetInteger(0, box_name, OBJPROP_BACK, true);
    ObjectSetInteger(0, box_name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, box_name, OBJPROP_HIDDEN, true);
-   // Transparency (higher = more transparent, MQL5 uses 0-255 where 0=opaque)
-   int alpha = (int)(TSpot_Transparency * 255 / 100);
-   ObjectSetInteger(0, box_name, OBJPROP_FILL, true);
-   // Use color with alpha channel approach - fill color
-   SetObjectTransparency(box_name, alpha);
 
    // Midline (OBJ_TREND horizontal)
    string mid_name = base + "_mid";
    ObjectCreate(0, mid_name, OBJ_TREND, 0,
                 ts.time_start, ts.midline,
                 ts.time_end, ts.midline);
-   color mid_color = (ts.direction == TSPOT_BULLISH) ? clrLime : clrRed;
+   color mid_color = (ts.direction == TSPOT_BULLISH) ? C'0,180,0' : C'180,0,0';
    ObjectSetInteger(0, mid_name, OBJPROP_COLOR, mid_color);
    ObjectSetInteger(0, mid_name, OBJPROP_WIDTH, Midline_Width);
    ObjectSetInteger(0, mid_name, OBJPROP_STYLE, TSpot_Line_Style);
@@ -773,7 +777,7 @@ void DrawTSpotZone(const TSpotData &ts)
       ObjectCreate(0, close_name, OBJ_TREND, 0,
                    ts.time_start, ts.close_level,
                    ts.time_end, ts.close_level);
-      color close_color = (ts.direction == TSPOT_BULLISH) ? clrDarkGreen : clrDarkRed;
+      color close_color = (ts.direction == TSPOT_BULLISH) ? C'0,100,0' : C'100,0,0';
       ObjectSetInteger(0, close_name, OBJPROP_COLOR, close_color);
       ObjectSetInteger(0, close_name, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, close_name, OBJPROP_STYLE, TSpot_Line_Style);
@@ -2222,13 +2226,17 @@ void CheckHideTSpots()
          // Restore visibility
          g_tspots[i].is_hidden = false;
          string base = lbl + "tspot_" + IntegerToString(g_tspots[i].index);
-         color zone_color = (g_tspots[i].direction == TSPOT_BULLISH) ? clrLime : clrRed;
+         int intensity = (int)(255.0 * (100 - TSpot_Transparency) / 100.0);
+         intensity = MathMax(15, MathMin(intensity, 255));
+         color zone_color;
+         if(g_tspots[i].direction == TSPOT_BULLISH)
+            zone_color = (color)StringToColor(StringFormat("%d,%d,%d", 0, intensity, 0));
+         else
+            zone_color = (color)StringToColor(StringFormat("%d,%d,%d", intensity, 0, 0));
          ObjectSetInteger(0, base + "_box", OBJPROP_COLOR, zone_color);
-         int alpha = (int)(TSpot_Transparency * 255 / 100);
-         SetObjectTransparency(base + "_box", alpha);
-         color mid_color = (g_tspots[i].direction == TSPOT_BULLISH) ? clrLime : clrRed;
+         color mid_color = (g_tspots[i].direction == TSPOT_BULLISH) ? C'0,180,0' : C'180,0,0';
          ObjectSetInteger(0, base + "_mid", OBJPROP_COLOR, mid_color);
-         color close_color = (g_tspots[i].direction == TSPOT_BULLISH) ? clrDarkGreen : clrDarkRed;
+         color close_color = (g_tspots[i].direction == TSPOT_BULLISH) ? C'0,100,0' : C'100,0,0';
          ObjectSetInteger(0, base + "_close", OBJPROP_COLOR, close_color);
       }
    }
