@@ -3205,6 +3205,7 @@ void ObjRect(string name, int x, int y, int w, int h, color bg, color border, in
 //+------------------------------------------------------------------+
 string TFStr(ENUM_TIMEFRAMES tf)
 {
+   if(tf == PERIOD_CURRENT) tf = (ENUM_TIMEFRAMES)Period();
    switch(tf)
    {
       case PERIOD_M1:  return "1M";
