@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                           GagansModel_EA.mq5     |
+//|                                           GFM_EA.mq5     |
 //|                    T-Spot Trading Model Expert Advisor v3.0       |
 //|                    Full Chart Drawing + Touch Entry System        |
 //|                                                                  |
@@ -9,7 +9,7 @@
 //|  - Touch Entry: price touches T-Spot box -> immediate market order|
 //|  - Swing-based SL, 1:1 RR TP, 80% trailing activation           |
 //+------------------------------------------------------------------+
-#property copyright "GagansModel EA v3.0 - T-Spot Touch Entry"
+#property copyright "GFM EA v3.0 - T-Spot Touch Entry"
 #property version   "3.00"
 #property strict
 
@@ -104,7 +104,7 @@ input int    Trail_Distance_Pips        = 10;           // Trailing stop distanc
 
 input group "=== SYSTEM ==="
 input int    Magic_Number               = 777000;       // Magic Number
-input string EA_Comment                 = "GagansModel";// Trade comment
+input string EA_Comment                 = "GFM";// Trade comment
 input int    Max_Slippage               = 10;           // Max slippage (points)
 input bool   Show_Dashboard             = true;         // Show info panel
 
@@ -372,7 +372,7 @@ int OnInit()
    // Initial scan for existing structures
    InitialChartScan();
 
-   Print("GagansModel EA v3.0 initialized | T-Spot Touch Entry | ",
+   Print("GFM EA v3.0 initialized | T-Spot Touch Entry | ",
          TFStr(PERIOD_CURRENT), "-", TFStr(HTF_Timeframe), " Model");
 
    return INIT_SUCCEEDED;
@@ -2473,7 +2473,7 @@ void CreateDashboard()
 
    // Title
    ObjLbl(lbl+"dash_bullet", "%A0",        x,    y,    C'0,180,100', 11, true);
-   ObjLbl(lbl+"dash_title",  " GagansModel EA v3", x+14, y, clrWhite, 9, true);
+   ObjLbl(lbl+"dash_title",  " GFM EA v3", x+14, y, clrWhite, 9, true);
    ObjLbl(lbl+"dash_sub",    " T-Spot Touch Entry Model", x+14, y+13, C'150,150,150', 7, false);
    ObjLine(lbl+"dash_d0", x, y+27, 260);
 

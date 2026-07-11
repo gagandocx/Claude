@@ -2,18 +2,18 @@
 setlocal enabledelayedexpansion
 
 :: ------------------------------------------------------------
-::  GagansModel EA - T-Spot Model Update
-::  1. Download latest GagansModel_EA.mq5 from GitHub
+::  GFM EA - T-Spot Model Update
+::  1. Download latest GFM_EA.mq5 from GitHub
 ::  2. Copy EA to local folder + MT5 Experts\Advisors
 ::  3. Compile EA using MetaEditor
 :: ------------------------------------------------------------
 
-title GagansModel EA - T-Spot Model Update
+title GFM EA - T-Spot Model Update
 color 0B
 
 echo.
 echo ============================================================
-echo   GagansModel EA - T-Spot Model Update
+echo   GFM EA - T-Spot Model Update
 echo   Downloads latest from GitHub and sets up for MT5
 echo ============================================================
 echo.
@@ -21,9 +21,9 @@ echo.
 :: ------------------------------------------------------------
 :: CONFIGURATION
 :: ------------------------------------------------------------
-set "EA_FILE=GagansModel_EA.mq5"
-set "EA_URL=https://raw.githubusercontent.com/gagandocx/Claude/GFM/GagansModel_EA.mq5"
-set "TARGET_DIR=F:\Automation\EA Testing\TFM\v1"
+set "EA_FILE=GFM_EA.mq5"
+set "EA_URL=https://raw.githubusercontent.com/gagandocx/Claude/GFM/GFM_EA.mq5"
+set "TARGET_DIR=F:\Automation\EA Testing\GFM\v1"
 
 :: MT5 Terminal: EA runs here
 set "MT5_TERMINAL_ID=930119AA53207C8778B41171FBFFB46F"
@@ -96,14 +96,14 @@ if not defined METAEDITOR (
     goto :done
 )
 
-:: Compile GagansModel EA
+:: Compile GFM EA
 if exist "%MT5_EXPERTS%\%EA_FILE%" (
     set "COMPILE_TARGET=%MT5_EXPERTS%\%EA_FILE%"
     echo        Compiling: !COMPILE_TARGET!
     "%METAEDITOR%" /compile:"!COMPILE_TARGET!" /log >nul 2>&1
     timeout /t 8 /nobreak >nul
 
-    set "LOG_FILE=%MT5_EXPERTS%\GagansModel_EA.log"
+    set "LOG_FILE=%MT5_EXPERTS%\GFM_EA.log"
     if exist "!LOG_FILE!" (
         findstr /i " error " "!LOG_FILE!" >nul
         if !errorlevel! equ 0 (
