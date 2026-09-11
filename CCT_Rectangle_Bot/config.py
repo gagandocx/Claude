@@ -1,14 +1,24 @@
 """
-Configuration for CCT Rectangle Trading Bot.
-AGGRESSIVE MODE: Maximum compounding with quality signal detection.
+Configuration for CCT Rectangle Trading Bot (v1).
 
-Strategy: Keep original high-quality CCT detection (66%+ win rate)
-while maximizing trade opportunities and using ultra-aggressive sizing.
+    DO NOT TRADE THIS CONFIGURATION.
 
-With 60%+ win rate at 3:1 RR and 20% risk per trade compounding:
-- Each win adds +60% to equity (3:1 * 20%)
-- Each loss costs -20% of equity
-- 10 wins and 5 losses compounded ~ 500%+ returns
+The 775%/month result these settings were tuned to produce is a measurement
+artefact, not an edge. See cct2/AUDIT.md for the six defects that produced it, the
+largest being that the backtester timestamped 4H direction signals at the bar's
+OPEN and additionally read the following bar's open, giving the M15 sweep search up
+to eight hours of look-ahead.
+
+`RISK_PER_TRADE = 0.25` below is roughly 0.8x Kelly *for the win rate that
+look-ahead produced*. Against the honestly measured win rate it is far above
+Kelly, where expected log-growth is negative: the stake is a bet on the order of
+the wins rather than on the edge.
+
+Kept in the tree for the audit's reproduction and for git history. The corrected
+implementation is `cct2/`:
+
+    python -m cct2.run audit        # prices each defect on identical bars
+    python -m cct2.run selftest     # 30 invariants, incl. no-edge-in-noise
 """
 
 # =============================================================================

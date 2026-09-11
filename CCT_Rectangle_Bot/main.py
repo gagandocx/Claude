@@ -1,12 +1,20 @@
 """
-CCT Rectangle Bot - Main Entry Point (AGGRESSIVE MODE)
+CCT Rectangle Bot v1 - Main Entry Point (SUPERSEDED)
 
-Optimized for maximum trade frequency and profitability:
-- 50x leverage with 8% risk per trade
-- Compounding enabled (position size grows with equity)
-- Relaxed filters for more trade signals
-- Multiple weakness signals per direction candle
-- Target: 500%+ monthly returns
+    The returns this script prints are not real. Do not trade them.
+
+This backtester can see up to eight hours into the future, enters setups that had
+already been stopped out, fabricates outcomes when exit data is missing, applies
+compounding out of chronological order, and charges no transaction costs. Full
+accounting in cct2/AUDIT.md.
+
+Use the corrected engine instead:
+
+    python -m cct2.run selftest
+    python -m cct2.run audit
+    python -m cct2.run backtest --csv your_m1_data.csv
+
+Retained so `cct2/audit.py` has something to reproduce, and for git history.
 
 Usage:
     python main.py
@@ -26,8 +34,13 @@ from backtester import BacktestEngine
 
 def print_banner():
     """Print the bot banner."""
+    print("\n" + "!" * 60)
+    print("  WARNING: v1 backtester. Its results are a measurement artefact")
+    print("  (look-ahead, no setup invalidation, fabricated fills, zero costs).")
+    print("  See cct2/AUDIT.md. Use `python -m cct2.run backtest` instead.")
+    print("!" * 60)
     print("\n" + "=" * 60)
-    print("    CCT RECTANGLE BOT - AGGRESSIVE MODE")
+    print("    CCT RECTANGLE BOT - AGGRESSIVE MODE (SUPERSEDED)")
     print("    Maximum Frequency & Profitability Configuration")
     print("=" * 60)
     print(f"\n  Symbol:          {config.SYMBOL}")
