@@ -71,7 +71,7 @@ class TestTradeSignal:
             sl_pips=150.0,
             tp_pips=250.0,
             lot_size=0.10,
-            model_name="transformer",
+            model_name="momentum",
             regime="trending"
         )
         assert signal.action == "BUY"
@@ -88,7 +88,7 @@ class TestTradeSignal:
             sl_pips=100.0,
             tp_pips=200.0,
             lot_size=0.05,
-            model_name="lstm",
+            model_name="momentum",
             regime="volatile"
         )
         d = signal.to_dict()
@@ -106,14 +106,14 @@ class TestTradeSignal:
             sl_pips=150.0,
             tp_pips=250.0,
             lot_size=0.10,
-            model_name="ensemble",
+            model_name="momentum",
             regime="trending"
         )
         csv = signal.to_csv_row()
         parts = csv.split(",")
         assert len(parts) == 9
         assert parts[2] == "BUY"
-        assert parts[7] == "ensemble"
+        assert parts[7] == "momentum"
 
 
 # ─────────────────────────────────────────────
@@ -266,17 +266,33 @@ class TestRegimeDetector:
 class TestSignalGenerator:
     """Integration tests for signal generation."""
 
-    def test_hold_signal_when_models_not_loaded(self, signal_config, mock_features, mock_prices):
-        """Test that unloaded models always produce HOLD."""
+    def test_hold_signal_when_momentum_flat(self, signal_config, mock_features):
+        """Test that flat price action (no momentum) produces HOLD.
+
+        The rule-based generator derives direction from momentum. When price
+        movement over the lookback window is below the FLAT threshold and the
+        consolidation range is too small for mean-reversion, it must HOLD.
+        """
         gen = SignalGenerator(signal_config=signal_config)
-        # models_loaded defaults to False, so all signals should be HOLD
+        # Perfectly flat prices: no momentum, tiny range -> FLAT -> HOLD
+        n = 60
+        flat = pd.DataFrame({
+            "Open": [2000.0] * n,
+            "High": [2000.2] * n,
+            "Low": [1999.8] * n,
+            "Close": [2000.0] * n,
+            "Volume": [1000] * n,
+        })
         signal = gen.generate_signal(
             features=mock_features,
-            prices=mock_prices,
-            atr=5.0,
-            current_price=2000.0
+            prices=flat,
+            atr=1.0,
+            current_price=2000.0,
+            prices_m1=flat,
         )
         assert signal.action == "HOLD"
+        assert signal.lot_size == 0.0
+        assert signal.model_name == "momentum"
 
     def test_signal_has_required_fields(self, signal_config, mock_features, mock_prices):
         """Test that generated signals have all required fields."""
@@ -320,20 +336,38 @@ class TestSignalGenerator:
         if signal.action == "HOLD":
             assert signal.lot_size == 0.0
 
-    def test_models_loaded_allows_signals(self, signal_config, mock_features, mock_prices):
-        """Test that with models_loaded=True, signals can be generated."""
-        gen = SignalGenerator(signal_config=signal_config)
-        # Mark models as loaded to allow signal generation
-        gen.ensemble.models_loaded = True
+    def test_rising_momentum_produces_buy(self, mock_features):
+        """Test that a clean rising price series produces a BUY signal.
+
+        This drives the real rule-based path: momentum direction is BUY, the
+        momentum-magnitude confidence clears a low min_confidence gate, and RSI
+        sits inside the BUY zone (25-70). It would fail if the momentum/RSI/
+        confidence logic were broken.
+        """
+        config = SignalConfig(min_confidence=0.10, cooldown_seconds=0)
+        gen = SignalGenerator(signal_config=config)
+        # Steady, gentle uptrend: strong enough momentum for BUY, but not so
+        # steep that RSI exceeds the 70 BUY-zone ceiling.
+        n = 60
+        closes = [2000.0 + i * 0.5 for i in range(n)]
+        prices = pd.DataFrame({
+            "Open": [c - 0.2 for c in closes],
+            "High": [c + 0.4 for c in closes],
+            "Low": [c - 0.4 for c in closes],
+            "Close": closes,
+            "Volume": [2000] * n,
+        })
         signal = gen.generate_signal(
             features=mock_features,
-            prices=mock_prices,
-            atr=5.0,
-            current_price=2000.0
+            prices=prices,
+            atr=3.0,
+            current_price=closes[-1],
+            prices_m1=prices,
         )
-        # With random weights and models_loaded=True, the result depends
-        # on whether confidence/agreement thresholds are met
-        assert signal.action in ["BUY", "SELL", "HOLD"]
+        assert signal.action == "BUY"
+        assert signal.confidence >= config.min_confidence
+        assert signal.model_name == "momentum"
+        assert signal.lot_size > 0.0
 
 
 # ─────────────────────────────────────────────
@@ -496,37 +530,30 @@ class TestDynamicTrailingTP:
             cooldown_seconds=0,
         )
         gen = SignalGenerator(signal_config=config)
-        gen.ensemble.models_loaded = True
 
-        # Create strongly trending prices to produce non-FLAT momentum
-        # Need 8+ bars for lookback=6 and price diff > $1.50
+        # Create a steady rising series (BUY momentum) with RSI inside the
+        # 25-70 BUY zone. Enough bars (>=15) for RSI and 8-bar momentum lookback.
+        n = 60
+        closes = [2000.0 + i * 0.5 for i in range(n)]
         prices = pd.DataFrame({
-            "Close": [2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 2005.0, 2006.0, 2007.0]
+            "Open": [c - 0.2 for c in closes],
+            "High": [c + 0.4 for c in closes],
+            "Low": [c - 0.4 for c in closes],
+            "Close": closes,
+            "Volume": [2000] * n,
         })
-
-        # Mock the ensemble predict to return high-confidence prediction
-        mock_prediction = {
-            "probabilities": np.array([[0.1, 0.1, 0.8]]),
-            "confidence": np.array([0.9]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.1, 0.1, 0.8]]),
-                "lstm": np.array([[0.1, 0.1, 0.8]]),
-                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
-            }
-        }
 
         features = np.random.randn(1, 64, 32).astype(np.float32)
 
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=2006.0
-            )
+        signal = gen.generate_signal(
+            features=features,
+            prices=prices,
+            atr=5.0,
+            current_price=closes[-1],
+            prices_m1=prices,
+        )
 
-        # If the signal is not HOLD (models allowed and confidence met),
+        # If the signal is not HOLD (momentum + confidence gate met),
         # tp_pips should be 9999 (dynamic trailing mode)
         if signal.action != "HOLD":
             assert signal.tp_pips == 9999
@@ -753,62 +780,15 @@ class TestCandlePatternAnalysis:
         assert result["block_buy"] is False
         assert result["block_sell"] is False
 
-    def test_momentum_buy_blocked_by_bearish_engulfing(self):
-        """Integration test: momentum says BUY but bearish engulfing blocks it."""
+    def test_momentum_buy_not_blocked_by_shooting_star(self):
+        """Integration test: momentum says BUY and a shooting star is logged but
+        NOT blocking in M1 scalper mode, so the rule-based BUY still fires."""
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
-        gen.ensemble.models_loaded = True
 
-        # Prices that rise in momentum (close[-1]=2004 vs close[-4]=2002 = +$2 > $0.50)
-        # but last candle is bearish engulfing:
-        #   prev candle: bullish (open=2003, close=2005)
-        #   curr candle: bearish engulfing (open=2006 > prev_close=2005, close=2002 < prev_open=2003)
-        # Momentum: close[-1]=2004 vs close[-4]=2002 = +2 => BUY
-        # But we need close[-1] to be the engulfing candle close
-        # close[-1]=2002, close[-4]=... let's be careful about indices
-        # With 8 bars, close[-1] is the last, close[-4] is index 4
-        # For momentum BUY: close[-1] > close[-4] + 0.5
-        # Let's make closes = [1998, 1999, 2000, 2001, 2002, 2003, 2005, 2004]
-        # close[-1]=2004, close[-4]=2002, diff=+2 => BUY
-        # Last candle (idx 7): bearish engulfing vs previous (idx 6)
-        # Prev (idx 6): bullish - open=2003, close=2005
-        # Curr (idx 7): bearish engulfing - open=2006 > prev_close=2005, close=2004... 
-        # wait, need close < prev_open=2003. Let me adjust.
-        # closes = [1998, 1999, 2000, 2001, 2002, 2003, 2005, 2002.5]
-        # close[-1]=2002.5, close[-4]=2002, diff=+0.5 => exactly threshold... 
-        # Let me use: closes = [1998, 1999, 2000, 2001, 2001.5, 2003, 2005, 2002.0]
-        # close[-1]=2002, close[-4]=2001.5, diff=+0.5 => borderline...
-        # Better approach: more bars with clearly rising closes for momentum
-        prices = pd.DataFrame({
-            "Open":  [1998, 1999, 2000, 2001, 2002, 2003, 2004, 2003.0, 2006.0],
-            "High":  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2005.5, 2006.5],
-            "Low":   [1997, 1998, 1999, 2000, 2001, 2002, 2003, 2002.5, 2001.5],
-            "Close": [1999, 2000, 2001, 2002, 2003, 2004, 2005, 2005.0, 2002.0],
-        })
-        # Momentum: close[-1]=2002, close[-4]=2004... that's -2 => SELL
-        # Need to adjust. close[-4] is at index len-4 = 9-4=5 => Close[5]=2004
-        # close[-1] = Close[8] = 2002.0. diff = 2002-2004 = -2 => SELL not BUY
-        # Let me just make prices where momentum is clearly BUY despite the engulfing
-        # The trick: close[-4] must be lower than close[-1] by > $0.50
-        # With engulfing at the end, the close drops. So I need enough prior bars
-        # that close[-4] (4th from end) is low enough.
-        # Let me use 10 bars:
-        prices = pd.DataFrame({
-            "Open":  [1990, 1992, 1994, 1996, 1998, 2000, 2002, 2004, 2003.0, 2006.0],
-            "High":  [1993, 1995, 1997, 1999, 2001, 2003, 2005, 2007, 2005.5, 2006.5],
-            "Low":   [1989, 1991, 1993, 1995, 1997, 1999, 2001, 2003, 2002.5, 2001.5],
-            "Close": [1992, 1994, 1996, 1998, 2000, 2002, 2004, 2006, 2005.0, 2002.0],
-        })
-        # 10 bars. close[-1]=2002.0, close[-4]=2006. diff=-4 => SELL
-        # This approach won't work with a true bearish engulfing that drops close
-        # because close[-1] < close[-4] means momentum is SELL.
-        # The realistic scenario: momentum BUY from close[-1]>close[-4],
-        # but last candle is a strong bearish candle (not engulfing necessarily).
-        # Actually let's test with a shooting star instead which doesn't drop close much.
-        # OR: just test that the candle pattern method works correctly, 
-        # and use a different pattern that still gives momentum BUY.
-        # Let's use a shooting_star which blocks BUY but doesn't change close much.
+        # 10 bars (<14 so the RSI zone filter is skipped), rising closes for BUY
+        # momentum, last candle is a shooting star (long upper wick).
         prices = pd.DataFrame({
             "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2007.0],
             "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2016.0],
@@ -816,92 +796,57 @@ class TestCandlePatternAnalysis:
             "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2008.5],
         })
         # Momentum: close[-1]=2008.5, close[-9]=2002, diff=+6.5 => BUY
-        # Last candle: open=2007, high=2016, low=2005, close=2008.5
-        # Range = 16-5=11, upper wick = 16-7=9 (81.8%), lower wick=2007-2005=2 (18.2%), body=|8.5-7|=1.5 (13.6%)
-        # This is a shooting star! blocks BUY
+        # Last candle: open=2007, high=2016, low=2005, close=2008.5 -> shooting star
 
-        mock_prediction = {
-            "probabilities": np.array([[0.1, 0.1, 0.8]]),
-            "confidence": np.array([0.9]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.1, 0.1, 0.8]]),
-                "lstm": np.array([[0.1, 0.1, 0.8]]),
-                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
-            }
-        }
-
-        features = np.random.randn(1, 64, 32).astype(np.float32)
-
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=2008.5
-            )
+        signal = gen.generate_signal(
+            features=None,
+            prices=prices,
+            atr=5.0,
+            current_price=2008.5,
+            prices_m1=prices,
+        )
 
         # Candle patterns are logged but NOT blocking in M1 scalper mode
-        # Momentum BUY still goes through despite shooting star pattern
         assert signal.action == "BUY"
+        assert signal.model_name == "momentum"
 
-    def test_momentum_sell_blocked_by_hammer(self):
-        """Integration test: momentum says SELL but hammer pattern is logged (not blocking in M1 mode)."""
+    def test_momentum_sell_not_blocked_by_hammer(self):
+        """Integration test: momentum says SELL and a hammer is logged but NOT
+        blocking in M1 scalper mode, so the rule-based SELL still fires."""
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
-        gen.ensemble.models_loaded = True
 
-        # Prices that fall (momentum = SELL) but last candle is a hammer
-        # Hammer: long lower wick > 80% of range, small upper wick, small body (<15%)
-        # Need close[-1] - close[-9] < -0.60 for SELL momentum
-        # With 10 bars, close[-9] = close[1] and close[-1] = close[9]
+        # 10 bars (<14 so RSI zone filter skipped), falling closes for SELL
+        # momentum, last candle is a hammer (long lower wick).
         prices = pd.DataFrame({
             "Open":  [2012, 2011, 2010, 2009, 2008, 2007, 2006, 2005, 2004, 2005.1],
             "High":  [2013, 2012, 2011, 2010, 2009, 2008, 2007, 2006, 2005, 2005.3],
             "Low":   [2011, 2010, 2009, 2008, 2007, 2006, 2005, 2004, 2003, 1996.0],
             "Close": [2011, 2010, 2009, 2008, 2007, 2006, 2005, 2004, 2003, 2005.2],
         })
-        # close[-9]=close[1]=2010, close[-1]=close[9]=2005.2, diff=-4.8 < -0.60 => SELL
-        # Last candle: open=2005.1, high=2005.3, low=1996, close=2005.2
-        # Range=9.3, body=0.1 (1%), lower_wick=2005.1-1996=9.1 (98%), upper_wick=2005.3-2005.2=0.1 (1%)
-        # This is a hammer! But in M1 scalper mode it only logs, doesn't block
+        # close[-9]=close[1]=2010, close[-1]=close[9]=2005.2, diff=-4.8 => SELL
 
-        mock_prediction = {
-            "probabilities": np.array([[0.8, 0.1, 0.1]]),
-            "confidence": np.array([0.9]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.8, 0.1, 0.1]]),
-                "lstm": np.array([[0.8, 0.1, 0.1]]),
-                "gradient_boost": np.array([[0.8, 0.1, 0.1]]),
-            }
-        }
-
-        features = np.random.randn(1, 64, 32).astype(np.float32)
-
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=2005.2
-            )
+        signal = gen.generate_signal(
+            features=None,
+            prices=prices,
+            atr=5.0,
+            current_price=2005.2,
+            prices_m1=prices,
+        )
 
         # In M1 scalper mode, candle patterns are logged but do NOT block
-        # Momentum is SELL, signal should go through
         assert signal.action == "SELL"
+        assert signal.model_name == "momentum"
 
     def test_momentum_buy_confirmed_by_strong_bullish(self):
         """Integration test: momentum BUY + strong bullish candle = allow trade."""
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
-        gen.ensemble.models_loaded = True
 
-        # Prices that rise (momentum = BUY) and last candle is strong bullish
-        # Strong bullish: body > 60% of range
-        # Need 10+ bars for lookback=8, and price diff > $0.60
+        # Prices that rise (momentum = BUY) and last candle is strong bullish.
+        # 10 bars (<14 so RSI zone filter is skipped), price diff > $0.60.
         prices = pd.DataFrame({
             "Open":  [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2001.0],
             "High":  [2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2012.0],
@@ -909,29 +854,17 @@ class TestCandlePatternAnalysis:
             "Close": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2011.0],
         })
 
-        mock_prediction = {
-            "probabilities": np.array([[0.1, 0.1, 0.8]]),
-            "confidence": np.array([0.9]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.1, 0.1, 0.8]]),
-                "lstm": np.array([[0.1, 0.1, 0.8]]),
-                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
-            }
-        }
-
-        features = np.random.randn(1, 64, 32).astype(np.float32)
-
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=2011.0
-            )
+        signal = gen.generate_signal(
+            features=None,
+            prices=prices,
+            atr=5.0,
+            current_price=2011.0,
+            prices_m1=prices,
+        )
 
         # Should NOT be blocked - momentum and candle agree
         assert signal.action == "BUY"
+        assert signal.model_name == "momentum"
 
     def test_exhaustion_candle_blocks_chase(self):
         """Test that exhaustion candle (body > 2x ATR) blocks chasing the move."""
@@ -1152,17 +1085,18 @@ class TestVolumeWeightedMomentum:
 class TestRSIExhaustionFilter:
     """Tests for the RSI exhaustion filter in generate_signal."""
 
-    def test_rsi_overbought_penalizes_buy(self):
-        """Test that RSI > 70 reduces BUY confidence."""
+    def test_rsi_overbought_blocks_buy(self):
+        """Test that RSI > 70 blocks a momentum BUY (RSI zone filter -> HOLD).
+
+        The BUY zone requires RSI in 25-70. A strong uptrend pushes RSI above
+        70, so even though momentum is BUY the rule-based path must return HOLD.
+        """
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
-        gen.ensemble.models_loaded = True
 
-        # Create prices where last RSI will be > 70 (strong uptrend)
-        # Need 14+ bars for RSI computation
+        # Strong consistent uptrend pushes RSI above 70 (needs 14+ bars).
         n = 30
-        # Strong consistent uptrend to push RSI above 70
         close_prices = [2000.0 + i * 2.0 for i in range(n)]
         prices = pd.DataFrame({
             "Open": [p - 0.5 for p in close_prices],
@@ -1172,45 +1106,33 @@ class TestRSIExhaustionFilter:
             "Volume": [1000] * n,
         })
 
-        # Verify RSI is actually > 70
+        # Verify RSI is actually > 70 (precondition for the zone filter)
         import ta as ta_lib
         rsi = ta_lib.momentum.rsi(prices["Close"], window=14)
         assert rsi.iloc[-1] > 70, f"RSI should be > 70, got {rsi.iloc[-1]}"
 
-        mock_prediction = {
-            "probabilities": np.array([[0.05, 0.05, 0.90]]),
-            "confidence": np.array([0.95]),
-            "agreement": np.array([0.95]),
-            "individual_preds": {
-                "transformer": np.array([[0.05, 0.05, 0.90]]),
-                "lstm": np.array([[0.05, 0.05, 0.90]]),
-                "gradient_boost": np.array([[0.05, 0.05, 0.90]]),
-            }
-        }
-        features = np.random.randn(1, 64, 32).astype(np.float32)
+        signal = gen.generate_signal(
+            features=None,
+            prices=prices,
+            atr=5.0,
+            current_price=close_prices[-1],
+            prices_m1=prices,
+        )
 
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=close_prices[-1]
-            )
+        # Momentum is BUY but RSI > 70 is outside the 25-70 BUY zone -> HOLD
+        assert signal.action == "HOLD"
 
-        # If momentum is BUY and RSI > 70, confidence should be reduced
-        # The signal might still pass min_confidence but with lower confidence
-        if signal.action == "BUY":
-            # Confidence should be reduced by 0.10 from RSI penalty
-            assert signal.confidence <= 0.90  # was 0.95, penalty -0.10
+    def test_rsi_oversold_blocks_sell(self):
+        """Test that RSI < 30 blocks a momentum SELL (RSI zone filter -> HOLD).
 
-    def test_rsi_oversold_penalizes_sell(self):
-        """Test that RSI < 30 reduces SELL confidence."""
+        The SELL zone requires RSI in 30-75. A strong downtrend pushes RSI
+        below 30, so even though momentum is SELL the path must return HOLD.
+        """
         gen = SignalGenerator(signal_config=SignalConfig(
             cooldown_seconds=0, min_confidence=0.01
         ))
-        gen.ensemble.models_loaded = True
 
-        # Create prices where RSI < 30 (strong downtrend)
+        # Strong consistent downtrend pushes RSI below 30 (needs 14+ bars).
         n = 30
         close_prices = [2060.0 - i * 2.0 for i in range(n)]
         prices = pd.DataFrame({
@@ -1221,34 +1143,21 @@ class TestRSIExhaustionFilter:
             "Volume": [1000] * n,
         })
 
-        # Verify RSI is actually < 30
+        # Verify RSI is actually < 30 (precondition for the zone filter)
         import ta as ta_lib
         rsi = ta_lib.momentum.rsi(prices["Close"], window=14)
         assert rsi.iloc[-1] < 30, f"RSI should be < 30, got {rsi.iloc[-1]}"
 
-        mock_prediction = {
-            "probabilities": np.array([[0.90, 0.05, 0.05]]),
-            "confidence": np.array([0.95]),
-            "agreement": np.array([0.95]),
-            "individual_preds": {
-                "transformer": np.array([[0.90, 0.05, 0.05]]),
-                "lstm": np.array([[0.90, 0.05, 0.05]]),
-                "gradient_boost": np.array([[0.90, 0.05, 0.05]]),
-            }
-        }
-        features = np.random.randn(1, 64, 32).astype(np.float32)
+        signal = gen.generate_signal(
+            features=None,
+            prices=prices,
+            atr=5.0,
+            current_price=close_prices[-1],
+            prices_m1=prices,
+        )
 
-        with patch.object(gen.ensemble, 'predict', return_value=mock_prediction):
-            signal = gen.generate_signal(
-                features=features,
-                prices=prices,
-                atr=5.0,
-                current_price=close_prices[-1]
-            )
-
-        # If momentum is SELL and RSI < 30, confidence should be reduced
-        if signal.action == "SELL":
-            assert signal.confidence <= 0.90
+        # Momentum is SELL but RSI < 30 is outside the 30-75 SELL zone -> HOLD
+        assert signal.action == "HOLD"
 
 
 # ─────────────────────────────────────────────
@@ -1325,7 +1234,6 @@ class TestM1MomentumIntegration:
     def test_prices_m1_used_for_momentum_direction(self):
         """Test that prices_m1 is used for momentum when provided."""
         gen = SignalGenerator(signal_config=SignalConfig(cooldown_seconds=0))
-        gen.ensemble.models_loaded = True
 
         # H1 prices - trending UP
         h1_prices = pd.DataFrame({
@@ -1552,52 +1460,42 @@ class TestSinglePositionArchitecture:
         # Should be HOLD because range BUY is blocked by bearish HTF
         assert signal.action == "HOLD"
 
-    def test_active_position_set_after_signal(self, signal_config, mock_features, mock_prices):
-        """Test that _active_position is populated after a non-HOLD signal."""
+    def test_active_position_set_after_signal(self, mock_features):
+        """Test that _active_position is populated after a non-HOLD signal.
+
+        Drives the real rule-based path: a gentle uptrend produces a BUY with
+        RSI inside the BUY zone and confidence over a low gate. After the BUY
+        fires, the single-position tracker must be populated.
+        """
         import time as time_mod
-        gen = SignalGenerator(signal_config=signal_config)
-        # Force models to appear loaded
-        gen.ensemble.models_loaded = True
+        config = SignalConfig(min_confidence=0.10, cooldown_seconds=0)
+        gen = SignalGenerator(signal_config=config)
 
-        # Mock the ensemble to return a valid prediction
-        from unittest.mock import patch, MagicMock
-        mock_pred = {
-            "probabilities": np.array([[0.1, 0.1, 0.8]]),
-            "confidence": np.array([0.8]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.1, 0.1, 0.8]]),
-                "lstm": np.array([[0.1, 0.1, 0.8]]),
-                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
-            }
-        }
-
-        # Create strong uptrend prices for clear BUY momentum
-        n = 200
-        trend = np.linspace(1990, 2010, n)
+        # Gentle uptrend: BUY momentum, RSI stays inside 25-70 BUY zone.
+        n = 60
+        closes = np.array([2000.0 + i * 0.5 for i in range(n)])
         df = pd.DataFrame({
-            "Open": trend - 1,
-            "High": trend + 2,
-            "Low": trend - 2,
-            "Close": trend,
-            "Volume": np.random.randint(100, 1000, n),
+            "Open": closes - 0.2,
+            "High": closes + 0.4,
+            "Low": closes - 0.4,
+            "Close": closes,
+            "Volume": [2000] * n,
         })
 
-        with patch.object(gen.ensemble, 'predict', return_value=mock_pred):
-            signal = gen.generate_signal(
-                features=mock_features,
-                prices=df,
-                atr=5.0,
-                current_price=2010.0,
-                prices_m1=df,
-            )
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=df,
+            atr=5.0,
+            current_price=float(closes[-1]),
+            prices_m1=df,
+        )
 
-        if signal.action != "HOLD":
-            assert gen._active_position is not None
-            assert gen._active_position["direction"] == signal.action
-            assert gen._active_position["entry_price"] == 2010.0
-            assert "signal_context" in gen._active_position
-            assert gen._active_position["entry_time"] > time_mod.time() - 5
+        assert signal.action == "BUY"
+        assert gen._active_position is not None
+        assert gen._active_position["direction"] == signal.action
+        assert gen._active_position["entry_price"] == float(closes[-1])
+        assert "signal_context" in gen._active_position
+        assert gen._active_position["entry_time"] > time_mod.time() - 5
 
 
 # ─────────────────────────────────────────────
@@ -1653,50 +1551,35 @@ class TestV6ReviewFixes:
         # Optimizer should have been called with the estimated trade
         mock_optimizer.record_estimated_trade.assert_called_once()
 
-    def test_position_id_increments_on_new_position(self, signal_config, mock_features):
+    def test_position_id_increments_on_new_position(self, mock_features):
         """Issue 3: position_id should increment each time a new position is set,
         allowing identification of which position a close belongs to."""
-        import time as time_mod
-        from unittest.mock import patch, MagicMock
-
-        gen = SignalGenerator(signal_config=signal_config)
-        gen.ensemble.models_loaded = True
+        config = SignalConfig(min_confidence=0.10, cooldown_seconds=0)
+        gen = SignalGenerator(signal_config=config)
         assert gen._position_id_counter == 0
 
-        mock_pred = {
-            "probabilities": np.array([[0.1, 0.1, 0.8]]),
-            "confidence": np.array([0.8]),
-            "agreement": np.array([0.9]),
-            "individual_preds": {
-                "transformer": np.array([[0.1, 0.1, 0.8]]),
-                "lstm": np.array([[0.1, 0.1, 0.8]]),
-                "gradient_boost": np.array([[0.1, 0.1, 0.8]]),
-            }
-        }
-
-        # Create strong uptrend prices for clear BUY momentum
-        n = 200
-        trend = np.linspace(1990, 2010, n)
+        # Gentle uptrend produces a rule-based BUY with RSI inside the BUY zone.
+        n = 60
+        closes = np.array([2000.0 + i * 0.5 for i in range(n)])
         df = pd.DataFrame({
-            "Open": trend - 1,
-            "High": trend + 2,
-            "Low": trend - 2,
-            "Close": trend,
-            "Volume": np.random.randint(100, 1000, n),
+            "Open": closes - 0.2,
+            "High": closes + 0.4,
+            "Low": closes - 0.4,
+            "Close": closes,
+            "Volume": [2000] * n,
         })
 
-        with patch.object(gen.ensemble, 'predict', return_value=mock_pred):
-            signal = gen.generate_signal(
-                features=mock_pred["probabilities"],
-                prices=df,
-                atr=5.0,
-                current_price=2010.0,
-                prices_m1=df,
-            )
+        signal = gen.generate_signal(
+            features=mock_features,
+            prices=df,
+            atr=5.0,
+            current_price=float(closes[-1]),
+            prices_m1=df,
+        )
 
-        if signal.action != "HOLD":
-            assert gen._position_id_counter == 1
-            assert gen._active_position["position_id"] == 1
+        assert signal.action == "BUY"
+        assert gen._position_id_counter == 1
+        assert gen._active_position["position_id"] == 1
 
     def test_momentum_lookback_uses_adaptive_atr_on_close(self, signal_config, mock_features):
         """Issue 2: The quick momentum check at position close should use

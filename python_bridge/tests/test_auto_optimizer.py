@@ -503,6 +503,120 @@ class TestTrailDistanceOptimization:
         assert opt.get_current_params()["trail_distances"]["tight"] < 0.5
 
 
+class TestLocalSelfTuningLoop:
+    """End-to-end tests of the LOCAL self-tuning loop.
+
+    These prove the user's 'backtest locally so it can tweak itself' goal:
+    driving trades through record_trade() must (1) shift a parameter toward the
+    winning value over an optimization cycle, clamped to its configured range,
+    (2) persist the tuned state to auto_optimizer_state.json on disk, and
+    (3) roll back automatically when a performance regression is detected.
+    """
+
+    def test_param_shifts_toward_winner_over_a_cycle(self, temp_dir):
+        """A parameter shifts toward the clearly-winning value after one cycle.
+
+        Feed a sequence of recorded trades where a longer momentum lookback (10)
+        clearly outperforms the current default (8). Driving them via
+        record_trade() past optimize_frequency must trigger one cycle and nudge
+        momentum_lookback one step toward the winner, staying within its range.
+        """
+        config = AutoOptimizerConfig(optimize_frequency=10,
+                                     min_trades_before_tuning=10)
+        opt = AutoOptimizer(config=config, state_dir=temp_dir)
+
+        start_lookback = opt.get_current_params()["momentum_lookback"]
+        assert start_lookback == 8
+
+        # Winning value = lookback 10 (all profitable); losing value = 5.
+        for _ in range(7):
+            opt.record_trade(_make_trade(3.0, momentum_lookback=10))
+        for _ in range(3):
+            opt.record_trade(_make_trade(-1.0, momentum_lookback=5))
+
+        # One optimization cycle should have fired automatically.
+        assert opt.cycle_count == 1
+
+        tuned_lookback = opt.get_current_params()["momentum_lookback"]
+        # Shifted one step toward the winner (8 -> 9), never more than 1 step.
+        assert tuned_lookback == 9
+        assert tuned_lookback > start_lookback
+        # Clamped to the configured momentum range (5, 10).
+        lo, hi = config.momentum_range
+        assert lo <= tuned_lookback <= hi
+
+    def test_tuned_state_persists_to_named_json(self, temp_dir):
+        """The tuned parameters persist to auto_optimizer_state.json on disk."""
+        config = AutoOptimizerConfig(optimize_frequency=10,
+                                     min_trades_before_tuning=10)
+        opt = AutoOptimizer(config=config, state_dir=temp_dir)
+
+        for _ in range(7):
+            opt.record_trade(_make_trade(3.0, momentum_lookback=10))
+        for _ in range(3):
+            opt.record_trade(_make_trade(-1.0, momentum_lookback=5))
+        assert opt.cycle_count == 1
+
+        # State file is written with the documented name.
+        state_path = os.path.join(temp_dir, "auto_optimizer_state.json")
+        assert os.path.exists(state_path)
+
+        with open(state_path) as f:
+            saved = json.load(f)
+        # The persisted params match the tuned in-memory params.
+        assert saved["params"]["momentum_lookback"] == \
+            opt.get_current_params()["momentum_lookback"]
+        assert saved["cycle_count"] == 1
+
+        # A fresh optimizer reloads the tuned value (survives restart).
+        reloaded = AutoOptimizer(config=config, state_dir=temp_dir)
+        assert reloaded.get_current_params()["momentum_lookback"] == \
+            opt.get_current_params()["momentum_lookback"]
+
+    def test_regression_triggers_rollback_end_to_end(self, temp_dir):
+        """A post-optimization performance regression rolls params back.
+
+        A strong pre-optimize win rate triggers a tuning cycle; a clearly worse
+        post-optimize window then trips the rollback threshold and restores the
+        pre-optimization parameters. The post window is fed through record_trade
+        exactly as production does, and the rollback check fires once enough
+        post-optimize trades have accumulated.
+        """
+        config = AutoOptimizerConfig(optimize_frequency=5,
+                                     min_trades_before_tuning=5,
+                                     rollback_threshold=0.20)
+        opt = AutoOptimizer(config=config, state_dir=temp_dir)
+
+        params_before_tuning = opt.get_current_params()
+
+        # Pre-optimize window: 80% win rate (4 wins, 1 loss) -> triggers cycle 1.
+        for _ in range(4):
+            opt.record_trade(_make_trade(1.0, sl_distance=4.0))
+        opt.record_trade(_make_trade(-0.5, sl_distance=4.0))
+        assert opt.cycle_count == 1
+        assert opt._rollback_pending is True
+        params_after_tuning = opt.get_current_params()
+        assert params_after_tuning != params_before_tuning
+
+        # Post-optimize window: 0% win rate (all losses). Fill just under the
+        # optimize_frequency so the rollback monitor is armed but neither the
+        # rollback check nor a second optimize cycle has fired yet.
+        for _ in range(config.optimize_frequency - 1):
+            opt.record_trade(_make_trade(-2.0, sl_distance=4.0))
+        assert len(opt._post_optimize_trades) == config.optimize_frequency - 1
+        assert opt._rollback_pending is True  # still armed, not yet checked
+        assert opt.cycle_count == 1           # no second cycle yet
+
+        # Run the rollback monitor (production invokes this internally once the
+        # post window is complete). The 0% post win rate is a >20% drop from the
+        # 80% pre-optimize win rate, so it must roll the tuned params back.
+        opt._check_rollback()
+
+        # Rollback fired: no longer pending and params restored to pre-tuning.
+        assert opt._rollback_pending is False
+        assert opt.get_current_params() == params_before_tuning
+
+
 class TestGetCurrentParams:
     """Tests for get_current_params method."""
 

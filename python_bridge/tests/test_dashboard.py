@@ -38,16 +38,16 @@ def populated_tracker():
     """Tracker with a realistic trade sequence."""
     t = PerformanceTracker(min_trades_for_stats=3)
     trades = [
-        ("T001", 50.0, "transformer", "trending", "BUY"),
-        ("T002", -20.0, "lstm", "ranging", "SELL"),
-        ("T003", 30.0, "gradient_boost", "trending", "BUY"),
-        ("T004", 80.0, "transformer", "volatile", "BUY"),
-        ("T005", -40.0, "lstm", "crash", "SELL"),
-        ("T006", 25.0, "gradient_boost", "ranging", "BUY"),
-        ("T007", -15.0, "transformer", "ranging", "SELL"),
-        ("T008", 60.0, "ensemble", "trending", "BUY"),
-        ("T009", -10.0, "lstm", "volatile", "SELL"),
-        ("T010", 45.0, "transformer", "trending", "BUY"),
+        ("T001", 50.0, "momentum", "trending", "BUY"),
+        ("T002", -20.0, "momentum", "ranging", "SELL"),
+        ("T003", 30.0, "momentum", "trending", "BUY"),
+        ("T004", 80.0, "momentum", "volatile", "BUY"),
+        ("T005", -40.0, "momentum", "crash", "SELL"),
+        ("T006", 25.0, "momentum", "ranging", "BUY"),
+        ("T007", -15.0, "momentum", "ranging", "SELL"),
+        ("T008", 60.0, "momentum", "trending", "BUY"),
+        ("T009", -10.0, "momentum", "volatile", "SELL"),
+        ("T010", 45.0, "momentum", "trending", "BUY"),
     ]
     base_time = datetime(2024, 1, 1, 9, 0, 0)
     for i, (tid, pnl, model, regime, direction) in enumerate(trades):
@@ -74,7 +74,7 @@ def all_wins_tracker():
         t.record_trade_simple(
             trade_id=f"W{i:03d}",
             pnl=float(20 + i * 5),
-            model="transformer",
+            model="momentum",
             regime="trending",
         )
     return t
@@ -88,7 +88,7 @@ def all_losses_tracker():
         t.record_trade_simple(
             trade_id=f"L{i:03d}",
             pnl=float(-15 - i * 3),
-            model="lstm",
+            model="momentum",
             regime="crash",
         )
     return t
@@ -133,14 +133,14 @@ class TestEdgeCases:
         assert tracker.net_profit() == 0.0
 
     def test_single_trade(self, tracker):
-        tracker.record_trade_simple("T1", 100.0, "transformer", "trending")
+        tracker.record_trade_simple("T1", 100.0, "momentum", "trending")
         assert tracker.total_trades == 1
         assert tracker.win_rate() == 1.0
         assert tracker.net_profit() == 100.0
         assert tracker.best_trade() == 100.0
 
     def test_single_losing_trade(self, tracker):
-        tracker.record_trade_simple("T1", -50.0, "lstm", "crash")
+        tracker.record_trade_simple("T1", -50.0, "momentum", "crash")
         assert tracker.win_rate() == 0.0
         assert tracker.profit_factor() == 0.0
         assert tracker.max_drawdown() == 50.0
@@ -314,7 +314,7 @@ class TestCoreMetrics:
         tracker = PerformanceTracker(min_trades_for_stats=2)
         # Simple series: [10, 20, 30]
         for i, pnl in enumerate([10.0, 20.0, 30.0]):
-            tracker.record_trade_simple(f"T{i}", pnl, "transformer", "trending")
+            tracker.record_trade_simple(f"T{i}", pnl, "momentum", "trending")
 
         returns = [10.0, 20.0, 30.0]
         mean_r = sum(returns) / 3
@@ -336,36 +336,16 @@ class TestCoreMetrics:
 class TestPerModelBreakdown:
     """Test per-model performance tracking."""
 
-    def test_transformer_stats(self, populated_tracker):
-        stats = populated_tracker.get_model_stats("transformer")
-        # Transformer trades: T001(+50), T004(+80), T007(-15), T010(+45)
-        assert stats["trade_count"] == 4
-        assert stats["win_rate"] == 0.75  # 3/4
-        gross_wins = 50 + 80 + 45  # 175
-        gross_losses = 15
+    def test_momentum_stats(self, populated_tracker):
+        stats = populated_tracker.get_model_stats("momentum")
+        # All 10 trades are the rule-based 'momentum' model:
+        # wins: +50, +30, +80, +25, +60, +45 (6); losses: -20, -40, -15, -10 (4)
+        assert stats["trade_count"] == 10
+        assert abs(stats["win_rate"] - 0.6) < 0.001  # 6/10
+        gross_wins = 50 + 30 + 80 + 25 + 60 + 45  # 290
+        gross_losses = 20 + 40 + 15 + 10           # 85
         assert abs(stats["profit_factor"] - gross_wins / gross_losses) < 0.001
-        assert abs(stats["total_pnl"] - (50 + 80 - 15 + 45)) < 0.001
-
-    def test_lstm_stats(self, populated_tracker):
-        stats = populated_tracker.get_model_stats("lstm")
-        # LSTM trades: T002(-20), T005(-40), T009(-10)
-        assert stats["trade_count"] == 3
-        assert stats["win_rate"] == 0.0
-        assert stats["profit_factor"] == 0.0
-
-    def test_gradient_boost_stats(self, populated_tracker):
-        stats = populated_tracker.get_model_stats("gradient_boost")
-        # GB trades: T003(+30), T006(+25)
-        assert stats["trade_count"] == 2
-        assert stats["win_rate"] == 1.0
-        assert stats["profit_factor"] == float('inf')
-
-    def test_ensemble_stats(self, populated_tracker):
-        stats = populated_tracker.get_model_stats("ensemble")
-        # Ensemble trades: T008(+60)
-        assert stats["trade_count"] == 1
-        assert stats["win_rate"] == 1.0
-        assert stats["total_pnl"] == 60.0
+        assert abs(stats["total_pnl"] - (gross_wins - gross_losses)) < 0.001
 
     def test_nonexistent_model(self, populated_tracker):
         stats = populated_tracker.get_model_stats("random_forest")
@@ -374,10 +354,10 @@ class TestPerModelBreakdown:
 
     def test_all_model_stats(self, populated_tracker):
         all_stats = populated_tracker.get_all_model_stats()
-        assert "transformer" in all_stats
-        assert "lstm" in all_stats
-        assert "gradient_boost" in all_stats
-        assert "ensemble" in all_stats
+        # The simplified system tracks a single rule-based 'momentum' model
+        assert "momentum" in all_stats
+        assert "ensemble" not in all_stats
+        assert "transformer" not in all_stats
 
 
 # ─────────────────────────────────────────────

@@ -48,7 +48,7 @@ def sample_signal():
         sl_pips=150.5,
         tp_pips=251.0,
         lot_size=0.10,
-        model_name="transformer",
+        model_name="momentum",
         regime="trending"
     )
 
@@ -72,7 +72,7 @@ class TestSignalWriting:
         assert signal is not None
         assert signal["symbol"] == "XAUUSD"
         assert signal["action"] == "BUY"
-        assert signal["model_name"] == "transformer"
+        assert signal["model_name"] == "momentum"
         assert signal["regime"] == "trending"
 
     def test_write_signal_confidence_format(self, bridge, sample_signal):
@@ -99,14 +99,14 @@ class TestSignalWriting:
             sl_pips=120.0,
             tp_pips=200.0,
             lot_size=0.05,
-            model_name="lstm",
+            model_name="momentum",
             regime="volatile"
         )
         bridge.write_signal(new_signal)
 
         signal = bridge.read_signal()
         assert signal["action"] == "SELL"
-        assert signal["model_name"] == "lstm"
+        assert signal["model_name"] == "momentum"
 
 
 # ─────────────────────────────────────────────
@@ -269,7 +269,7 @@ class TestCSVFormat:
             sl_pips=120.0,
             tp_pips=200.0,
             lot_size=0.05,
-            model_name="gradient_boost",
+            model_name="momentum",
             regime="ranging"
         )
         bridge.write_signal(signal)

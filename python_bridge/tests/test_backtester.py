@@ -828,6 +828,121 @@ class TestBacktestIntegration:
         results = backtester.run(df)
         assert results["summary"]["total_trades"] == 0
 
+    def _make_zigzag_buy_df(self, n_bars=400, start_price=2000.0):
+        """Build a net-up zigzag that reliably triggers rule-based BUY entries.
+
+        The series strictly alternates an up bar (+$2.00) and a down bar
+        (-$1.20). This is analytically tuned to satisfy every entry gate:
+
+          * 6-bar momentum = 3*2.00 - 3*1.20 = +$2.40 > MOMENTUM_THRESHOLD
+            ($1.50) on every bar -> direction is BUY.
+          * Wilder RSI(14) converges to 100*2.0/(2.0+1.2) = 62.5, which sits
+            inside the 25-70 BUY zone and below RSI_OVERBOUGHT (65) -> passes
+            the RSI filter.
+          * Per-bar true range (~$1.2-2.0) stays inside the [0.5, 8.0] ATR band.
+          * momentum-magnitude confidence for a $2.40 move is ~0.76, well over
+            the 0.35 minimum entry-confidence gate.
+
+        Timestamps start at 08:00 UTC (London session) so the session filter
+        (full confidence 24/7) always passes.
+        """
+        dates = pd.date_range("2024-01-15 08:00:00", periods=n_bars,
+                              freq="1min", tz="UTC")
+        closes = np.empty(n_bars, dtype=float)
+        price = start_price
+        for i in range(n_bars):
+            if i % 2 == 0:
+                price += 2.0   # up bar (avg gain 2.0)
+            else:
+                price -= 1.2   # down bar (avg loss 1.2)
+            closes[i] = price
+
+        opens = closes.copy()
+        opens[1:] = closes[:-1]  # open = previous close
+        highs = np.maximum(opens, closes) + 0.1
+        lows = np.minimum(opens, closes) - 0.1
+
+        return pd.DataFrame({
+            "Open": opens,
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+            "Volume": np.full(n_bars, 500),
+        }, index=dates)
+
+    def test_backtest_produces_at_least_one_closed_trade(self):
+        """Backtester.run on tuned synthetic data yields >=1 closed trade and
+        exercises the rule-based confidence + progressive-trailing logic.
+
+        This is the concrete proof that the simplified rule-based engine trades
+        end-to-end without any ML model. It also verifies that recorded trades
+        carry a rule-derived (non-hardcoded) confidence and a trailing tier.
+        """
+        df = self._make_zigzag_buy_df(n_bars=400)
+        backtester = Backtester(verbose=False, min_bars_between_entries=1)
+        results = backtester.run(df)
+
+        # At least one trade must have been opened AND closed.
+        assert results["summary"]["total_trades"] >= 1
+        assert len(results["trade_log"]) >= 1
+
+        # Every closed trade exercised the rule-based path: BUY direction from
+        # momentum, a rules-derived confidence in (0, 0.95], and a trailing tier.
+        for trade in results["trade_log"]:
+            assert trade["direction"] == "BUY"
+            assert 0.0 < trade["confidence"] <= 0.95
+            assert trade["trail_tier"] in (
+                "none", "breakeven", "wide", "medium", "tight"
+            )
+            assert trade["exit_reason"] in (
+                "sl_hit", "time_exit", "momentum_exit", "end_of_data"
+            )
+
+        # Confidence is rule-derived, not a hardcoded constant.
+        confidences = [t["confidence"] for t in results["trade_log"]]
+        assert any(c != 0.5 for c in confidences)
+
+    def test_backtester_and_optimizer_wired_end_to_end(self):
+        """backtest.py + AutoOptimizer self-tune together over a local backtest.
+
+        Running Backtester.run over a dataset long enough to trigger several
+        AutoOptimizer cycles must (a) record every closed trade into the
+        optimizer, (b) run at least one optimization cycle, and (c) leave
+        get_current_params() changed from the defaults - proving the
+        'backtest locally so it can tweak itself' loop is fully wired.
+        """
+        df = self._make_zigzag_buy_df(n_bars=600)
+        backtester = Backtester(verbose=False, min_bars_between_entries=1)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config = AutoOptimizerConfig(
+                optimize_frequency=5,
+                min_trades_before_tuning=5,
+            )
+            default_params = AutoOptimizer(
+                config=config, state_dir=tmp_dir
+            ).get_current_params()
+
+            # Fresh optimizer with an isolated state dir for the backtest.
+            backtester.auto_optimizer = AutoOptimizer(
+                config=config, state_dir=tmp_dir
+            )
+            results = backtester.run(df)
+
+            total_trades = results["summary"]["total_trades"]
+            # Enough trades to trigger self-tuning cycles.
+            assert total_trades >= config.optimize_frequency
+            assert backtester.auto_optimizer.trade_count == total_trades
+            assert backtester.auto_optimizer.cycle_count >= 1
+
+            # Parameters self-tuned away from the defaults.
+            tuned_params = backtester.auto_optimizer.get_current_params()
+            assert tuned_params != default_params
+
+            # The optimizer persisted its tuned state to disk.
+            state_path = os.path.join(tmp_dir, "auto_optimizer_state.json")
+            assert os.path.exists(state_path)
+
 
 # ─────────────────────────────────────────────
 #  TEST TRADING COSTS MODEL
