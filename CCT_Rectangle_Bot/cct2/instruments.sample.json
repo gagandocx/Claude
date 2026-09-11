@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Instrument spec for `python -m cct2.run portfolio --spec instruments.json`.",
+    "One entry per instrument. Costs are per instrument because a single spread",
+    "figure cannot be correct for gold and for EURUSD at once, and at this trade",
+    "size cost realism changes the sign of the result.",
+    "",
+    "spread / slippage / stop_slippage are in PRICE units of that instrument.",
+    "contract_size is units per 1.00 lot: 100 oz for XAUUSD, 100000 for FX majors.",
+    "commission_per_lot is charged per lot PER SIDE.",
+    "",
+    "Get the numbers from your own broker's contract specification, and if you are",
+    "unsure, use the worse figure. Optimistic cost assumptions are the second most",
+    "common way a backtest lies, after look-ahead."
+  ],
+  "instruments": [
+    {
+      "name": "XAUUSD",
+      "csv": "data/XAUUSD_M1.csv",
+      "tf": "1m",
+      "spread": 0.30,
+      "slippage": 0.05,
+      "stop_slippage": 0.10,
+      "commission_per_lot": 3.5,
+      "contract_size": 100
+    },
+    {
+      "name": "EURUSD",
+      "csv": "data/EURUSD_M1.csv",
+      "tf": "1m",
+      "spread": 0.00012,
+      "slippage": 0.00002,
+      "stop_slippage": 0.00004,
+      "commission_per_lot": 3.5,
+      "contract_size": 100000
+    },
+    {
+      "name": "USDJPY",
+      "csv": "data/USDJPY_M1.csv",
+      "tf": "1m",
+      "spread": 0.014,
+      "slippage": 0.003,
+      "stop_slippage": 0.006,
+      "commission_per_lot": 3.5,
+      "contract_size": 100000
+    },
+    {
+      "name": "XAGUSD",
+      "csv": "data/XAGUSD_M1.csv",
+      "tf": "1m",
+      "spread": 0.025,
+      "slippage": 0.005,
+      "stop_slippage": 0.010,
+      "commission_per_lot": 3.5,
+      "contract_size": 5000
+    }
+  ]
+}
