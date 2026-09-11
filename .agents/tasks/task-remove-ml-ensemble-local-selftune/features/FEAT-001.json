@@ -1,0 +1,71 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Establish a working baseline before any removal. Confirm which Python runtimes/libraries are available in the (likely offline) sandbox, run the existing pytest suite to capture the starting state, and record which tests currently pass/fail/error. This creates the reference point for verifying later features do not break the retained rule-based core. No code changes in this feature.",
+  "status": "completed",
+  "steps": [
+    "From workspace root, check Python and key libs: run 'cd python_bridge && python --version && python -c \"import pandas, numpy, ta; print(pandas.__version__, numpy.__version__)\"'. Note whether torch/transformers are installed (expected heavy/optional).",
+    "Attempt dependency install only if network is available: 'cd python_bridge && pip install -r requirements.txt'. If it fails due to no network, record that and proceed with whatever is preinstalled (pandas/numpy/ta/pytest are the ones the retained core needs).",
+    "Run the full suite and capture results: 'cd python_bridge && python -m pytest tests/ -v'. Record per-file pass/fail/error counts. Tests that import torch (test_models.py) or the RL agent (test_rl_agent.py) may already error if torch is missing; note that these target code being removed.",
+    "Run a focused baseline on the retained core: 'cd python_bridge && python -m pytest tests/test_backtester.py tests/test_auto_optimizer.py -v' and confirm these pass (or record exact failures).",
+    "Record the baseline summary in this feature's findings field: which tests pass, which fail, and whether network/torch are available."
+  ],
+  "acceptance_criteria": [
+    "A recorded baseline exists in findings: pytest results per test file and availability of pandas/numpy/ta/pytest/torch/transformers.",
+    "tests/test_backtester.py and tests/test_auto_optimizer.py results are captured (these cover the code we KEEP).",
+    "No source files were modified in this feature."
+  ],
+  "verification": [
+    "cd python_bridge && python -m pytest tests/ -v (captured, not required to be fully green given tests for to-be-removed ML code may error)",
+    "cd python_bridge && python -m pytest tests/test_backtester.py tests/test_auto_optimizer.py -v"
+  ],
+  "blocked_reason": null,
+  "findings": {
+    "network": "RESTRICTED/OFFLINE. `pip install` fails with 'Tunnel connection failed: 403 Forbidden' for pypi (/simple/pandas/). No external package installs possible. yfinance/news RSS assumed unreachable per briefing.",
+    "python_runtime": {
+      "note": "There is NO `python` on PATH (pyenv global is 'system'; `python` shim errors). Use `python3` (system = 3.9.25) or a pyenv version binary directly. Working interpreter used for tests: /root/.pyenv/versions/3.11.15/bin/python (Python 3.11.15, pytest 9.1.1).",
+      "available_pyenv_versions": ["3.10.20", "3.11.15", "3.12.13", "3.13.13", "3.14.4", "system 3.9.25"]
+    },
+    "library_availability": {
+      "pandas": "NOT installed in ANY runtime (system 3.9 or any pyenv version). Cannot install (offline).",
+      "numpy": "NOT installed in ANY runtime. Cannot install (offline).",
+      "ta": "NOT installed. Cannot install (offline).",
+      "scikit-learn": "NOT installed.",
+      "torch": "NOT installed (heavy/optional, targets code being removed).",
+      "transformers": "NOT installed (heavy/optional, targets code being removed).",
+      "pytest": "AVAILABLE (pytest 9.1.1) in pyenv 3.10.20 / 3.11.15 / 3.13.13 / 3.14.4. NOT in 3.12.13 or system 3.9.25."
+    },
+    "pip_install_attempt": "Ran `pip install pandas numpy ta` on 3.11.15 -> failed with 403 Forbidden tunnel error (no network). Did NOT run full `pip install -r requirements.txt` further since core scientific libs are unreachable.",
+    "pytest_baseline_full_suite": {
+      "command": "cd python_bridge && /root/.pyenv/versions/3.11.15/bin/python -m pytest tests/ -v",
+      "result": "collected 118 items / 11 errors. The 11 collection ERRORS are all ModuleNotFoundError for numpy (or pandas for test_backtester.py) at import time -- purely an offline-environment issue, not a code defect.",
+      "errored_at_collection_missing_numpy_or_pandas": [
+        "test_auto_retrain.py (numpy)",
+        "test_backtester.py (pandas)",
+        "test_bridge.py (numpy)",
+        "test_models.py (numpy)",
+        "test_multi_timeframe.py (numpy)",
+        "test_news_calendar.py (import-time dep)",
+        "test_rl_agent.py (numpy)",
+        "test_signal_generator.py (numpy)",
+        "test_smart_exits.py (numpy)",
+        "test_smart_upgrades.py (numpy)",
+        "test_training.py (numpy)"
+      ],
+      "collected_and_ran_without_external_deps": {
+        "test_auto_optimizer.py": "41 passed (0 failed). Pure-Python; imports cleanly with no numpy/pandas.",
+        "test_dashboard.py": "77 passed (0 failed). Pure-Python."
+      }
+    },
+    "retained_core_baseline": {
+      "test_auto_optimizer.py": "PASS 41/41. This covers the AutoOptimizer self-tuning engine we KEEP -- it is pure Python and fully green offline. Module `strategies.auto_optimizer.AutoOptimizer` imports OK standalone.",
+      "test_backtester.py": "CANNOT RUN offline -- errors at collection with `import pandas as pd` (ModuleNotFoundError). Covers the rule-based backtest engine we KEEP; requires pandas/numpy which are unavailable in this sandbox. No pass/fail could be captured; blocked by environment, not by code."
+    },
+    "implications_for_later_features": [
+      "FEAT-002/003/004 verification that requires pandas/numpy/ta (backtest.py smoke, signal_generator on OHLCV DataFrame, test_backtester.py, test_signal_generator.py) CANNOT be executed in this offline sandbox. Fall back to: (a) test_auto_optimizer.py (pure-python, runs green), (b) AST-parse validation of the whole package (python -m py_compile / ast.parse), and (c) grep-based checks for removed references (models.ensemble, models.rl_agent, EnsembleManager, RLAgent, MODEL_DIR).",
+      "Use `/root/.pyenv/versions/3.11.15/bin/python` (has pytest); `python` is NOT on PATH and `python3` (system 3.9.25) lacks pytest.",
+      "Sandbox cwd-subdir quirk confirmed workflow: run from workspace root with `cd python_bridge && <cmd>`; that pattern worked fine for all commands."
+    ],
+    "source_changes": "NONE. Only the task-state feature file was modified (git status shows only .agents/tasks/... untracked)."
+  }
+}

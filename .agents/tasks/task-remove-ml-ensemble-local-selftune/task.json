@@ -1,0 +1,7 @@
+{
+  "task_id": "task-remove-ml-ensemble-local-selftune",
+  "task_description": "Fully remove the ML ensemble and RL agent decision layer from the MT5 Python bridge and make the system simple and self-tuning from LOCAL backtests instead of pre-trained checkpoints. Direction stays momentum-based (as it already was); the ensemble-derived confidence gate is replaced with a rules-derived confidence (momentum magnitude, as backtest.py already computes). Delete the 12 neural/tree models, the RL agent, the RL-dependent smart-exit layer, the checkpoint training/retraining scripts, and the heavy sentiment/alt-data layers. Prune orphaned configs and heavy dependencies (torch, transformers). Lean on the existing AutoOptimizer for local-backtest self-tuning and verify it end-to-end. Keep the CSV signal contract unchanged (model_name='momentum') so the .mq5 EAs keep working. Update tests and docs.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}
