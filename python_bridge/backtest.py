@@ -39,7 +39,14 @@ from data.market_data import MarketDataFetcher
 DEFAULT_SL_DISTANCE = 5.0       # $5 stop loss (unchanged - trailing stops manage risk)
 MAX_POSITIONS = 3               # Allow 3 concurrent positions for maximum opportunity
 MAX_HOLD_BARS = 90              # Max bars to hold a trade (1.5 hours on M1)
-MOMENTUM_LOOKBACK = 6           # 6 bars for faster momentum reaction
+# Single source of truth for the momentum window: the backtest and the live
+# SignalGenerator (strategies/signal_generator.py::_compute_momentum_magnitude)
+# MUST measure momentum over the same lookback so AutoOptimizer tuning done
+# against local backtests transfers faithfully to the live path. Sourced from
+# DataConfig.momentum_lookback (the value the generator reads and the optimizer
+# tunes within AutoOptimizerConfig.momentum_range) rather than a separate
+# literal, to avoid the two paths drifting apart.
+MOMENTUM_LOOKBACK = DataConfig().momentum_lookback  # shared with live generator (default 8)
 MOMENTUM_THRESHOLD = 1.50       # $1.50 for momentum direction (catch even smaller moves)
 MOMENTUM_EXIT_THRESHOLD = 2.50  # $2.50 reversal triggers exit
 MIN_BARS_BETWEEN_ENTRIES = 10   # Minimum bars between entries (~10 minute cooldown)
@@ -93,7 +100,8 @@ def compute_momentum_direction(closes: pd.Series, index: int) -> str:
     """
     Compute momentum direction from last MOMENTUM_LOOKBACK bars.
 
-    Compares close[-1] to close[-6] (5 bars back).
+    Compares close[index] to close[index - MOMENTUM_LOOKBACK]. The lookback is
+    shared with the live SignalGenerator (see MOMENTUM_LOOKBACK above).
     Returns "BUY", "SELL", or "FLAT".
     """
     if index < MOMENTUM_LOOKBACK:

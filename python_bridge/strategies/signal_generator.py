@@ -865,9 +865,14 @@ class SignalGenerator:
         """
         Compute a rules-derived timing confidence from momentum magnitude.
 
-        Mirrors backtest.py compute_momentum_magnitude(): the confidence rises
-        with the absolute price change over the momentum lookback window using a
-        sigmoid-like scaling:
+        Mirrors backtest.py compute_momentum_magnitude() exactly: same curve,
+        same scale, same 0.95 cap, AND the same lookback window. The lookback
+        defaults to data_config.momentum_lookback -- the same value backtest.py's
+        MOMENTUM_LOOKBACK is sourced from (DataConfig.momentum_lookback) and the
+        same parameter AutoOptimizer tunes. Keeping both paths on one lookback
+        source ensures backtest-derived tuning transfers faithfully to live.
+        The confidence rises with the absolute price change over the momentum
+        lookback window using a sigmoid-like scaling:
 
             confidence = 0.2 + 0.7 * (1 - exp(-abs_diff / scale))
 
@@ -1046,7 +1051,20 @@ class SignalGenerator:
                         self.signal_config.cooldown_seconds - elapsed)
             return hold_signal
 
-        # AUTO-OPTIMIZER: Override parameters with optimized values if available
+        # AUTO-OPTIMIZER: Override parameters with optimized values if available.
+        #
+        # INTENTIONAL in-place mutation (no snapshot/restore): the AutoOptimizer
+        # is the single source of truth for tuned parameters. It persists its
+        # state to auto_optimizer_state.json, shifts each parameter at most one
+        # clamped step per optimization cycle, and rolls back to the pre-tuning
+        # values on a measured regression (_check_rollback). get_current_params()
+        # therefore returns the optimizer's *current authoritative* values on
+        # every call, so re-applying them here re-syncs the generator's config to
+        # that authoritative state each signal rather than accumulating unbounded
+        # drift -- a rollback or convergence is reflected on the very next signal.
+        # This is the desired "backtest locally so it can tweak itself and stay
+        # tuned" lifecycle; defaults intentionally are not restored per cycle
+        # (the only reset path is clearing the optimizer state / process restart).
         if self._auto_optimizer and self._auto_optimizer.is_enabled:
             opt_params = self._auto_optimizer.get_current_params()
             # Override min_confidence
