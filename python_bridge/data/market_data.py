@@ -18,7 +18,12 @@ from typing import Optional, Tuple, Dict
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DataConfig, MultiPairConfig, MODEL_DIR
+from config.settings import DataConfig, MultiPairConfig, LOG_DIR
+
+# Normalization stats used to live under MODEL_DIR (removed with the ML layer).
+# The rule-based runtime does not consume these, but the helpers are retained
+# for optional offline feature analysis; persist them under a runtime dir.
+NORM_STATS_DIR = LOG_DIR
 
 
 class MarketDataFetcher:
@@ -293,8 +298,8 @@ class MarketDataFetcher:
 
     def _save_normalization_stats(self, feature_cols, means, stds):
         """Save normalization statistics to JSON for inference use."""
-        stats_path = os.path.join(MODEL_DIR, "normalization_stats.json")
-        os.makedirs(MODEL_DIR, exist_ok=True)
+        stats_path = os.path.join(NORM_STATS_DIR, "normalization_stats.json")
+        os.makedirs(NORM_STATS_DIR, exist_ok=True)
         stats = {
             "feature_cols": list(feature_cols),
             "means": means.tolist(),
@@ -305,7 +310,7 @@ class MarketDataFetcher:
 
     def _load_normalization_stats(self):
         """Load saved normalization statistics. Returns (means, stds) or None."""
-        stats_path = os.path.join(MODEL_DIR, "normalization_stats.json")
+        stats_path = os.path.join(NORM_STATS_DIR, "normalization_stats.json")
         if not os.path.exists(stats_path):
             return None
         try:

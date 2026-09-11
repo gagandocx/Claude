@@ -29,7 +29,7 @@ class TradeRecord:
     exit_time: str                    # ISO format timestamp
     direction: str                    # BUY or SELL
     pnl: float                        # Realized profit/loss
-    model: str                        # transformer / lstm / gradient_boost / ensemble
+    model: str                        # rule-based signal label (e.g. 'momentum')
     regime: str                       # trending / ranging / volatile / crash
     entry_price: float = 0.0
     exit_price: float = 0.0
@@ -402,7 +402,7 @@ class PerformanceTracker:
         Get performance statistics for a specific model.
         
         Args:
-            model: One of 'transformer', 'lstm', 'gradient_boost', 'ensemble'
+            model: Rule-based signal label (e.g. 'momentum')
             
         Returns:
             Dict with win_rate, profit_factor, avg_pnl, trade_count, expectancy
@@ -448,7 +448,7 @@ class PerformanceTracker:
 
     def get_all_model_stats(self) -> Dict[str, Dict]:
         """Get stats for all tracked models."""
-        all_models = ["transformer", "lstm", "gradient_boost", "ensemble"]
+        all_models = ["momentum"]
         result = {}
         for model in all_models:
             result[model] = self.get_model_stats(model)

@@ -1,9 +1,9 @@
 """
 =============================================================
   Python ML Bridge - Signal Generator
-  Main signal generation logic: runs models, combines predictions,
-  applies risk filters, regime detection, and outputs final
-  trade signals with confidence and risk parameters.
+  Main signal generation logic: derives direction and a rule-based
+  confidence from momentum, applies risk filters, regime detection, and
+  outputs final trade signals with confidence and risk parameters.
 =============================================================
 """
 
@@ -18,12 +18,10 @@ import ta
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import (SignalConfig, DataConfig, RLConfig, SmartExitConfig, MODEL_DIR,
+from config.settings import (SignalConfig, DataConfig,
                              SessionConfig, SpreadFilterConfig, AdaptiveMomentumConfig,
                              PriceStructureConfig, FVGConfig, LiquiditySweepConfig,
                              AutoOptimizerConfig)
-from models.ensemble import EnsembleManager
-from models.rl_agent import RLAgent, PositionState, ExitAction
 from strategies.risk_manager import RiskManager
 from strategies.regime_detector import RegimeDetector, MarketRegime
 
@@ -71,11 +69,11 @@ class TradeSignal:
 
 class SignalGenerator:
     """
-    Generates trade signals by combining model predictions with risk filters.
+    Generates trade signals from momentum rules combined with risk filters.
 
     Pipeline (Rapid HF Scalper):
         1. Compute short-term momentum direction from last 5 M1 candles
-        2. Get model predictions from ensemble (used for TIMING only)
+        2. Derive a timing confidence from momentum magnitude (rule-based)
         3. Check regime and apply adjustments
         4. Apply risk filters (drawdown, correlation, time)
         5. Compute stop loss and take profit from ATR
@@ -83,7 +81,8 @@ class SignalGenerator:
         7. Generate final signal if all filters pass
 
     Direction comes from MOMENTUM, not from model predictions.
-    AI confidence is used only for entry timing (confidence gate).
+    Confidence is derived from momentum magnitude (rules-based) and used
+    only for entry timing (confidence gate).
     """
 
     def __init__(self, signal_config: Optional[SignalConfig] = None,
@@ -99,13 +98,10 @@ class SignalGenerator:
         self.fvg_config = FVGConfig()
         self.liquidity_sweep_config = LiquiditySweepConfig()
 
-        self.ensemble = EnsembleManager()
         self.risk_manager = RiskManager()
         self.regime_detector = RegimeDetector()
 
-        # RL agent for exit management feedback loop
-        self._rl_agent = RLAgent(RLConfig())
-        # Track open positions for RL agent state
+        # Track open positions (used for risk-manager bookkeeping)
         self._open_positions: Dict[str, Dict] = {}
 
         # Optional performance tracker reference (set from main.py)
@@ -865,7 +861,57 @@ class SignalGenerator:
 
         return result
 
-    def generate_signal(self, features: np.ndarray,
+    def _compute_momentum_magnitude(self, prices, lookback: int = None) -> float:
+        """
+        Compute a rules-derived timing confidence from momentum magnitude.
+
+        Mirrors backtest.py compute_momentum_magnitude(): the confidence rises
+        with the absolute price change over the momentum lookback window using a
+        sigmoid-like scaling:
+
+            confidence = 0.2 + 0.7 * (1 - exp(-abs_diff / scale))
+
+        capped at 0.95, where abs_diff = |close[-1] - close[-(lookback + 1)]|.
+        This replaces the old ensemble-derived confidence; direction still comes
+        from momentum, this only gates entry timing.
+
+        Args:
+            prices: DataFrame with a 'Close' column, or array-like of closes.
+                    Uses M1 momentum prices when available.
+            lookback: Momentum lookback in bars (defaults to
+                      data_config.momentum_lookback).
+
+        Returns:
+            Confidence float in [0.0, 0.95]. Returns 0.0 when there is not
+            enough data.
+        """
+        import pandas as pd
+
+        if lookback is None:
+            lookback = self.data_config.momentum_lookback
+
+        if isinstance(prices, pd.DataFrame):
+            if "Close" not in prices.columns:
+                return 0.0
+            close = prices["Close"].values
+        elif isinstance(prices, np.ndarray):
+            close = prices
+        else:
+            return 0.0
+
+        if len(close) < lookback + 1:
+            return 0.0
+
+        current_close = float(close[-1])
+        lookback_close = float(close[-(lookback + 1)])
+        abs_diff = abs(current_close - lookback_close)
+
+        # Scale factor: momentum of $1.50 yields ~0.7 confidence
+        scale = 1.5
+        confidence = 0.2 + 0.7 * (1.0 - np.exp(-abs_diff / scale))
+        return round(min(confidence, 0.95), 4)
+
+    def generate_signal(self, features: Optional[np.ndarray] = None,
                         prices: Optional[object] = None,
                         atr: float = 0.0,
                         current_price: float = 0.0,
@@ -875,18 +921,19 @@ class SignalGenerator:
                         cross_pair_info: Optional[Dict] = None,
                         prices_m1: Optional[object] = None) -> TradeSignal:
         """
-        Generate a trade signal using momentum for DIRECTION and AI for TIMING.
+        Generate a trade signal using momentum for DIRECTION and momentum
+        magnitude for TIMING.
 
         Rapid HF Scalper approach:
         - Direction is determined by short-term momentum (last 5 M1 candles)
-        - AI model confidence is used as a timing gate (only enter when confident)
+        - A rule-based confidence (momentum magnitude) gates entry timing
         - HTF bias is reduced (only penalize if H4 magnitude > 0.8, and only by 0.05)
         - Support/resistance proximity reduces confidence to avoid traps
         - RSI exhaustion filter penalizes buying overbought / selling oversold
         - Targets: SL ~$3 (30 pips), TP ~$0.50 (5 pips) for 85%+ win rate
 
         Args:
-            features: Input features array (1, seq_len, num_features)
+            features: Deprecated/unused (kept for interface compatibility)
             prices: Price DataFrame for regime detection and momentum calculation
             atr: Current ATR value
             current_price: Current market price
@@ -909,7 +956,7 @@ class SignalGenerator:
             sl_pips=0.0,
             tp_pips=0.0,
             lot_size=0.0,
-            model_name="ensemble",
+            model_name="momentum",
             regime="ranging"
         )
 
@@ -1032,22 +1079,6 @@ class SignalGenerator:
                          self.signal_config.min_confidence,
                          self.data_config.momentum_lookback,
                          self.signal_config.cooldown_seconds)
-
-        # Guard: refuse to generate non-HOLD signals if models are not loaded
-        # Fallback: if checkpoint files exist on disk, allow signal generation
-        if not self.ensemble.models_loaded:
-            checkpoint_dir = MODEL_DIR
-            has_checkpoints = os.path.isdir(checkpoint_dir) and any(
-                f.endswith('.pt') or f.endswith('.pth') or f.endswith('.pkl')
-                for f in os.listdir(checkpoint_dir)
-            ) if os.path.isdir(checkpoint_dir) else False
-
-            if has_checkpoints:
-                logger.info("[SignalGen] models_loaded=False but checkpoint files found - "
-                            "allowing signal generation")
-            else:
-                logger.info("[SignalGen] HOLD - models not loaded and no checkpoints found")
-                return hold_signal
 
         # 1. Session awareness - detect and log current session
         # Use M1 data for momentum/direction when available, fall back to H1
@@ -1207,20 +1238,12 @@ class SignalGenerator:
                     candle_pattern, candle_bias,
                     "CONFIRMS momentum" if candle_bias != "neutral" else "neutral/no block")
 
-        # 2. Get ensemble prediction for TIMING (confidence gate)
-        try:
-            prediction = self.ensemble.predict(features)
-        except Exception as e:
-            logger.error("[SignalGen] Model prediction error: %s", e)
-            return hold_signal
-
-        probabilities = prediction["probabilities"][0]  # (3,)
-        confidence = float(prediction["confidence"][0])
-        agreement = float(prediction["agreement"][0])
-
-        logger.info("[SignalGen] Prediction probs: SELL=%.4f HOLD=%.4f BUY=%.4f",
-                    probabilities[0], probabilities[1], probabilities[2])
-        logger.info("[SignalGen] Confidence=%.4f, Agreement=%.4f", confidence, agreement)
+        # 2. Derive base timing confidence from momentum magnitude (rule-based).
+        # Direction already comes from momentum; this only gates entry timing,
+        # exactly as backtest.py's compute_momentum_magnitude() does.
+        base_timing_confidence = self._compute_momentum_magnitude(momentum_prices)
+        logger.info("[SignalGen] Rule-based timing confidence (momentum magnitude): %.4f",
+                    base_timing_confidence)
 
         # 3. Detect regime
         import pandas as pd
@@ -1237,12 +1260,9 @@ class SignalGenerator:
         # The action comes from momentum, not from model probabilities
         action = momentum_direction  # BUY or SELL from momentum
 
-        # Use overall model confidence as the timing gate
-        # Higher confidence = better timing for entry
-        # We take the max of buy_prob and sell_prob as base confidence
-        sell_prob = float(probabilities[0])
-        buy_prob = float(probabilities[2])
-        timing_confidence = max(buy_prob, sell_prob, confidence)
+        # Use the rule-based momentum-magnitude confidence as the timing gate.
+        # Higher magnitude = stronger momentum = better timing for entry.
+        timing_confidence = base_timing_confidence
 
         logger.info("[SignalGen] Momentum action: %s, Timing confidence: %.4f",
                     action, timing_confidence)
@@ -1433,16 +1453,7 @@ class SignalGenerator:
             logger.info("[SignalGen] HOLD - calculated lot_size is 0")
             return hold_signal
 
-        # 11. Determine which model contributed most
-        individual = prediction["individual_preds"]
-        model_contributions = {
-            "transformer": float(np.max(individual["transformer"][0])),
-            "lstm": float(np.max(individual["lstm"][0])),
-            "gradient_boost": float(np.max(individual["gradient_boost"][0])),
-        }
-        top_model = max(model_contributions, key=model_contributions.get)
-
-        # 12. Generate signal
+        # 12. Generate signal (rule-based label: momentum)
         signal = TradeSignal(
             timestamp=timestamp,
             symbol=self.data_config.symbol,
@@ -1451,7 +1462,7 @@ class SignalGenerator:
             sl_pips=levels["sl_pips"],
             tp_pips=levels["tp_pips"],
             lot_size=lot_size,
-            model_name=top_model,
+            model_name="momentum",
             regime=regime_name
         )
 
@@ -1497,10 +1508,11 @@ class SignalGenerator:
     def update_from_execution(self, trade_id: str, pnl: float,
                               predicted_action: int, actual_outcome: int):
         """
-        Update models based on trade execution results.
+        Update internal state based on trade execution results.
 
-        Feeds reward signal to the RL agent for learning position
-        management, and updates ensemble weights for prediction quality.
+        Closes the trade on the risk manager and clears any open-position
+        bookkeeping. AutoOptimizer trade-context feedback is recorded from
+        main.py; this method no longer trains any model.
 
         Note: Performance tracking is handled exclusively by main.py from
         MT5 confirmations to prevent double-counting (Fix #6).
@@ -1508,77 +1520,34 @@ class SignalGenerator:
         Args:
             trade_id: Unique trade identifier
             pnl: Realized P&L
-            predicted_action: What was predicted (0, 1, 2)
-            actual_outcome: What actually happened (0, 1, 2)
+            predicted_action: What was predicted (0, 1, 2) - kept for interface
+                compatibility, no longer used
+            actual_outcome: What actually happened (0, 1, 2) - kept for interface
+                compatibility, no longer used
         """
         # Update risk manager
         self.risk_manager.close_trade(trade_id, pnl)
 
-        # Update ensemble weights
-        self.ensemble.update_weights(actual_outcome, {
-            "transformer": predicted_action,
-            "lstm": predicted_action,
-            "gradient_boost": predicted_action,
-        })
-
-        # Feed RL agent with trade outcome (learning only, no perf tracking)
+        # Clean up open-position bookkeeping
         if trade_id in self._open_positions:
-            pos_info = self._open_positions[trade_id]
-            # Create terminal state for RL agent
-            position = PositionState(
-                direction=pos_info.get("direction", 1),
-                unrealized_pnl=pnl,
-                unrealized_pnl_atr=pnl / max(pos_info.get("atr", 2.0), 0.01),
-                hold_bars=pos_info.get("hold_bars", 0),
-                entry_price=pos_info.get("entry_price", 0.0),
-                current_price=pos_info.get("current_price", 0.0),
-                atr=pos_info.get("atr", 2.0),
-                confidence=pos_info.get("confidence", 0.5),
-                initial_confidence=pos_info.get("initial_confidence", 0.5),
-                sl_distance_atr=pos_info.get("sl_distance_atr", 1.5),
-                tp_distance_atr=pos_info.get("tp_distance_atr", 2.5),
-                max_favorable=max(pnl, pos_info.get("max_favorable", 0.0)),
-                max_adverse=min(pnl, pos_info.get("max_adverse", 0.0)),
-                partial_closed_pct=pos_info.get("partial_closed_pct", 0.0),
-                regime_changed=pos_info.get("regime_changed", False),
-                ticket=trade_id
-            )
-            state = self._rl_agent.state_from_position(position)
-            reward = self._rl_agent.compute_reward(
-                position, ExitAction.CLOSE_FULL, realized_pnl=pnl, trade_closed=True
-            )
-            # Terminal transition
-            self._rl_agent.store_transition(
-                state, ExitAction.CLOSE_FULL, reward, state, done=True
-            )
-            self._rl_agent.train_step()
-            # Remove from tracked positions
             del self._open_positions[trade_id]
-            logger.info(f"[SignalGen] RL agent received reward={reward:.4f} "
-                        f"for trade {trade_id} (PnL={pnl:.2f})")
+            logger.info(f"[SignalGen] Closed trade {trade_id} (PnL={pnl:.2f})")
 
     def register_open_position(self, trade_id: str, direction: int,
                                entry_price: float, confidence: float,
                                atr: float, sl_pips: float, tp_pips: float):
-        """Register a new open position for RL agent tracking.
+        """Register a new open position for lightweight bookkeeping.
 
-        Called when MT5 confirms a trade execution so we can track
-        the position state for the RL learning loop.
+        Called when MT5 confirms a trade execution so we can track that a
+        position is open (used only for cleanup in update_from_execution).
         """
         self._open_positions[trade_id] = {
             "direction": direction,
             "entry_price": entry_price,
-            "current_price": entry_price,
             "confidence": confidence,
-            "initial_confidence": confidence,
             "atr": atr,
-            "sl_distance_atr": sl_pips * 0.1 / max(atr, 0.01),  # Convert pips to ATR
-            "tp_distance_atr": tp_pips * 0.1 / max(atr, 0.01),
-            "hold_bars": 0,
-            "max_favorable": 0.0,
-            "max_adverse": 0.0,
-            "partial_closed_pct": 0.0,
-            "regime_changed": False,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
             "open_time": datetime.now().isoformat(),
         }
 

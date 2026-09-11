@@ -22,7 +22,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.settings import (
-    MainConfig, DataConfig, MT5_COMMON_PATH, MODEL_DIR, LOG_DIR
+    MainConfig, DataConfig, MT5_COMMON_PATH, LOG_DIR
 )
 from signals.bridge import MT5Bridge
 from main import PythonMLBridge, setup_logging

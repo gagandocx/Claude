@@ -4,7 +4,7 @@
   Runs continuous prediction loop:
     1. Fetch market data
     2. Compute features
-    3. Run ensemble models
+    3. Derive rule-based momentum signal
     4. Generate trade signal
     5. Write to bridge file for MT5
   Configurable interval (1min for M1, 5min for M5).
@@ -28,25 +28,18 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.settings import (
     MainConfig, DataConfig, SignalConfig, RiskConfig,
-    TransformerConfig, LSTMConfig, EnsembleConfig,
     MultiTimeframeConfig, NewsFilterConfig, MultiPairConfig,
-    SmartExitConfig, RLConfig, RetrainConfig, DashboardConfig,
-    AutoOptimizerConfig,
-    MODEL_DIR, LOG_DIR
+    DashboardConfig, AutoOptimizerConfig,
+    LOG_DIR
 )
 from data.market_data import MarketDataFetcher
-from data.sentiment import SentimentAnalyzer
-from data.alternative_data import AlternativeDataFetcher
 from data.multi_timeframe import MultiTimeframeDataFetcher
 from data.news_calendar import NewsCalendarFilter
-from models.ensemble import EnsembleManager
 from strategies.signal_generator import SignalGenerator
 from strategies.regime_detector import RegimeDetector
 from strategies.risk_manager import RiskManager
-from strategies.smart_exits import SmartExitManager, ExitDecision
 from strategies.auto_optimizer import AutoOptimizer
 from signals.bridge import MT5Bridge
-from training.auto_retrain import AutoRetrainer
 from dashboard.performance_tracker import PerformanceTracker, TradeRecord
 from dashboard.dashboard_renderer import DashboardRenderer
 
@@ -77,21 +70,18 @@ def setup_logging(config: MainConfig) -> logging.Logger:
 # ─────────────────────────────────────────────
 class PythonMLBridge:
     """
-    Main bridge system that orchestrates the entire ML pipeline.
+    Main bridge system that orchestrates the rule-based signal pipeline.
 
     Lifecycle:
         1. Initialize all components
-        2. Load model checkpoints (if available)
-        3. Enter main loop:
+        2. Enter main loop:
            a. Fetch latest market data
            b. Compute features
-           c. (Optional) Fetch sentiment and alt data
-           d. Run ensemble prediction
-           e. Generate signal through risk filters
-           f. Write signal to bridge file
-           g. Check for MT5 confirmations
-           h. Sleep until next cycle
-        4. Graceful shutdown on interrupt
+           c. Derive rule-based momentum signal through risk filters
+           d. Write signal to bridge file
+           e. Check for MT5 confirmations
+           f. Sleep until next cycle
+        3. Graceful shutdown on interrupt
     """
 
     def __init__(self, config: Optional[MainConfig] = None):
@@ -101,8 +91,6 @@ class PythonMLBridge:
 
         # Initialize components
         self.data_fetcher = MarketDataFetcher()
-        self.sentiment = SentimentAnalyzer() if self.config.enable_sentiment else None
-        self.alt_data = AlternativeDataFetcher() if self.config.enable_alternative_data else None
         self.signal_generator = SignalGenerator()
         self.bridge = MT5Bridge()
 
@@ -122,20 +110,6 @@ class PythonMLBridge:
         self.multi_pair_config = (
             MultiPairConfig()
             if self.config.enable_multi_pair else None
-        )
-
-        # AI-driven exit management (RL agent + dynamic trailing stops)
-        # Share a single RL agent between SignalGenerator and SmartExitManager
-        # to accumulate experience in one replay buffer (avoids split learning)
-        self.smart_exits = (
-            SmartExitManager(SmartExitConfig(), rl_agent=self.signal_generator._rl_agent)
-            if self.config.enable_smart_exits else None
-        )
-
-        # Weekend auto-retraining scheduler
-        self.auto_retrainer = (
-            AutoRetrainer(RetrainConfig())
-            if self.config.enable_auto_retrain else None
         )
 
         # Self-tuning parameter optimizer
@@ -170,9 +144,6 @@ class PythonMLBridge:
         self._atr_history_max_size: int = 30  # ~30 cycles of history
         self._last_news_vol_check: float = 0.0  # timestamp of last vol check
 
-        # Load models if checkpoints exist
-        self._load_models()
-
         # Connect performance tracker to signal generator for trade feedback
         if self.performance_tracker:
             self.signal_generator.set_performance_tracker(self.performance_tracker)
@@ -184,13 +155,9 @@ class PythonMLBridge:
         self.logger.info("Python ML Bridge initialized")
         self.logger.info(f"  Interval: {self.config.interval_seconds}s")
         self.logger.info(f"  Paper trading: {self.config.paper_trading}")
-        self.logger.info(f"  Sentiment: {self.config.enable_sentiment}")
-        self.logger.info(f"  Alt data: {self.config.enable_alternative_data}")
         self.logger.info(f"  Multi-timeframe: {self.config.enable_multi_timeframe}")
         self.logger.info(f"  News filter: {self.config.enable_news_filter}")
         self.logger.info(f"  Multi-pair: {self.config.enable_multi_pair}")
-        self.logger.info(f"  Smart exits (RL): {self.config.enable_smart_exits}")
-        self.logger.info(f"  Auto-retrain: {self.config.enable_auto_retrain}")
         self.logger.info(f"  Dashboard: {self.config.enable_dashboard}")
         self.logger.info(f"  Auto-optimizer: {self.config.enable_auto_optimizer}")
 
@@ -201,17 +168,6 @@ class PythonMLBridge:
         )
         self._confirmation_thread.start()
         self.logger.info("  Confirmation poller: 100ms (instant sync)")
-
-    def _load_models(self):
-        """Load model checkpoints if available."""
-        if os.path.exists(MODEL_DIR):
-            try:
-                self.signal_generator.ensemble.load_models(MODEL_DIR)
-                self.logger.info(f"Loaded model checkpoints from {MODEL_DIR}")
-            except Exception as e:
-                self.logger.warning(f"Could not load checkpoints: {e}")
-        else:
-            self.logger.info("No model checkpoints found, using untrained models")
 
     def _start_news_refresh(self):
         """Start a background thread to refresh the news calendar.
@@ -288,11 +244,11 @@ class PythonMLBridge:
         """
         Run a single prediction cycle.
 
-        Professional trading logic:
+        Rule-based trading logic:
         1. Check news calendar - skip if high-impact event window
         2. Fetch multi-timeframe data for trend confirmation
         3. Get cross-pair correlation features for context
-        4. Run ensemble prediction with enriched features
+        4. Derive rule-based momentum signal
         5. Gate signal through risk filters
 
         Returns:
@@ -302,20 +258,6 @@ class PythonMLBridge:
         result = {"timestamp": datetime.now().isoformat(), "signal": None, "error": None}
 
         try:
-            # 0a. AUTO-RETRAIN CHECK - Professional firms retrain on weekends
-            if self.auto_retrainer:
-                if self.auto_retrainer.should_retrain():
-                    self.logger.info(
-                        "[AutoRetrain] Weekend retraining triggered. "
-                        "Running training pipeline..."
-                    )
-                    retrain_result = self.auto_retrainer.run_retrain()
-                    self.logger.info(
-                        f"[AutoRetrain] Result: {retrain_result.get('reason', '')}"
-                    )
-                    if retrain_result.get("deployed"):
-                        self._load_models()  # Reload newly trained models
-
             # 0. NEWS FILTER - Professional traders never trade through major events
             # Uses cached calendar data (refreshed in background thread) to avoid
             # blocking the signal loop with network calls.
@@ -416,13 +358,6 @@ class PythonMLBridge:
                 result["error"] = "Insufficient data for features"
                 return result
 
-            # 3. Get latest sequence for prediction
-            seq_length = 64
-            feature_input = self.data_fetcher.get_latest_features(seq_length)
-            if feature_input is None:
-                result["error"] = "Could not prepare model input"
-                return result
-
             # 4. Get ATR and current price
             # Use M1 ATR for SL/TP sizing (~$2-3 for proper scalping stops)
             # Fall back to H1 ATR if M1 unavailable (with tighter $5 cap applied here)
@@ -446,14 +381,8 @@ class PythonMLBridge:
             if "adx" in features_df.columns:
                 adx_series = features_df["adx"]
 
-            # 6. Get VIX level (optional)
+            # 6. VIX level no longer sourced from alt-data layer (removed)
             vix_level = None
-            if self.alt_data:
-                try:
-                    alt_features = self.alt_data.get_alternative_features()
-                    vix_level = alt_features.get("vix_level")
-                except Exception as e:
-                    self.logger.debug(f"Alt data fetch error: {e}")
 
             # 7. Multi-timeframe trend confirmation (professional HTF analysis)
             htf_bias = None
@@ -492,9 +421,8 @@ class PythonMLBridge:
                 except Exception as e:
                     self.logger.debug(f"Multi-pair error: {e}")
 
-            # 9. Generate signal
+            # 9. Generate signal (rule-based; direction + confidence from momentum)
             signal = self.signal_generator.generate_signal(
-                features=feature_input,
                 prices=df,
                 atr=atr,
                 current_price=current_price,
@@ -533,91 +461,6 @@ class PythonMLBridge:
                     )
             else:
                 self.logger.debug("No signal (HOLD)")
-
-            # 10b. SMART EXITS - AI-driven position management for open positions
-            if self.smart_exits:
-                try:
-                    # Update unrealized PnL for all open positions each cycle (Fix #4)
-                    open_positions = self.signal_generator._open_positions
-                    for ticket, pos_info in list(open_positions.items()):
-                        direction = pos_info.get("direction", 1)
-                        entry_price = pos_info.get("entry_price", current_price)
-                        if direction == 1:  # LONG
-                            unrealized = current_price - entry_price
-                        else:  # SHORT
-                            unrealized = entry_price - current_price
-                        pos_info["current_price"] = current_price
-                        pos_info["unrealized_pnl"] = unrealized
-                        pos_info["atr"] = atr
-                        # Track max favorable and adverse excursion
-                        pos_info["max_favorable"] = max(
-                            pos_info.get("max_favorable", 0.0), unrealized
-                        )
-                        pos_info["max_adverse"] = min(
-                            pos_info.get("max_adverse", 0.0), unrealized
-                        )
-
-                    # Process exit signals from RL agent
-                    exit_signals = []
-                    for ticket, pos_info in list(open_positions.items()):
-                        from models.rl_agent import PositionState
-                        # Decay confidence over time
-                        pos_info["hold_bars"] = pos_info.get("hold_bars", 0) + 1
-                        pos_info["confidence"] = self.smart_exits.decay_confidence(
-                            pos_info.get("initial_confidence", 0.5),
-                            pos_info["hold_bars"]
-                        )
-                        position = PositionState(
-                            direction=pos_info.get("direction", 1),
-                            unrealized_pnl=pos_info.get("unrealized_pnl", 0.0),
-                            unrealized_pnl_atr=pos_info.get("unrealized_pnl", 0.0) / max(pos_info.get("atr", 2.0), 0.01),
-                            hold_bars=pos_info["hold_bars"],
-                            entry_price=pos_info.get("entry_price", 0.0),
-                            current_price=current_price,
-                            atr=atr,
-                            confidence=pos_info["confidence"],
-                            initial_confidence=pos_info.get("initial_confidence", 0.5),
-                            sl_distance_atr=pos_info.get("sl_distance_atr", 1.5),
-                            tp_distance_atr=pos_info.get("tp_distance_atr", 2.5),
-                            max_favorable=pos_info.get("max_favorable", 0.0),
-                            max_adverse=pos_info.get("max_adverse", 0.0),
-                            partial_closed_pct=pos_info.get("partial_closed_pct", 0.0),
-                            regime_changed=pos_info.get("regime_changed", False),
-                            ticket=ticket
-                        )
-                        decision = self.smart_exits.evaluate_exit(
-                            position, market_features=feature_input
-                        )
-                        if decision.action != "HOLD":
-                            exit_signals.append({
-                                "ticket": ticket,
-                                "action": decision.action,
-                                "lot_pct": decision.lot_pct_to_close,
-                                "new_sl": decision.new_sl_price,
-                                "reason": decision.reason,
-                            })
-                            self.logger.info(
-                                f"  Exit signal: {decision.action} ticket={ticket} "
-                                f"reason={decision.reason}"
-                            )
-                    # Write exit signals to bridge
-                    if exit_signals:
-                        self.bridge.write_exit_signals(exit_signals)
-                        # Fix #3: Update partial_closed_pct after writing
-                        # CLOSE_PARTIAL signals so the smart exit manager knows
-                        # how much has already been closed. Without this, repeated
-                        # partial-close signals are emitted every bar.
-                        for exit_sig in exit_signals:
-                            if exit_sig["action"] == "CLOSE_PARTIAL":
-                                ticket = exit_sig["ticket"]
-                                if ticket in open_positions:
-                                    open_positions[ticket]["partial_closed_pct"] = min(
-                                        open_positions[ticket].get("partial_closed_pct", 0.0)
-                                        + exit_sig["lot_pct"],
-                                        1.0,
-                                    )
-                except Exception as e:
-                    self.logger.debug(f"Smart exit processing error: {e}")
 
             # 11. Write heartbeat
             self.bridge.write_heartbeat()
