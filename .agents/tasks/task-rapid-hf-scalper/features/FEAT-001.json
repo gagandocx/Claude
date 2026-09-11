@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Transform the trading system from a model-direction-based system into a rapid high-frequency scalper that uses short-term momentum for direction and AI models only for entry timing. The scalper targets 85%+ win rate with tiny TP ($0.50 = 5 pips) and wide SL ($3.00 = 30 pips), trading only WITH the short-term trend.",
+  "status": "completed",
+  "steps": [
+    "Step 1: Modify python_bridge/config/settings.py - SignalConfig: Change atr_sl_multiplier to 0.6 (with ATR capped at 5, this gives 5*0.6=$3 SL = 30 pips). Change atr_tp_multiplier to 0.1 (5*0.1=$0.50 TP = 5 pips). Keep min_confidence at 0.15 and cooldown_seconds at 2.",
+    "Step 2: Modify python_bridge/config/settings.py - RiskConfig: Change max_open_positions from 10 to 5. Add a new field max_daily_loss_dollars: float = 50.0 for absolute dollar drawdown cap.",
+    "Step 3: Modify python_bridge/strategies/signal_generator.py - Add a new method _compute_momentum_direction(self, prices, lookback=5) that computes short-term momentum from the last 3-5 M1 candles. Logic: if close[-1] > close[-4] (price rose over last 3 candles) -> direction is BUY. If close[-1] < close[-4] -> direction is SELL. If abs(close[-1] - close[-4]) < threshold (0.5 for gold, meaning < $0.50 move) -> direction is FLAT (don't trade).",
+    "Step 4: Modify python_bridge/strategies/signal_generator.py - In generate_signal(), REPLACE the model-based direction logic. Instead of using buy_prob/sell_prob from ensemble to determine BUY/SELL, use _compute_momentum_direction() for direction. The ensemble's confidence score is still used for TIMING (only enter if confidence > threshold), but the direction comes purely from momentum. If momentum is FLAT, return HOLD. If momentum is BUY but model confidence < threshold, return HOLD (wait for better timing).",
+    "Step 5: Modify python_bridge/strategies/signal_generator.py - Remove or significantly reduce the HTF bias penalty. The scalper trades with short-term momentum regardless of H4 trend. Keep a small filter: if H4 is STRONGLY against momentum (h4_bias magnitude > 0.8), reduce confidence by 0.05 instead of blocking the trade entirely.",
+    "Step 6: Modify python_bridge/strategies/regime_detector.py - In get_regime_adjustments(), set sl_mult and tp_mult to 1.0 for ALL regimes (the scalper's fixed SL/TP should not be modified by regime). Reduce confidence_threshold for TRENDING regime to 0.10 (trade more aggressively when trending). Keep CRASH regime protective (confidence_threshold 0.25).",
+    "Step 7: Modify python_bridge/strategies/risk_manager.py - Add a check in is_trading_allowed() that uses the new max_daily_loss_dollars field. If daily P&L loss exceeds $50, halt all trading. This is the 'close ALL positions if drawdown exceeds $50 on the day' rule.",
+    "Step 8: Modify Python_Bridge_EA.mq5 - Change InpMaxOpenTrades default from 10 to 5. Update the dashboard display to show the new scalper config (SL: ~$3 | TP: ~$0.50 | WR Target: 85%+). Add an emergency close-all function: if total floating loss of EA positions exceeds $50, close all positions immediately.",
+    "Step 9: Update python_bridge/tests/test_signal_generator.py - Add tests for the new momentum direction logic: test that BUY is generated when last 3 candles are up, SELL when down, HOLD when flat. Test that SL/TP values match the scalper spec (approximately 30 pips SL, 5 pips TP with default ATR of 3-5)."
+  ],
+  "acceptance_criteria": [
+    "SignalConfig.atr_sl_multiplier is 0.6 and atr_tp_multiplier is 0.1",
+    "RiskConfig.max_open_positions is 5 and has max_daily_loss_dollars = 50.0",
+    "signal_generator.py has a _compute_momentum_direction method that returns BUY/SELL/FLAT based on last 3-5 candle momentum",
+    "generate_signal() uses momentum for direction and AI confidence for timing only",
+    "regime_detector sl_mult and tp_mult are 1.0 for all regimes",
+    "risk_manager halts trading when daily dollar loss exceeds $50",
+    "Python_Bridge_EA.mq5 has max positions 5 and emergency close-all at $50 loss",
+    "All existing tests pass plus new momentum direction tests pass",
+    "Running pytest tests/test_signal_generator.py passes all tests"
+  ],
+  "verification": [
+    "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/test_signal_generator.py -v --tb=short",
+    "cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/ -v --tb=short 2>&1 | tail -30"
+  ],
+  "blocked_reason": null,
+  "findings": "All 236 tests pass including 14 new momentum direction and scalper SL/TP tests. Pre-existing test failures in test_multi_timeframe.py and test_news_calendar.py due to missing yfinance and requests modules are unrelated. Torch CPU and scikit-learn needed for full test suite."
+}

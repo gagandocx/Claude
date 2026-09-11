@@ -1,0 +1,7 @@
+{
+  "task_id": "task-10-smart-upgrades",
+  "task_description": "Add 10 smart trading upgrades to the AI trading system: session awareness, spread filter, lose/win streak detection, adaptive momentum, price action structure, multi-asset DXY correlation, FVG/imbalance zones, liquidity sweep detection, win streak boost, and spread-aware breakeven verification.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

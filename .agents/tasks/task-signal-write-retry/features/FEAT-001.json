@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Fix signal file write race condition causing 'Signal expired' errors. Add retry logic to bridge.py write_signal(), add return value checking in main.py run_cycle(), and add timer-based signal reading in Python_Bridge_EA.mq5.",
+  "status": "completed",
+  "steps": [
+    "Step 1: In /projects/sandbox/Claude/python_bridge/signals/bridge.py write_signal() method - Add retry logic specifically around the os.replace() call. Catch PermissionError/OSError. Retry 3 times with short sleep (0.05s) between attempts. If atomic replace fails after retries, fall back to direct file write (delete old file if exists, then os.rename() the temp file, or as last resort write directly). Log warnings when retries are needed. Keep the existing tempfile write logic intact - only wrap the os.replace() in retry.",
+    "Step 2: In /projects/sandbox/Claude/python_bridge/main.py run_cycle() method at line 420 where self.bridge.write_signal(signal) is called - Check the return value. If it returns False, log a WARNING about signal write failure and attempt one immediate retry. The retry should just call self.bridge.write_signal(signal) again.",
+    "Step 3: In /projects/sandbox/Claude/Python_Bridge_EA.mq5 - Add EventSetTimer(10) in OnInit() to set up a 10-second timer. Add OnTimer() handler that calls ReadSignalFile(), ValidateSignal(), ExecuteSignal(), ProcessExitSignals(), ReadStatusFile(), and UpdateDashboard() - the same signal processing logic currently in OnTick(). Keep the existing OnTick() new-bar check for redundancy. The OnTimer handler provides mid-bar signal pickup to reduce the window where file contention causes stale signals.",
+    "Step 4: Add or update tests in /projects/sandbox/Claude/python_bridge/tests/test_bridge.py to verify the retry logic works - mock os.replace to raise PermissionError on first attempt and succeed on second, verify write_signal returns True. Also test that after 3 PermissionError retries the fallback direct write is used."
+  ],
+  "acceptance_criteria": [
+    "bridge.py write_signal() retries os.replace() up to 3 times on PermissionError/OSError with 0.05s sleep between attempts",
+    "bridge.py write_signal() falls back to direct file write if all retries fail (does not silently return False for a transient lock)",
+    "bridge.py logs warnings when retries are needed",
+    "main.py run_cycle() checks return value of write_signal() and retries once on failure with WARNING log",
+    "Python_Bridge_EA.mq5 has EventSetTimer(10) in OnInit()",
+    "Python_Bridge_EA.mq5 has OnTimer() handler that reads and processes signals (same logic as OnTick new-bar block)",
+    "Existing OnTick() new-bar signal reading is preserved for redundancy",
+    "MQL5 input parameters are not broken (input keyword used correctly)",
+    "Tests pass for the new retry logic"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/Claude/python_bridge && python -m pytest tests/test_bridge.py -v",
+    "Verify bridge.py has retry loop around os.replace() with PermissionError/OSError handling",
+    "Verify main.py checks write_signal return value and retries",
+    "Verify Python_Bridge_EA.mq5 has OnTimer() and EventSetTimer(10) in OnInit()"
+  ],
+  "blocked_reason": null,
+  "findings": "All 28 tests pass (21 existing + 7 new retry tests). Review fixes applied: (1) g_lastExecutedSignalTime dedup guard added in MQL5 EA - prevents OnTimer+OnTick duplicate execution, (2) bridge.py fallback now retries os.rename once more after unlink before direct write, (3) tmp_path is cleaned up before entering direct-write fallback. MQL5 changes validated by code review only (no compiler available)."
+}

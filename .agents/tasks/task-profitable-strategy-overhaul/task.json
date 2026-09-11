@@ -1,0 +1,7 @@
+{
+  "task_id": "task-profitable-strategy-overhaul",
+  "task_description": "Major strategy overhaul to transform the losing EA (36.6% win rate, -$5871 P/L) into a profitable system by drastically reducing trade frequency, widening stops, letting winners run, and adding stronger entry filters. Then run the backtest to verify improvements.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

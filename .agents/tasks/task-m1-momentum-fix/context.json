@@ -1,0 +1,23 @@
+{
+  "project_type": "Python ML trading bridge + MQL5 EA for XAUUSD M1 scalping",
+  "language": "Python 3.9, MQL5",
+  "build_system": "pytest for tests, no formal build step for Python",
+  "test_framework": "pytest with tests in python_bridge/tests/, fixtures in test files directly",
+  "build_command": null,
+  "test_command": "cd /projects/sandbox/Claude/python_bridge && python3 -m pytest tests/ -x --tb=short",
+  "verification_instructions": "Run pytest on python_bridge/tests/ and confirm all tests pass. Note: test_momentum_buy_when_prices_rising has a pre-existing failure due to $1.50 threshold (will need to fix test data to exceed that threshold).",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "Python 3.9 with packages: numpy, pandas, yfinance, ta, pytest already installed",
+  "environment_constraints": "OPEN_INTERNET - yfinance downloads work. Python 3.9.25 available via python3 command.",
+  "contribution_requirements": "RULES: input keyword is RESERVED in MQL5 - don't break it. Candle patterns only LOG never BLOCK. System is 100% self-tuning. Copy checkpoints/ folder when updating versions.",
+  "key_patterns": "Signal generator uses momentum for DIRECTION and AI ensemble for TIMING. main.py run_cycle() fetches data, computes features, calls generate_signal(). Bridge writes CSV for MT5. v5.2 has retry logic in bridge.py write_signal() and write_ok check in main.py. ATR is capped at $5 in signal_generator.py line 1295.",
+  "relevant_files": [
+    "python_bridge/main.py",
+    "python_bridge/strategies/signal_generator.py",
+    "python_bridge/data/market_data.py",
+    "python_bridge/config/settings.py",
+    "python_bridge/tests/test_signal_generator.py",
+    "python_bridge/signals/bridge.py"
+  ],
+  "directory_structure": "python_bridge/ contains main.py (entry point), config/ (settings), data/ (market_data, sentiment, news), models/ (ensemble, lstm, transformer, rl), strategies/ (signal_generator, risk_manager, regime_detector, smart_exits, auto_optimizer), signals/ (bridge), tests/, dashboard/"
+}
